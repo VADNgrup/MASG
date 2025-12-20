@@ -6,7 +6,7 @@ from src.models.asset import ImageAsset
 from src.models.slide import ImageReference
 from src.integrations.vision_classifier import VisionImageClassifier
 from src.integrations.abstract_classifier import AbstractConceptClassifier
-from src.integrations.unsplash import UnsplashClient
+from src.integrations.tavily import TavilyClient
 from src.integrations.genai_image import GenAIImageGenerator
 from src.utils.semantic_match import SemanticMatcher
 from src.utils.image_quality import ImageQualityAssessor
@@ -17,14 +17,16 @@ class AssetManager:
         self.vision_classifier = VisionImageClassifier()
         self.semantic_matcher = SemanticMatcher()
         self.abstract_classifier = AbstractConceptClassifier()
-        self.unsplash_client = UnsplashClient()
+        self.tavily_client = TavilyClient()
         self.genai_generator = GenAIImageGenerator()
         self.quality_assessor = ImageQualityAssessor()
     
     async def resolve_image(
         self, 
         query: str, 
-        context: DocumentContext
+        context: DocumentContext,
+        slide_title: str = None,
+        slide_content: List[str] = None
     ) -> Tuple[ImageReference, Dict[str, Any]]:
         decision_log = {
             "query": query,
@@ -34,7 +36,7 @@ class AssetManager:
         original_candidates = self._semantic_search_originals(query, context.assets.images)
         
         if not original_candidates:
-            return await self._handle_no_original_match(query, decision_log)
+            return await self._handle_no_original_match(query, decision_log, slide_title, slide_content)
         
         best_match = original_candidates[0]
         decision_log["best_original_match"] = {
@@ -80,7 +82,7 @@ class AssetManager:
             decision_log["decision"] = "SEARCH_BETTER"
             decision_log["reason"] = f"Low quality ({quality_score}) or decorative"
             
-            return await self._search_better_version(query, decision_log)
+            return await self._search_better_version(query, decision_log, slide_title, slide_content)
         
         if best_match["score"] >= 0.8:
             decision_log["decision"] = "USE_ORIGINAL"
@@ -93,7 +95,7 @@ class AssetManager:
             ), decision_log
         else:
             decision_log["decision"] = "WEAK_MATCH_SEARCH_BETTER"
-            return await self._search_better_version(query, decision_log)
+            return await self._search_better_version(query, decision_log, slide_title, slide_content)
     
     def _semantic_search_originals(self, query: str, images: List[ImageAsset]) -> List[Dict]:
         candidates = []
@@ -115,22 +117,21 @@ class AssetManager:
         
         return sorted(candidates, key=lambda x: x["score"], reverse=True)
     
-    async def _search_better_version(self, query: str, decision_log: Dict) -> Tuple[ImageReference, Dict]:
-        decision_log["final_source"] = "unsplash"
-        enhanced_query = f"{query} educational high quality"
+    async def _search_better_version(self, query: str, decision_log: Dict, slide_title: str = None, slide_content: List[str] = None) -> Tuple[ImageReference, Dict]:
+        decision_log["final_source"] = "tavily"
         
-        unsplash_url = self.unsplash_client.search(enhanced_query)
+        tavily_url = self.tavily_client.search(query, slide_title=slide_title, slide_content=slide_content)
         
-        if unsplash_url:
+        if tavily_url:
             return ImageReference(
-                source="unsplash",
+                source="tavily",
                 priority=2,
-                url=unsplash_url
+                url=tavily_url
             ), decision_log
         
         is_abstract = self.abstract_classifier.is_abstract(query)
         decision_log["is_abstract"] = is_abstract
-        decision_log["unsplash_failed"] = True
+        decision_log["tavily_failed"] = True
         
         if is_abstract:
             decision_log["final_source"] = "generated"
@@ -147,12 +148,12 @@ class AssetManager:
         else:
             decision_log["final_source"] = "none"
             return ImageReference(
-                source="unsplash",
+                source="tavily",
                 priority=2,
                 url=None
             ), decision_log
     
-    async def _handle_no_original_match(self, query: str, decision_log: Dict) -> Tuple[ImageReference, Dict]:
+    async def _handle_no_original_match(self, query: str, decision_log: Dict, slide_title: str = None, slide_content: List[str] = None) -> Tuple[ImageReference, Dict]:
         decision_log["decision"] = "NO_ORIGINAL_MATCH"
-        return await self._search_better_version(query, decision_log)
+        return await self._search_better_version(query, decision_log, slide_title, slide_content)
 

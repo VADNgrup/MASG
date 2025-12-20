@@ -24,3 +24,5 @@ build/
 *.egg-info/
 .DS_Store
 
+output/*
+

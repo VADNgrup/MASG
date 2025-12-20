@@ -3,7 +3,7 @@ from typing import Optional, Literal, List, Dict, Any
 from datetime import datetime
 
 class ImageReference(BaseModel):
-    source: Literal["original", "unsplash", "generated"]
+    source: Literal["original", "tavily", "generated"]
     priority: int
     image_id: Optional[str] = None
     url: Optional[str] = None

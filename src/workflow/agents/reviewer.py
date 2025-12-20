@@ -5,10 +5,12 @@ import re
 from src.models.context import DocumentContext
 from src.models.slide import SlideContent, ReviewerFeedback, CriterionScore
 from src.utils.config import config
+from src.optimization.lightning_integration import lightning_integration
 
 class ReviewerAgent:
     def __init__(self, model: str = "gpt-4o"):
         self.llm = ChatOpenAI(model=model, temperature=0.2)
+        self.model = model
     
     async def evaluate(
         self, 
@@ -74,6 +76,8 @@ Return ONLY valid JSON:
   "suggestions": ["Verify dates against source"]
 }}"""
         
+        lightning_integration.emit_prompt(prompt=prompt, model=self.model, metadata={"agent": "reviewer", "criterion": "faithfulness"})
+        
         response = await self.llm.ainvoke(prompt)
         return self._parse_criterion_response(response.content)
     
@@ -103,6 +107,8 @@ Return ONLY valid JSON:
   "suggestions": ["Reduce to 4-5 key points"]
 }}"""
         
+        lightning_integration.emit_prompt(prompt=prompt, model=self.model, metadata={"agent": "reviewer", "criterion": "pedagogical_flow"})
+        
         response = await self.llm.ainvoke(prompt)
         return self._parse_criterion_response(response.content)
     
@@ -131,6 +137,8 @@ Return ONLY valid JSON:
   "issues": [],
   "suggestions": []
 }}"""
+        
+        lightning_integration.emit_prompt(prompt=prompt, model=self.model, metadata={"agent": "reviewer", "criterion": "visual_alignment"})
         
         response = await self.llm.ainvoke(prompt)
         return self._parse_criterion_response(response.content)

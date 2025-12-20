@@ -4,6 +4,7 @@ import json
 from src.models.context import DocumentContext
 from src.models.slide import SlideContent
 from src.utils.config import config
+from src.optimization.lightning_integration import lightning_integration
 
 class WriterAgent:
     def _detect_language(self, text: str) -> str:
@@ -55,6 +56,7 @@ class WriterAgent:
         return ""
     def __init__(self, model: str = "gpt-4o"):
         self.llm = ChatOpenAI(model=model, temperature=0.4)
+        self.model = model
     
     def draft_slide(
         self, 
@@ -119,6 +121,9 @@ Source material excerpt (in {language}):
 
 Generate ONE slide for this section. Remember: ALL content must be in {language}!
 If image needed, create SPECIFIC query matching slide content (not generic "unit circle")."""
+        
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+        lightning_integration.emit_prompt(prompt=full_prompt, model=self.model, metadata={"agent": "writer", "action": "draft_slide", "section": section.get('title', '')})
         
         response = self.llm.invoke([
             {"role": "system", "content": system_prompt},

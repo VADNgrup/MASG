@@ -1,0 +1,34 @@
+:root {
+  --color-primary: #2563eb;
+  --color-secondary: #6366f1;
+  --color-accent: #059669;
+  
+  --color-neutral-50: #f9fafb;
+  --color-neutral-100: #f3f4f6;
+  --color-neutral-200: #e5e7eb;
+  --color-neutral-700: #374151;
+  --color-neutral-800: #1f2937;
+  --color-neutral-900: #111827;
+  
+  --font-size-hero: 4.5rem;
+  --font-size-section: 3rem;
+  --font-size-subsection: 2rem;
+  --font-size-body-large: 1.5rem;
+  --font-size-body: 1.25rem;
+  --font-size-caption: 1rem;
+  
+  --line-height-tight: 1.1;
+  --line-height-normal: 1.2;
+  --line-height-relaxed: 1.3;
+  --line-height-body: 1.6;
+  
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  
+  --spacing-base: 0.25rem;
+  --container-max-width: 1280px;
+  --grid-gutter: 24px;
+}
+

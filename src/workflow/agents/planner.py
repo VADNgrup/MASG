@@ -4,10 +4,12 @@ import json
 import re
 from src.models.context import DocumentContext
 from src.utils.config import config
+from src.optimization.lightning_integration import lightning_integration
 
 class PlannerAgent:
     def __init__(self, model: str = "gpt-4o"):
         self.llm = ChatOpenAI(model=model, temperature=0.3)
+        self.model = model
     
     def _split_into_logical_sections(self, text: str) -> List[str]:
         sections = re.split(r'\n#{1,3}\s+', text)
@@ -67,6 +69,8 @@ Generate structured lecture outline in JSON:
 
 CRITICAL: Extract section titles and key_concepts DIRECTLY from the source text.
 Return ONLY valid JSON, no markdown formatting."""
+        
+        lightning_integration.emit_prompt(prompt=prompt, model=self.model, metadata={"agent": "planner", "action": "create_outline"})
         
         response = self.llm.invoke(prompt)
         

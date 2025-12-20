@@ -1,5 +1,6 @@
 from langgraph.graph import StateGraph, END
 from typing import Dict, Any
+import uuid
 from src.workflow.state import WorkflowState
 from src.workflow.agents.planner import PlannerAgent
 from src.workflow.agents.writer import WriterAgent
@@ -7,6 +8,8 @@ from src.workflow.agents.asset_manager import AssetManager
 from src.workflow.agents.reviewer import ReviewerAgent
 from src.workflow.agents.refiner import SlideRefinerAgent
 from src.workflow.agents.coverage_checker import ContentCoverageChecker
+from src.optimization.reward_function import compute_and_emit_reward
+from src.optimization.lightning_manager import lightning_manager
 
 def create_workflow() -> StateGraph:
     workflow = StateGraph(WorkflowState)
@@ -54,7 +57,9 @@ def create_workflow() -> StateGraph:
             
             image_ref, decision_log = await asset_manager.resolve_image(
                 slide.image_query,
-                state["document_context"]
+                state["document_context"],
+                slide_title=slide.title,
+                slide_content=slide.content
             )
             
             slide.image = image_ref
@@ -84,6 +89,22 @@ def create_workflow() -> StateGraph:
             "optimization_hints": {"coverage": coverage}
         }
     
+    def optimization_node(state: WorkflowState) -> Dict[str, Any]:
+        task_id = str(uuid.uuid4())
+        
+        rubric_scores = state.get("rubric_scores", {})
+        optimization_hints = state.get("optimization_hints", {})
+        coverage_metrics = optimization_hints.get("coverage", {})
+        
+        if rubric_scores:
+            compute_and_emit_reward(rubric_scores, coverage_metrics, task_id)
+            lightning_manager.increment_trace_count()
+            
+            if lightning_manager.should_train():
+                lightning_manager.train()
+        
+        return {}
+    
     def should_continue(state: WorkflowState) -> str:
         if state["current_iteration"] >= 3:
             return "end"
@@ -111,6 +132,7 @@ def create_workflow() -> StateGraph:
     workflow.add_node("writer", writer_node)
     workflow.add_node("asset_manager", asset_manager_node)
     workflow.add_node("reviewer", reviewer_node)
+    workflow.add_node("optimization", optimization_node)
     workflow.add_node("increment", increment_iteration)
     
     def should_continue_writing(state: WorkflowState) -> str:
@@ -126,9 +148,10 @@ def create_workflow() -> StateGraph:
     workflow.add_edge("planner", "writer")
     workflow.add_edge("writer", "asset_manager")
     workflow.add_edge("asset_manager", "reviewer")
+    workflow.add_edge("reviewer", "optimization")
     
     workflow.add_conditional_edges(
-        "reviewer",
+        "optimization",
         should_continue,
         {
             "review": "reviewer",
