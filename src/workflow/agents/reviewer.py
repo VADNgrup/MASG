@@ -154,6 +154,18 @@ Return ONLY valid JSON:
                 clean_content = clean_content.split("```")[1].split("```")[0]
             data = json.loads(clean_content.strip())
         
+        if isinstance(data.get("issues"), list):
+            data["issues"] = [
+                f"Slide {item['slide']}: {item['issue']}" if isinstance(item, dict) else str(item)
+                for item in data["issues"]
+            ]
+        
+        if isinstance(data.get("suggestions"), list):
+            data["suggestions"] = [
+                f"Slide {item['slide']}: {item['suggestion']}" if isinstance(item, dict) else str(item)
+                for item in data["suggestions"]
+            ]
+        
         return CriterionScore(**data)
     
     def _compile_specific_feedback(

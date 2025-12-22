@@ -6,6 +6,7 @@ from src.workflow.graph import create_workflow
 from src.utils.file_utils import load_json, save_json
 from src.models.context import DocumentContext
 from src.utils.config import config
+from src.optimization.lightning_setup import lightning_setup
 
 async def main():
     parser = argparse.ArgumentParser(description="Phase 2: LangGraph Workflow")
@@ -41,7 +42,13 @@ async def main():
     }
     
     print("✓ Executing workflow...\n")
-    result = await workflow.ainvoke(initial_state)
+    
+    if lightning_setup.is_available():
+        tracer = lightning_setup.get_tracer()
+        async with tracer.trace_context(name="lecture-generation"):
+            result = await workflow.ainvoke(initial_state)
+    else:
+        result = await workflow.ainvoke(initial_state)
     
     lecture_output = {
         "lecture_id": f"lec_{context.document_id[:8]}",

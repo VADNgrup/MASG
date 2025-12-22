@@ -46,11 +46,7 @@ class LightningIntegration:
         
         try:
             if hasattr(agl, 'emit_reward'):
-                agl.emit_reward(
-                    reward=reward,
-                    task_id=task_id,
-                    metadata=metadata or {}
-                )
+                agl.emit_reward(reward=reward)
         except Exception as e:
             print(f"Agent Lightning emit_reward error: {e}")
 
