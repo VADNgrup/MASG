@@ -11,10 +11,10 @@ class SmartSlideSplitter:
     def analyze_and_split(self, slide: SlideContent) -> List[SlideContent]:
         content_count = len(slide.content)
         
-        if content_count <= 4:
+        if content_count <= 5:
             return [slide]
         
-        if content_count > 6:
+        if content_count > 5:
             return self._llm_based_split(slide)
         
         return [slide]
@@ -28,14 +28,15 @@ class SmartSlideSplitter:
 Bullet points:
 {bullets_text}
 
-Task: Group these bullets into 2-3 coherent sub-topics. Each group should have 2-4 bullets maximum.
+Task: Group these bullets into 2-3 coherent sub-topics. Each group should have 2-4 bullets maximum (preferably 3-4).
 
 Rules:
 - Group by semantic similarity and topic coherence
 - Each group must have at least 2 bullets
-- Maximum 4 bullets per group
+- Maximum 4 bullets per group (aim for 3-4 bullets per group)
 - Preserve original order when possible
 - Be generic: work for any domain (not just math/science)
+- Goal: Create slides that are digestible, not overwhelming
 
 Return ONLY valid JSON (no markdown, no code blocks):
 {{
@@ -112,7 +113,7 @@ Return ONLY valid JSON (no markdown, no code blocks):
     
     def _fallback_split(self, slide: SlideContent) -> List[SlideContent]:
         content_count = len(slide.content)
-        items_per_chunk = 4
+        items_per_chunk = 3
         
         split_slides = []
         for i in range(0, content_count, items_per_chunk):

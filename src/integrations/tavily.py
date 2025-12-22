@@ -33,6 +33,8 @@ class TavilyClient:
             headers = {
                 "Content-Type": "application/json"
             }
+            is_vn = self._is_vietnamese(enhanced_query) or (slide_title and self._is_vietnamese(slide_title))
+            
             payload = {
                 "api_key": self.api_key,
                 "query": enhanced_query,
@@ -40,6 +42,10 @@ class TavilyClient:
                 "include_images": True,
                 "max_results": max_results
             }
+            
+            if is_vn:
+                payload["query"] = f"{enhanced_query} Vietnam Vietnamese"
+                payload["search_depth"] = "advanced"
             
             with httpx.Client(timeout=10.0) as client:
                 response = client.post(url, json=payload, headers=headers)

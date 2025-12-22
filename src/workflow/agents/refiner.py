@@ -17,15 +17,16 @@ class SlideRefinerAgent:
         language: str
     ) -> SlideContent:
         
-        system_prompt = f"""You are refining a lecture slide to add missing information.
+        system_prompt = f"""You are refining a lecture slide to add missing information while maintaining a friendly, approachable tone.
 
 The original slide is incomplete. Your task:
 1. Keep all existing good content
-2. ADD the missing information listed below
-3. Expand speaker notes with the missing context
-4. Ensure comprehensive coverage
+2. ADD the missing information listed below, prioritizing the most important points
+3. Ensure MAXIMUM 5 bullet points total (combine or prioritize if needed)
+4. Maintain friendly, conversational tone - warm and approachable, not formal or rigid
+5. Expand speaker notes with the missing context (4-6 sentences, conversational)
 
-Write in {language} language.
+Write in {language} language with a friendly, engaging tone.
 
 Return ONLY valid JSON with complete slide structure."""
 
@@ -42,17 +43,20 @@ RELEVANT SOURCE TEXT:
 
 Generate REFINED slide with:
 - Same title
-- 6-8 bullet points including both original AND missing information
-- Expanded speaker notes (5-7 sentences) covering everything
+- MAXIMUM 5 bullet points total (combine original and missing info, prioritize the most important)
+- Use friendly, conversational language - be warm and approachable
+- Speaker notes (4-6 sentences) covering everything in a friendly, conversational way
 - Same image_query
+
+IMPORTANT: If adding missing info would exceed 5 bullets, prioritize the most important points. Better to have 4-5 clear, friendly points than 6+ dense ones.
 
 Return ONLY valid JSON:
 {{
   "slide_id": "{original_slide.slide_id}",
   "slide_type": "{original_slide.slide_type}",
   "title": "...",
-  "content": ["...", "..."],
-  "speaker_notes": "...",
+  "content": ["Friendly point 1", "Friendly point 2", "Point 3", "Point 4 (if needed)", "Point 5 (if needed)"],
+  "speaker_notes": "Warm, conversational explanation (4-6 sentences)",
   "image_query": "{original_slide.image_query}"
 }}"""
         

@@ -59,7 +59,7 @@ class ReviewerAgent:
         prompt = f"""Compare slides against source document. Detect hallucinations.
 
 SOURCE DOCUMENT:
-{context.text_content.markdown[:4000]}
+{context.text_content.markdown[:10000]}
 
 SLIDES:
 {json.dumps([{"title": s.title, "content": s.content} for s in slides], indent=2)}
@@ -92,19 +92,20 @@ PLANNED OUTLINE:
 {json.dumps(lecture_plan, indent=2)}
 
 SLIDES:
-{json.dumps([{"title": s.title, "content": s.content} for s in slides], indent=2)}
+{json.dumps([{"title": s.title, "content": s.content, "speaker_notes": s.speaker_notes} for s in slides], indent=2)}
 
 Check:
-1. Text density: Each bullet <= 15 words? Total per slide <= 80 words?
-2. Structure: 3-5 bullets per slide?
-3. Flow: Logical progression?
-4. Clarity: Jargon explained?
+1. Content density: Maximum 5 bullets per slide? Each bullet <= 15 words? Total per slide <= 75 words?
+2. Tone: Is the language friendly, approachable, and conversational? Avoid overly formal, rigid, or academic tone.
+3. Structure: 3-5 bullets per slide? (4-5 is ideal, 6+ is too many)
+4. Flow: Logical progression between slides?
+5. Clarity: Easy to understand? Jargon explained in friendly terms?
 
 Return ONLY valid JSON:
 {{
   "score": 75,
-  "issues": ["Slide 2 has 6 bullets, too many"],
-  "suggestions": ["Reduce to 4-5 key points"]
+  "issues": ["Slide 2 has 7 bullets, too dense - should be max 5", "Slide 3 uses overly formal academic language"],
+  "suggestions": ["Split into 2 slides or reduce to 4-5 key points", "Use more friendly, conversational tone"]
 }}"""
         
         lightning_integration.emit_prompt(prompt=prompt, model=self.model, metadata={"agent": "reviewer", "criterion": "pedagogical_flow"})
@@ -203,10 +204,10 @@ Return ONLY valid JSON:
     
     def _generate_summary(self, score: float, decision: str, feedback: List[Dict]) -> str:
         if decision == "ACCEPT":
-            return f"✅ Slides passed review with score {score:.1f}/100. Ready for rendering."
+            return f"Slides passed review with score {score:.1f}/100. Ready for rendering."
         elif decision == "RETRY":
             issues_count = len(feedback)
-            return f"⚠️ Score {score:.1f}/100. Found {issues_count} issues requiring revision."
+            return f"Score {score:.1f}/100. Found {issues_count} issues requiring revision."
         else:
-            return f"❌ Score {score:.1f}/100. Major issues detected. Recommend regeneration."
+            return f"Score {score:.1f}/100. Major issues detected. Recommend regeneration."
 

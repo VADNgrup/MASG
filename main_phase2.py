@@ -81,15 +81,19 @@ async def main():
     print()
 
 def _compute_image_stats(decisions: list) -> dict:
-    stats = {"original": 0, "unsplash": 0, "generated": 0}
+    stats = {"original": 0, "tavily": 0, "generated": 0, "none": 0}
     for decision in decisions:
-        source = decision.get("final_source", decision.get("decision", ""))
-        if "original" in source.lower():
+        final_source = decision.get("final_source", "").lower()
+        decision_type = decision.get("decision", "").lower()
+        
+        if "original" in final_source or "original" in decision_type or "force_original" in decision_type:
             stats["original"] += 1
-        elif "generated" in source.lower():
+        elif "tavily" in final_source or "search" in decision_type:
+            stats["tavily"] += 1
+        elif "generated" in final_source or "generated" in decision_type:
             stats["generated"] += 1
-        elif "unsplash" in source.lower():
-            stats["unsplash"] += 1
+        elif final_source == "none" or not final_source:
+            stats["none"] += 1
     return stats
 
 if __name__ == "__main__":

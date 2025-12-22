@@ -48,9 +48,9 @@ class AssetManager:
         
         original_asset = next((img for img in context.assets.images if img.image_id == best_match["image_id"]), None)
         
-        if original_asset and original_asset.content_type in ["diagram", "table_image", "technical_diagram", "data_chart"]:
+        if original_asset and original_asset.content_type in ["table_image", "data_chart", "screenshot_code"]:
             decision_log["decision"] = "FORCE_ORIGINAL_BY_CONTENT_TYPE"
-            decision_log["reason"] = f"Content type '{original_asset.content_type}' from Phase 1 - must use original"
+            decision_log["reason"] = f"Content type '{original_asset.content_type}' from Phase 1 - contains specific data, must use original"
             decision_log["phase1_content_type"] = original_asset.content_type
             
             return ImageReference(
@@ -78,15 +78,27 @@ class AssetManager:
         quality_score = self.quality_assessor.assess_quality(image_path)
         decision_log["quality_score"] = quality_score
         
-        if quality_score < 0.5 or classification["type"] == "decorative_photo":
+        if quality_score < 0.4 or classification["type"] == "decorative_photo":
             decision_log["decision"] = "SEARCH_BETTER"
-            decision_log["reason"] = f"Low quality ({quality_score}) or decorative"
+            decision_log["reason"] = f"Low quality ({quality_score:.2f}) or decorative"
             
             return await self._search_better_version(query, decision_log, slide_title, slide_content)
         
-        if best_match["score"] >= 0.8:
+        if original_asset and original_asset.content_type in ["diagram", "technical_diagram"]:
+            if best_match["score"] >= 0.65:
+                decision_log["decision"] = "USE_ORIGINAL_DIAGRAM"
+                decision_log["reason"] = f"Diagram from original document with reasonable match ({best_match['score']:.2f}) - prefer original over external"
+                
+                return ImageReference(
+                    source="original",
+                    priority=1,
+                    image_id=best_match["image_id"],
+                    metadata={"diagram_from_source": True, "match_score": best_match["score"]}
+                ), decision_log
+        
+        if best_match["score"] >= 0.75:
             decision_log["decision"] = "USE_ORIGINAL"
-            decision_log["reason"] = f"Strong semantic match ({best_match['score']:.2f})"
+            decision_log["reason"] = f"Good semantic match ({best_match['score']:.2f}) - using original image"
             
             return ImageReference(
                 source="original",
@@ -94,7 +106,8 @@ class AssetManager:
                 image_id=best_match["image_id"]
             ), decision_log
         else:
-            decision_log["decision"] = "WEAK_MATCH_SEARCH_BETTER"
+            decision_log["decision"] = "SEARCH_BETTER_MATCH"
+            decision_log["reason"] = f"Match score {best_match['score']:.2f} below threshold (0.75) - searching for better image"
             return await self._search_better_version(query, decision_log, slide_title, slide_content)
     
     def _semantic_search_originals(self, query: str, images: List[ImageAsset]) -> List[Dict]:

@@ -38,7 +38,7 @@ class SlideOptimizerAgent:
         
         content_preview = chr(10).join(slide.content[:3]) if slide.content else "No content"
         
-        prompt = f"""Analyze this lecture slide and suggest optimizations for professional presentation.
+        prompt = f"""Analyze this lecture slide and suggest optimizations for professional, friendly presentation.
 
 SLIDE DATA:
 Title: {slide.title}
@@ -50,10 +50,13 @@ Content preview:
 {content_preview}
 
 ANALYSIS TASKS:
-1. Should this slide be split? (Consider: >5 bullets OR >80 chars/bullet average = too dense)
+1. Should this slide be split? (Consider: >5 bullets OR >75 chars/bullet average = too dense)
+   - Maximum 5 bullets per slide for optimal readability
+   - If 6+ bullets, recommend splitting
 2. What's the optimal layout? (two-cols, image-bottom, centered, default)
 3. Classify each bullet point type: "formula", "definition", "example", "property", "other"
-4. Suggest visual enhancements (icons, colors, emphasis)
+4. Is the tone friendly and approachable? (Check for overly formal, rigid, or academic language)
+5. Suggest visual enhancements (icons, colors, emphasis)
 
 Return ONLY valid JSON (no markdown, no code blocks):
 {{
