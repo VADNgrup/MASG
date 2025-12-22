@@ -18,9 +18,19 @@ def detect_section_changes(slides: List[SlideContent]) -> List[int]:
     
     return section_indices
 
-def generate_section_divider(title: str) -> str:
-    return f"""---
-theme: default
+def generate_section_divider(title: str, subtitle: str = "") -> str:
+    if subtitle:
+        return f"""---
+layout: section
+---
+
+# {title}
+## {subtitle}
+
+---
+"""
+    else:
+        return f"""---
 layout: section
 ---
 

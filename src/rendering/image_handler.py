@@ -4,12 +4,16 @@ import httpx
 import shutil
 from src.models.slide import ImageReference
 from src.utils.config import config
+from src.integrations.tavily import TavilyClient
+from src.integrations.unsplash import UnsplashClient
 
 class ImageHandler:
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
         self.images_dir = output_dir / "public" / "images"
         self.images_dir.mkdir(parents=True, exist_ok=True)
+        self.tavily_client = TavilyClient()
+        self.unsplash_client = UnsplashClient()
     
     def resolve_image_path(self, image_ref: Optional[ImageReference]) -> Optional[str]:
         if not image_ref:
@@ -74,4 +78,20 @@ class ImageHandler:
         except Exception as e:
             print(f"Error downloading image from {url}: {e}")
             raise
+    
+    def get_background_image(self, query: str = "abstract gradient", use_vietnamese: bool = False) -> str:
+        background_url = None
+        
+        if use_vietnamese:
+            tavily_url = self.tavily_client.search(f"{query} background", lang="vi")
+            if tavily_url:
+                background_url = tavily_url
+        
+        if not background_url:
+            background_url = self.unsplash_client.search_background(query)
+        
+        if not background_url:
+            background_url = "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?w=1920"
+        
+        return background_url
 

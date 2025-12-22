@@ -16,4 +16,6 @@ pyunsplash>=1.0.0
 scikit-learn>=1.3.0
 httpx>=0.24.0
 agentlightning>=0.1.0
+tavily-python>=0.3.0
+requests>=2.31.0
 

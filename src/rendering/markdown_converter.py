@@ -1,131 +1,188 @@
 from typing import List, Optional, Dict, Any
 from src.models.slide import SlideContent
-from src.rendering.layout_optimizer import determine_optimal_layout
-from src.rendering.content_formatter import format_slide_content
-import re
+from src.rendering.content_formatter import ContentFormatter
+from src.rendering.slide_layout_decider import SlideLayoutDecider
+from src.rendering.smart_slide_splitter import SmartSlideSplitter
 
-def escape_markdown(text: str) -> str:
-    if not text:
-        return ""
-    text = text.replace("\\", "\\\\")
-    text = text.replace("*", "\\*")
-    text = text.replace("_", "\\_")
-    text = text.replace("[", "\\[")
-    text = text.replace("]", "\\]")
-    text = text.replace("(", "\\(")
-    text = text.replace(")", "\\)")
-    text = text.replace("`", "\\`")
-    return text
+class MarkdownConverter:
+    def __init__(self):
+        self.formatter = ContentFormatter()
+        self.layout_decider = SlideLayoutDecider()
+        self.splitter = SmartSlideSplitter()
+    
+    def convert_slide_to_markdown(
+        self,
+        slide: SlideContent,
+        image_path: Optional[str] = None,
+        optimization_metadata: Optional[Dict[str, Any]] = None
+    ) -> str:
+        slide_type = slide.slide_type.lower() if slide.slide_type else "default"
+        
+        if slide_type in ["cover", "section"]:
+            return self._format_special_slide(slide, slide_type)
+        
+        layout_decision = self.layout_decider.decide_layout(slide, bool(image_path))
+        
+        content_types = None
+        if optimization_metadata:
+            content_types = optimization_metadata.get("content_types")
+        
+        layout = layout_decision["layout"]
+        density = layout_decision.get("density", "medium")
 
-def format_image_block(image_path: str, layout: str) -> str:
-    if not image_path:
-        return ""
-    
-    if layout == "two-cols":
-        return f""":::
-:right:
-
-![Image]({image_path})
-:::"""
-    elif layout == "image-bottom":
-        return f"\n\n<div class=\"flex justify-center mt-4\">\n  <img src=\"{image_path}\" class=\"max-h-96\" />\n</div>\n"
-    else:
-        return f"\n![Image]({image_path})\n"
-
-def convert_slide_to_markdown(
-    slide: SlideContent, 
-    image_path: Optional[str] = None,
-    optimization_metadata: Optional[Dict[str, Any]] = None
-) -> str:
-    slide_type = slide.slide_type.lower() if slide.slide_type else "default"
-    
-    if slide_type == "cover":
-        layout = "cover"
-    elif slide_type == "section":
-        layout = "section"
-    elif image_path:
-        layout = "two-cols"
-    else:
-        layout = "default"
-    
-    frontmatter = f"---\ntheme: default\nlayout: {layout}\n"
-    
-    if slide.speaker_notes:
-        notes_content = slide.speaker_notes.replace("\n", "\n  ")
-        frontmatter += f"notes: |\n  {notes_content}\n"
-    
-    frontmatter += "---\n\n"
-    
-    if layout in ["cover", "section"]:
-        if layout == "cover":
-            frontmatter += f"# {slide.title}\n\n"
-            if slide.content and len(slide.content) > 0:
-                frontmatter += f"{slide.content[0]}\n\n"
-        elif layout == "section":
-            frontmatter += f"# {slide.title}\n\n"
-            if slide.content and len(slide.content) > 0:
-                frontmatter += f"{slide.content[0]}\n\n"
-        return frontmatter
-    
-    title = f"# {slide.title}\n\n"
-    
-    content_types = None
-    visual_hints = None
-    if optimization_metadata:
-        content_types = optimization_metadata.get("content_types")
-        visual_hints = optimization_metadata.get("visual_hints")
-    
-    formatted_content = format_slide_content(slide.content, content_types, visual_hints)
-    
-    if layout == "two-cols" and image_path:
-        content_lines = [f"- {bullet}" for bullet in formatted_content if bullet]
-        content = "\n".join(content_lines) + "\n\n"
-        image_block = f""":::
-:right:
-
-![Image]({image_path})
-:::
+        frontmatter = f"""---
+layout: {layout}
+transition: slide-left
 """
-        return frontmatter + title + content + image_block
-    else:
-        content_lines = [f"- {bullet}" for bullet in formatted_content if bullet]
-        content = "\n".join(content_lines) + "\n\n"
-        return frontmatter + title + content
+        
+        if slide.speaker_notes:
+            notes_content = slide.speaker_notes.replace("\n", "\n  ")
+            frontmatter += f"notes: |\n  {notes_content}\n"
+        
+        frontmatter += "---\n\n"
+        
+        title = f"# {slide.title}\n\n"
 
-def convert_lecture_to_slidev(lecture_json: dict, image_handler, optimizer_agent=None) -> str:
-    optimization_metadata_map = {}
+        if layout == "two-cols":
+            return self._format_two_cols(slide, image_path, content_types, frontmatter, title, density)
+        if layout == "center":
+            return self._format_center(slide, content_types, frontmatter, title)
+        if density == "high":
+            return self._format_grid(slide, content_types, frontmatter, title)
+        return self._format_default(slide, content_types, frontmatter, title)
     
-    if optimizer_agent:
-        try:
-            optimized_json = optimizer_agent.optimize(lecture_json)
-            optimization_results = optimized_json.get("optimization_metadata", [])
-            for result in optimization_results:
-                optimization_metadata_map[result["slide_id"]] = result["suggestions"]
-        except Exception as e:
-            print(f"Optimizer agent error: {e}, continuing without optimization")
+    def _format_special_slide(self, slide: SlideContent, slide_type: str) -> str:
+        if slide_type == "cover":
+            return ""
+        elif slide_type == "section":
+            return ""
+        return ""
     
-    from src.rendering.slide_splitter import smart_split_slide
-    from src.rendering.section_dividers import add_section_dividers
-    
-    all_slides = []
-    all_slides_markdown = []
-    
-    for slide_data in lecture_json.get("slides", []):
-        slide = SlideContent(**slide_data)
-        optimization_metadata = optimization_metadata_map.get(slide.slide_id)
+    def _format_two_cols(
+        self,
+        slide: SlideContent,
+        image_path: Optional[str],
+        content_types: Optional[List[str]],
+        frontmatter: str,
+        title: str,
+        density: str
+    ) -> str:
+        split_point = len(slide.content) // 2
         
-        split_slides = smart_split_slide(slide, optimization_metadata)
+        left_boxes, right_boxes = self.formatter.format_for_two_cols(
+            slide.content,
+            content_types,
+            split_point
+        )
         
-        for split_slide in split_slides:
-            all_slides.append(split_slide)
-            image_path = image_handler.resolve_image_path(split_slide.image) if split_slide.image else None
-            
-            split_optimization = optimization_metadata_map.get(split_slide.slide_id) or optimization_metadata
-            
-            slide_md = convert_slide_to_markdown(split_slide, image_path, split_optimization)
-            all_slides_markdown.append(slide_md)
+        left_content = f'<div class="mt-8 space-y-6">\n\n'
+        left_content += "\n\n".join(left_boxes)
+        left_content += "\n\n</div>\n\n"
+        
+        right_content = f'<div class="ml-8 mt-8">\n\n'
+        
+        if image_path:
+            right_content += f'<div class="mb-6">\n<img src="{image_path}" class="rounded-2xl shadow-lg" />\n</div>\n\n'
+        
+        if right_boxes:
+            right_content += '<div class="space-y-6">\n\n'
+            right_content += "\n\n".join(right_boxes)
+            right_content += "\n\n</div>\n\n"
+        
+        right_content += "</div>\n"
+        
+        return frontmatter + title + left_content + "::right::\n\n" + right_content
     
-    slides_with_dividers = add_section_dividers(all_slides_markdown, all_slides)
+    def _format_grid(
+        self,
+        slide: SlideContent,
+        content_types: Optional[List[str]],
+        frontmatter: str,
+        title: str,
+    ) -> str:
+        boxes = self.formatter.format_bullets_with_boxes(slide.content, content_types)
+        
+        grid_content = '<div class="grid grid-cols-2 gap-8 mt-8">\n\n<div>\n\n'
+        
+        mid = len(boxes) // 2
+        grid_content += "\n\n".join(boxes[:mid])
+        grid_content += "\n\n</div>\n\n<div>\n\n"
+        grid_content += "\n\n".join(boxes[mid:])
+        grid_content += "\n\n</div>\n\n</div>\n"
+        
+        return frontmatter + title + grid_content
+
+    def _format_center(
+        self,
+        slide: SlideContent,
+        content_types: Optional[List[str]],
+        frontmatter: str,
+        title: str,
+    ) -> str:
+        boxes = self.formatter.format_bullets_with_boxes(slide.content, content_types)
+
+        content = '<div class="mt-10 max-w-3xl mx-auto space-y-6 text-center">\n\n'
+        content += "\n\n".join(
+            box.replace('class="', 'class="max-w-xl mx-auto ')
+            for box in boxes
+        )
+        content += "\n\n</div>\n"
+
+        return frontmatter + title + content
     
-    return "\n---\n\n".join(slides_with_dividers)
+    def _format_default(
+        self,
+        slide: SlideContent,
+        content_types: Optional[List[str]],
+        frontmatter: str,
+        title: str
+    ) -> str:
+        boxes = self.formatter.format_bullets_with_boxes(slide.content, content_types)
+        
+        content = '<div class="mt-8 space-y-6">\n\n'
+        content += "\n\n".join(boxes)
+        content += "\n\n</div>\n"
+        
+        return frontmatter + title + content
+    
+    def convert_lecture_to_slidev(
+        self,
+        lecture_json: dict,
+        image_handler,
+        optimizer_agent=None
+    ) -> str:
+        optimization_metadata_map = {}
+        
+        if optimizer_agent:
+            try:
+                optimized_json = optimizer_agent.optimize(lecture_json)
+                optimization_results = optimized_json.get("optimization_metadata", [])
+                for result in optimization_results:
+                    optimization_metadata_map[result["slide_id"]] = result["suggestions"]
+            except Exception as e:
+                print(f"Optimizer agent error: {e}, continuing without optimization")
+        
+        from src.rendering.section_dividers import add_section_dividers
+        
+        all_slides = []
+        all_slides_markdown = []
+        
+        for slide_data in lecture_json.get("slides", []):
+            slide = SlideContent(**slide_data)
+            optimization_metadata = optimization_metadata_map.get(slide.slide_id)
+            
+            split_slides = self.splitter.analyze_and_split(slide)
+            
+            for split_slide in split_slides:
+                all_slides.append(split_slide)
+                image_path = image_handler.resolve_image_path(split_slide.image) if split_slide.image else None
+                
+                split_optimization = optimization_metadata_map.get(split_slide.slide_id) or optimization_metadata
+                
+                slide_md = self.convert_slide_to_markdown(split_slide, image_path, split_optimization)
+                all_slides_markdown.append(slide_md)
+        
+        slides_with_dividers = add_section_dividers(all_slides_markdown, all_slides)
+        
+        return "\n---\n\n".join(slides_with_dividers)
 

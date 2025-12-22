@@ -8,6 +8,7 @@ class Config:
     LLAMA_CLOUD_API_KEY = os.getenv("LLAMA_CLOUD_API_KEY")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+    UNSPLASH_API_KEY = os.getenv("UNSPLASH_API_KEY")
     
     BASE_DIR = Path(__file__).parent.parent.parent
     DATA_DIR = BASE_DIR / "data"

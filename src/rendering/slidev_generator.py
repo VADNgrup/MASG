@@ -47,7 +47,15 @@ class SlidevGenerator:
             for style_file in source_styles.glob("*.css"):
                 shutil.copy2(style_file, target_styles / style_file.name)
     
-    def create_package_json(self, lecture_title: str = "Lecture"):
+    def create_package_json(self, lecture_title: str = "Lecture", theme: str = "seriph"):
+        theme_packages = {
+            "seriph": "@slidev/theme-seriph",
+            "default": "@slidev/theme-default",
+            "apple-basic": "@slidev/theme-apple-basic"
+        }
+        
+        theme_package = theme_packages.get(theme, "@slidev/theme-seriph")
+        
         package_json = {
             "name": "lecture-slides",
             "version": "1.0.0",
@@ -59,10 +67,7 @@ class SlidevGenerator:
             },
             "dependencies": {
                 "@slidev/cli": "^0.47.0",
-                "@slidev/theme-default": "*"
-            },
-            "devDependencies": {
-                "tailwindcss": "^3.0.0"
+                theme_package: "*"
             }
         }
         
@@ -75,21 +80,9 @@ class SlidevGenerator:
     
     def create_vite_config(self):
         vite_config = """import { defineConfig } from 'vite'
-import { resolve } from 'path'
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, './')
-    }
-  },
-  css: {
-    postcss: {
-      plugins: [
-        require('tailwindcss'),
-      ],
-    },
-  },
+  // Slidev has built-in Tailwind support
 })
 """
         vite_config_path = self.output_dir / "vite.config.ts"

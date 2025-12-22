@@ -1,49 +1,88 @@
-from typing import List, Optional, Dict, Any
-import re
+from typing import List, Optional
+from src.rendering.style_profile import get_block_style
 
-def format_bullet_with_style(bullet: str, content_type: Optional[str] = None) -> str:
-    if not content_type:
-        content_type = detect_content_type(bullet)
-    
-    if content_type == "formula":
-        return f'<span style="color: #6366f1; font-weight: 500">{bullet}</span>'
-    elif content_type == "definition":
-        return f'<span style="color: #2563eb">{bullet}</span>'
-    elif content_type == "example":
-        return f'<span style="color: #059669">{bullet}</span>'
-    elif content_type == "property":
-        return f'<span style="color: #ea580c">{bullet}</span>'
-    else:
-        return bullet
 
-def detect_content_type(bullet: str) -> str:
-    bullet_lower = bullet.lower()
-    
-    if any(char in bullet for char in ["=", "≤", "≥", "∈", "π", "sin", "cos", "tan", "cot", "+", "-", "×", "÷"]):
-        if re.search(r'[a-zA-Z]\s*[=≤≥]\s*', bullet) or re.search(r'\d+\s*[=≤≥]\s*', bullet):
-            return "formula"
-    
-    if bullet.startswith("Tập") or bullet.startswith("Điều kiện") or "là" in bullet[:30]:
-        return "definition"
-    
-    if "Ví dụ" in bullet or "Example" in bullet or "ví dụ" in bullet_lower:
+def detect_content_type(text: str) -> str:
+    text_lower = text.lower()
+
+    if any(keyword in text_lower for keyword in ["khái niệm", "định nghĩa", "là gì", "concept", "definition"]):
+        return "key_concept"
+
+    if any(keyword in text_lower for keyword in ["công thức", "formula", "equation"]):
+        return "formula"
+
+    if any(keyword in text_lower for keyword in ["ví dụ", "example", "minh họa"]):
         return "example"
-    
-    if "có" in bullet_lower[:20] or "là" in bullet_lower[:20]:
+
+    if any(keyword in text_lower for keyword in ["tính chất", "property", "đặc điểm"]):
         return "property"
-    
+
+    if any(keyword in text_lower for keyword in ["quan trọng", "important", "lưu ý", "chú ý", "warning"]):
+        return "important"
+
+    if any(keyword in text_lower for keyword in ["ghi chú", "note"]):
+        return "note"
+
     return "other"
 
-def format_slide_content(content: List[str], content_types: Optional[List[str]] = None, visual_hints: Optional[Dict[str, Any]] = None) -> List[str]:
-    if not visual_hints or not visual_hints.get("use_icons", True):
-        return content
+class ContentFormatter:
+    def format_bullets_with_boxes(
+        self, 
+        bullets: List[str], 
+        content_types: Optional[List[str]] = None
+    ) -> List[str]:
+        if not bullets:
+            return []
+        
+        formatted_boxes = []
+        
+        for i, bullet in enumerate(bullets):
+            content_type = content_types[i] if content_types and i < len(content_types) else None
+            if not content_type:
+                content_type = detect_content_type(bullet)
+            
+            box = self._create_gradient_box(bullet, content_type, i + 1)
+            formatted_boxes.append(box)
+        
+        return formatted_boxes
     
-    formatted = []
-    for i, bullet in enumerate(content):
-        content_type = content_types[i] if content_types and i < len(content_types) else None
-        formatted_bullet = format_bullet_with_style(bullet, content_type)
-        formatted.append(formatted_bullet)
-    
-    return formatted
+    def _create_gradient_box(self, content: str, content_type: str, vclick_num: int) -> str:
+        style = get_block_style(content_type)
 
+        box = f'''<div v-click="{vclick_num}" class="{style.surface}">
+  <div class="{style.label_class}">
+    {style.label_text}
+  </div>
+  <div class="{style.body_class}">
+    {content}
+  </div>
+</div>'''
+
+        return box
+    
+    def format_for_two_cols(
+        self,
+        bullets: List[str],
+        content_types: Optional[List[str]] = None,
+        split_point: Optional[int] = None
+    ) -> tuple[List[str], List[str]]:
+        if not split_point:
+            split_point = len(bullets) // 2
+        
+        left_bullets = bullets[:split_point]
+        right_bullets = bullets[split_point:]
+        
+        left_types = content_types[:split_point] if content_types else None
+        right_types = content_types[split_point:] if content_types else None
+        
+        left_boxes = self.format_bullets_with_boxes(left_bullets, left_types)
+        right_boxes = self.format_bullets_with_boxes(right_bullets, right_types)
+        
+        vclick_offset = len(left_boxes)
+        right_boxes_adjusted = []
+        for i, box in enumerate(right_boxes):
+            adjusted_box = box.replace(f'v-click="{i + 1}"', f'v-click="{i + 1 + vclick_offset}"')
+            right_boxes_adjusted.append(adjusted_box)
+        
+        return left_boxes, right_boxes_adjusted
 
