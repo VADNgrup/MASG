@@ -40,6 +40,8 @@ def create_workflow() -> StateGraph:
         
         for section in sections:
             slide = writer.draft_slide(section, state["document_context"], feedback)
+            slide_number = len(slides) + 1
+            slide.slide_id = f"slide_{slide_number:03d}"
             slides.append(slide)
         
         return {

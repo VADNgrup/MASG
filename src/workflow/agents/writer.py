@@ -129,7 +129,8 @@ CREATE SLIDES IN THE SAME LANGUAGE AS THE SOURCE MATERIAL WITH:
   * Don't make it dry or textbook-like - keep it lively and engaging like the original
   * If source uses questions, analogies, or vivid descriptions, preserve those elements
   * Make each point feel natural and compelling, not robotic or formulaic
-- Speaker notes (COMPREHENSIVE and DETAILED explanation, 8-15 sentences):
+ - Speaker notes (COMPREHENSIVE and DETAILED explanation, 8-15 sentences):
+  * Start immediately with the concept; NEVER include greetings/openings
   * Provide FULL, COMPLETE explanation of all concepts on the slide
   * Match the tone and enthusiasm of the source material
   * Explain with the same energy and clarity as the original
