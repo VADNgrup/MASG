@@ -143,6 +143,14 @@ CREATE SLIDES IN THE SAME LANGUAGE AS THE SOURCE MATERIAL WITH:
   * Be comprehensive - this is the speaker's full script, not a brief summary
 - Image query (in English, specific to this slide's content)
 
+SMART RENDERING METADATA:
+Analyze the content and set slide_subtype in metadata field:
+- "interactive-math": Trigonometric functions (sin, cos, tan), unit circle, math graphs that can be interactive
+- "interactive-code": Code demonstrations that should run live (Python, JavaScript)
+- "interactive-chart": Dynamic data visualization, charts, graphs
+- "split-view": Minimal text (≤3 points) + 1 important image → display side-by-side
+- "standard": Regular text content with adaptive layout
+
 CRITICAL RULES:
 1. MAXIMUM 5 bullet points per slide
 2. PRESERVE the original tone, energy, and style - don't make it generic or bland
@@ -150,6 +158,7 @@ CRITICAL RULES:
 4. Use the same language patterns and expressions as the source material
 5. If source material is detailed and rich, preserve that richness (within the 5-point limit)
 6. Use the SAME language as the source material (detect automatically), image_query in English
+7. ALWAYS set metadata.slide_subtype based on content analysis
 
 TONE PRESERVATION:
 - Read the source material carefully and match its energy
@@ -164,7 +173,10 @@ Return ONLY valid JSON:
   "title": "...",
   "content": ["Point 1 matching source tone", "Point 2 preserving original energy", "Point 3", "Point 4 (optional)", "Point 5 (optional)"],
   "speaker_notes": "COMPREHENSIVE explanation (8-15 sentences, detailed and thorough) that matches the tone, energy, and style of the source material. Fully explain all concepts, provide context, relationships, examples, and why each point matters. This is the speaker's complete script.",
-  "image_query": "specific descriptive query or null"
+  "image_query": "specific descriptive query or null",
+  "metadata": {{
+    "slide_subtype": "interactive-math"
+  }}
 }}"""
         
         user_prompt = f"""Section: {section['title']}

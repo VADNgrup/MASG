@@ -12,10 +12,12 @@ data/raw/*
 data/assets/*
 data/context/*
 data/lectures/*
+data/optimization/*
 !data/raw/.gitkeep
 !data/assets/.gitkeep
 !data/context/.gitkeep
 !data/lectures/.gitkeep
+!data/optimization/.gitkeep
 .pytest_cache/
 .coverage
 htmlcov/

@@ -47,6 +47,10 @@ async def main():
         tracer = lightning_setup.get_tracer()
         async with tracer.trace_context(name="lecture-generation"):
             result = await workflow.ainvoke(initial_state)
+        
+        trace_file = lightning_setup.save_traces()
+        if trace_file:
+            print(f"✓ Lightning traces saved to: {trace_file}")
     else:
         result = await workflow.ainvoke(initial_state)
     
