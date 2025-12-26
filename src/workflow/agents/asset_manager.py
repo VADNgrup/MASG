@@ -85,7 +85,7 @@ class AssetManager:
             return await self._search_better_version(query, decision_log, slide_title, slide_content)
         
         if original_asset and original_asset.content_type in ["diagram", "technical_diagram"]:
-            if best_match["score"] >= 0.65:
+            if best_match["score"] >= 0.55:
                 decision_log["decision"] = "USE_ORIGINAL_DIAGRAM"
                 decision_log["reason"] = f"Diagram from original document with reasonable match ({best_match['score']:.2f}) - prefer original over external"
                 
@@ -96,7 +96,7 @@ class AssetManager:
                     metadata={"diagram_from_source": True, "match_score": best_match["score"]}
                 ), decision_log
         
-        if best_match["score"] >= 0.75:
+        if best_match["score"] >= 0.55:
             decision_log["decision"] = "USE_ORIGINAL"
             decision_log["reason"] = f"Good semantic match ({best_match['score']:.2f}) - using original image"
             
@@ -107,7 +107,7 @@ class AssetManager:
             ), decision_log
         else:
             decision_log["decision"] = "SEARCH_BETTER_MATCH"
-            decision_log["reason"] = f"Match score {best_match['score']:.2f} below threshold (0.75) - searching for better image"
+            decision_log["reason"] = f"Match score {best_match['score']:.2f} below threshold (0.55) - searching for better image"
             return await self._search_better_version(query, decision_log, slide_title, slide_content)
     
     def _semantic_search_originals(self, query: str, images: List[ImageAsset]) -> List[Dict]:
