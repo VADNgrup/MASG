@@ -75,7 +75,7 @@ def generate_slides(json_path, output_path):
     theme_builder = ThemeBuilderAgent()
     theme = theme_builder.build_theme(intermediate_slides)
     
-    theme_css = theme_builder.generate_theme_css(theme, lecture_id)
+    theme_css = theme_builder.generate_theme_css(theme, lecture_id, intermediate_slides)
     theme_css_path = Path("slidev/theme") / f"{lecture_id}.css"
     theme_css_path.parent.mkdir(parents=True, exist_ok=True)
     with open(theme_css_path, 'w', encoding='utf-8') as f:
