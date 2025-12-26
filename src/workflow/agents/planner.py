@@ -23,6 +23,18 @@ class PlannerAgent:
         
         text_sections = self._split_into_logical_sections(full_text)
         
+        text_length = len(full_text)
+        
+        if text_length < 3000:
+            target_sections = "2-4"
+            complexity_level = "concise"
+        elif text_length < 10000:
+            target_sections = "5-8"
+            complexity_level = "detailed"
+        else:
+            target_sections = "8-12"
+            complexity_level = "comprehensive"
+
         assets_info = f"""
 Available Visual Assets:
 - Diagrams: {len(diagrams)} (technical illustrations)
@@ -30,10 +42,11 @@ Available Visual Assets:
 - Total Images: {len(context.assets.images)}
 """
         
-        prompt = f"""You are creating a comprehensive lecture outline. Think step-by-step:
+        prompt = f"""You are creating a {complexity_level} lecture outline. Think step-by-step:
 
 STEP 1: Analyze the document structure
 The document has {len(text_sections)} main sections based on content analysis.
+Document length: {text_length} characters.
 
 FULL DOCUMENT TEXT:
 {full_text}
@@ -47,7 +60,7 @@ STEP 2: Identify ALL key topics that must be covered:
 
 STEP 3: Create detailed outline
 REQUIREMENTS:
-1. Create 8-12 sections to cover ALL content (not 4-6)
+1. Create {target_sections} sections to cover ALL content
 2. Each major concept gets its own section
 3. Each data table gets a dedicated section
 4. Include specific key_concepts from source text (not generic)
