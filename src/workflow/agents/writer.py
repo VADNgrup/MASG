@@ -195,8 +195,6 @@ Generate ONE slide for this section. Use the SAME language as the source materia
 If image needed, create SPECIFIC query matching slide content (not generic "unit circle")."""
         
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
-        lightning_integration.emit_prompt(prompt=full_prompt, model=self.model, metadata={"agent": "writer", "action": "draft_slide", "section": section.get('title', '')})
-        
         response = self.llm.invoke([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}

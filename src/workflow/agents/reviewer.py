@@ -76,8 +76,6 @@ Return ONLY valid JSON:
   "suggestions": ["Verify dates against source"]
 }}"""
         
-        lightning_integration.emit_prompt(prompt=prompt, model=self.model, metadata={"agent": "reviewer", "criterion": "faithfulness"})
-        
         response = await self.llm.ainvoke(prompt)
         return self._parse_criterion_response(response.content)
     
@@ -108,8 +106,6 @@ Return ONLY valid JSON:
   "suggestions": ["Split into 2 slides or reduce to 4-5 key points", "Use more friendly, conversational tone"]
 }}"""
         
-        lightning_integration.emit_prompt(prompt=prompt, model=self.model, metadata={"agent": "reviewer", "criterion": "pedagogical_flow"})
-        
         response = await self.llm.ainvoke(prompt)
         return self._parse_criterion_response(response.content)
     
@@ -139,7 +135,7 @@ Return ONLY valid JSON:
   "suggestions": []
 }}"""
         
-        lightning_integration.emit_prompt(prompt=prompt, model=self.model, metadata={"agent": "reviewer", "criterion": "visual_alignment"})
+        # Auto-instrumented by agentlightning
         
         response = await self.llm.ainvoke(prompt)
         return self._parse_criterion_response(response.content)

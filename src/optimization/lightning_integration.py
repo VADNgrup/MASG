@@ -13,32 +13,10 @@ class LightningIntegration:
         self.enabled = lightning_setup.is_available()
     
     def emit_prompt(self, prompt: str, model: str, metadata: Optional[Dict[str, Any]] = None):
-        if not self.enabled or not agl:
-            return
-        
-        try:
-            if hasattr(agl, 'emit_prompt'):
-                agl.emit_prompt(
-                    prompt=prompt,
-                    model=model,
-                    metadata=metadata or {}
-                )
-        except Exception as e:
-            print(f"Agent Lightning emit_prompt error: {e}")
+        pass
     
     def emit_tool_call(self, tool_name: str, args: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None):
-        if not self.enabled or not agl:
-            return
-        
-        try:
-            if hasattr(agl, 'emit_tool_call'):
-                agl.emit_tool_call(
-                    tool_name=tool_name,
-                    args=args,
-                    metadata=metadata or {}
-                )
-        except Exception as e:
-            print(f"Agent Lightning emit_tool_call error: {e}")
+        pass
     
     def emit_reward(self, reward: float, task_id: str, metadata: Optional[Dict[str, Any]] = None):
         if not self.enabled or not agl:

@@ -8,6 +8,7 @@ except ImportError:
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
+from agentlightning.instrumentation import instrument_all
 
 class LightningSetup:
     def __init__(self, storage_path: Optional[Path] = None):
@@ -19,6 +20,7 @@ class LightningSetup:
         
         if self.available and agl:
             try:
+                instrument_all()
                 self.tracer = agl.OtelTracer()
                 self.store = agl.InMemoryLightningStore()
                 self.tracer.init_worker(worker_id=0)

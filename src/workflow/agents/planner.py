@@ -83,8 +83,6 @@ Generate structured lecture outline in JSON:
 CRITICAL: Extract section titles and key_concepts DIRECTLY from the source text.
 Return ONLY valid JSON, no markdown formatting."""
         
-        lightning_integration.emit_prompt(prompt=prompt, model=self.model, metadata={"agent": "planner", "action": "create_outline"})
-        
         response = self.llm.invoke(prompt)
         
         try:
