@@ -3,11 +3,19 @@ import argparse
 import os
 import shutil
 from pathlib import Path
+import sys
 
-from src.generator.intermediate_format import transform_to_intermediate
-from src.generator.agents.layout_analyzer import LayoutAnalyzer
-from src.generator.agents.layout_selector import LayoutSelector
-from src.generator.agents.slide_decorator import SlideDecorator
+try:
+    from src.generator.intermediate_format import transform_to_intermediate
+    from src.generator.agents.layout_analyzer import LayoutAnalyzer
+    from src.generator.agents.layout_selector import LayoutSelector
+    from src.generator.agents.slide_decorator import SlideDecorator
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from src.generator.intermediate_format import transform_to_intermediate
+    from src.generator.agents.layout_analyzer import LayoutAnalyzer
+    from src.generator.agents.layout_selector import LayoutSelector
+    from src.generator.agents.slide_decorator import SlideDecorator
 
 def generate_slides(json_path, output_path):
     with open(json_path, 'r', encoding='utf-8') as f:
