@@ -9,4 +9,9 @@ python src/preprocessor/preprocessing_context.py --context data/context/{doc_id}
 
 # 3. Generate slides
 python src/generator/slide_generator.py data/lectures/{file_name}.json slidev/slides.md
+
+# 4. After generating slides, you can run slidev to preview the slides
+cd slidev
+npm install
+npm run dev
 ```
