@@ -62,10 +62,7 @@ class WriterAgent:
                     start_note = last_note_start + len('"speaker_notes": "')
                     note_content = json_str[start_note:]
                     note_content = note_content.rstrip().rstrip('"').rstrip(',').rstrip('}')
-                    note_content = note_content.replace('\n', ' ').replace('\r', '')
                     note_content = note_content.replace('"', "'")
-                    if len(note_content) > 300:
-                        note_content = note_content[:300]
                     json_str = json_str[:start_note] + note_content + '"}'
             
             if '"image_query":' not in json_str:
@@ -94,7 +91,7 @@ class WriterAgent:
             return f"\nAvailable images from document:\n" + "\n".join(relevant_images[:5])
         return ""
     def __init__(self, model: str = "gpt-4o"):
-        self.llm = ChatOpenAI(model=model, temperature=0.4, max_tokens=8000)
+        self.llm = ChatOpenAI(model=model, temperature=0.4, max_tokens=16000)
         self.model = model
     
     def draft_slide(
@@ -109,26 +106,41 @@ class WriterAgent:
         
         system_prompt = """You are creating engaging, lively lecture slides that capture the essence and energy of the source material.
 
-CRITICAL: PRESERVE THE ORIGINAL TONE AND STYLE
+CRITICAL: PRESERVE THE ORIGINAL TONE, STYLE, AND CONTENT STRUCTURE
 - Match the energy, enthusiasm, and tone of the source material
 - If the source is passionate, be passionate. If it's clear and direct, be clear and direct.
 - Don't flatten or sanitize the content - keep its personality!
 - Use the same language patterns, expressions, and flow as the source
+- PRESERVE ALL ORIGINAL CONTENT STRUCTURES: tables, code blocks, diagrams, lists, and formatting
+- When source material contains tables, maintain them in complete markdown format
+- Keep technical content, formulas, code snippets, and structured data intact
+
+CONTENT PRESERVATION RULES:
+- If source has tables in markdown format, preserve them EXACTLY as they appear
+- Example: Keep tables like "| Cột 1 | Cột 2 |\n| ----- | ----- |\n| 1 | 2 |" completely intact
+- Maintain code blocks, mathematical formulas, and technical diagrams without modification
+- Preserve lists, numbering, and hierarchical structures from the original
+- Don't summarize or remove structured content - keep it complete and accurate
 
 THINK STEP-BY-STEP:
 1. What tone and energy does the source material have? (Enthusiastic? Clear and direct? Detailed? Practical?)
 2. What are the 3-5 MOST important points? Preserve their original impact and meaning
 3. How did the source present these points? Maintain that style and approach
-4. Can one slide cover this? If too much, prioritize the most impactful points
+4. Are there tables, code, or structured content? Keep them complete and unmodified
+5. Can one slide cover this? If too much, prioritize the most impactful points while keeping structures intact
 
 CREATE SLIDES IN THE SAME LANGUAGE AS THE SOURCE MATERIAL WITH:
 - Title (max 8 words, capture the essence and energy of the content)
-- 3-5 bullet points ONLY (each 8-15 words)
+- Content array with 3-5 items:
+  * SPECIAL CASE - TABLES: If source contains markdown tables, include the COMPLETE table as ONE item in content array
+    Example: ["| Cột 1 | Cột 2 | Cột 3 |\n| ----- | ----- | ----- |\n| 1 | 2 | 3 |", "Additional context point", "Another point"]
+  * For regular content: 3-5 bullet points (each 8-15 words)
   * PRESERVE the original phrasing and energy when possible
   * Use the same language style as source - if source uses vivid examples, keep them!
   * Don't make it dry or textbook-like - keep it lively and engaging like the original
   * If source uses questions, analogies, or vivid descriptions, preserve those elements
   * Make each point feel natural and compelling, not robotic or formulaic
+  * NEVER summarize tables into text - always include the complete markdown table
  - Speaker notes (COMPREHENSIVE and DETAILED explanation, 8-15 sentences):
   * Start immediately with the concept; NEVER include greetings/openings
   * Provide FULL, COMPLETE explanation of all concepts on the slide
@@ -136,6 +148,7 @@ CREATE SLIDES IN THE SAME LANGUAGE AS THE SOURCE MATERIAL WITH:
   * Explain with the same energy and clarity as the original
   * Use the same teaching style - if source is detailed, be detailed; if concise, be concise
   * Include the same examples or analogies from source when relevant
+  * PRESERVE all tables, code blocks, and structured content from source in their complete markdown format
   * Expand on each bullet point thoroughly - don't just repeat the bullet points
   * Add context, background, relationships between concepts
   * Explain WHY each point matters and HOW it connects to the bigger picture
@@ -160,6 +173,9 @@ CRITICAL RULES:
 5. If source material is detailed and rich, preserve that richness (within the 5-point limit)
 6. Use the SAME language as the source material (detect automatically), image_query in English
 7. ALWAYS set metadata.slide_subtype based on content analysis
+8. NEVER remove or summarize tables, code blocks, or structured content - keep them complete
+9. Maintain all markdown formatting from source material (tables, lists, code blocks, etc.)
+10. DETECT TABLES: If source contains "| ... |" patterns, include the COMPLETE markdown table in content array, don't convert to text
 
 TONE PRESERVATION:
 - Read the source material carefully and match its energy
@@ -168,15 +184,30 @@ TONE PRESERVATION:
 - Don't strip away personality to make it "professional" - keep it alive!
 
 Return ONLY valid JSON:
+
+FOR REGULAR CONTENT (no tables):
 {{
   "slide_id": "slide_XXX",
   "slide_type": "content",
   "title": "...",
   "content": ["Point 1 matching source tone", "Point 2 preserving original energy", "Point 3", "Point 4 (optional)", "Point 5 (optional)"],
-  "speaker_notes": "COMPREHENSIVE explanation (8-15 sentences, detailed and thorough) that matches the tone, energy, and style of the source material. Fully explain all concepts, provide context, relationships, examples, and why each point matters. This is the speaker's complete script.",
+  "speaker_notes": "COMPREHENSIVE explanation (8-15 sentences, detailed and thorough) that matches the tone, energy, and style of the source material. Fully explain all concepts, provide context, relationships, examples, and why each point matters. Include ALL tables, code blocks, and structured content from source in their complete markdown format. This is the speaker's complete script.",
   "image_query": "specific descriptive query or null",
   "metadata": {{
-    "slide_subtype": "interactive-math"
+    "slide_subtype": "standard"
+  }}
+}}
+
+FOR CONTENT WITH TABLES:
+{{
+  "slide_id": "slide_XXX",
+  "slide_type": "content",
+  "title": "...",
+  "content": ["| Cột 1 | Cột 2 | Cột 3 | Cột 4 | Cột 5 |\\n| ----- | ----- | ----- | ----- | ----- |\\n| 1 | 2 | 3 | 4 | 5 |\\n| 1 | 2 | 3 | 4 | 5 |", "Additional context if needed", "Another point if relevant"],
+  "speaker_notes": "COMPREHENSIVE explanation including table context...",
+  "image_query": null,
+  "metadata": {{
+    "slide_subtype": "standard"
   }}
 }}"""
         

@@ -23,9 +23,19 @@ class ContextWindowBuilder:
         
         full_text = '\n\n'.join(parsed_content.text_blocks)
         
+        markdown_with_tables = full_text
+        
+        if tables_markdown:
+            tables_section = "\n\n## Tables\n\n"
+            for table in tables_markdown:
+                tables_section += f"\n### {table.table_id} (Page {table.page_number})\n\n"
+                tables_section += table.markdown + "\n\n"
+            
+            markdown_with_tables = full_text + tables_section
+        
         text_content = TextContent(
             clean_text=full_text,
-            markdown=full_text,
+            markdown=markdown_with_tables,
             page_count=parsed_content.page_count
         )
         
