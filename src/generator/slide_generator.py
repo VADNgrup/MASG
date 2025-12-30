@@ -16,27 +16,16 @@ def generate_slidev_presentation(lecture_json_path: str, output_slides_path: str
     with open(lecture_json_path, 'r', encoding='utf-8') as f:
         lecture_data = json.load(f)
     
-    is_design_ready = False
-    if 'slides' in lecture_data and lecture_data['slides']:
-        first_slide = lecture_data['slides'][0]
-        if 'slide_number' in first_slide and 'components' in first_slide:
-            is_design_ready = True
-            print(f"✓ Detected design-ready format with {lecture_data.get('total_slides', len(lecture_data['slides']))} slides")
-        else:
-            print(f"✓ Loaded {len(lecture_data.get('slides', []))} slides")
+    print(f"✓ Loaded {len(lecture_data.get('slides', []))} slides")
     
-    if is_design_ready:
-        print("\nSkipping Step 1: Input is already in design-ready format")
-        design_ready_data = lecture_data
-    else:
-        print("\nStep 1: Optimizing content with ContentAgent...")
-        content_agent = ContentAgent()
-        design_ready_data = content_agent.process_lecture(lecture_data)
-        
-        simplified_path = lecture_json_path.replace('.json', '_design_ready.json')
-        with open(simplified_path, 'w', encoding='utf-8') as f:
-            json.dump(design_ready_data, f, ensure_ascii=False, indent=2)
-        print(f"✓ Saved design-ready JSON to: {simplified_path}")
+    print("\nStep 1: Optimizing content with ContentAgent...")
+    content_agent = ContentAgent()
+    design_ready_data = content_agent.process_lecture(lecture_data)
+    
+    simplified_path = lecture_json_path.replace('.json', '_design_ready.json')
+    with open(simplified_path, 'w', encoding='utf-8') as f:
+        json.dump(design_ready_data, f, ensure_ascii=False, indent=2)
+    print(f"✓ Saved design-ready JSON to: {simplified_path}")
     
     print("\nStep 2: Generating Slidev markdown with MarkdownAgent...")
     markdown_agent = MarkdownAgent()

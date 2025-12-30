@@ -13,13 +13,11 @@ data/assets/*
 data/context/*
 data/lectures/*
 data/optimization/*
-data/slidev/*
 !data/raw/.gitkeep
 !data/assets/.gitkeep
 !data/context/.gitkeep
 !data/lectures/.gitkeep
 !data/optimization/.gitkeep
-!data/slidev/.gitkeep
 .pytest_cache/
 .coverage
 htmlcov/

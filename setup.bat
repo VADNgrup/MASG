@@ -31,6 +31,9 @@ if not exist .env (
     echo IMPORTANT: Please edit .env and add your API keys:
     echo - LLAMA_CLOUD_API_KEY
     echo - OPENAI_API_KEY
+    echo - TAVILY_API_KEY
+    echo - UNSPLASH_API_KEY
+
 )
 
 echo.
