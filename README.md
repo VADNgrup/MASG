@@ -8,16 +8,13 @@ Follow the steps below to generate lectures and slides:
 
 ```bash
 # 1. Extract document context from a raw file
-python -m src.extractor.extract_file \
-  --input data/raw/{file_name}.{file_type}
+python -m src.extractor.extract_file --input data/raw/{file_name}.{file_type}
 
 # 2. Preprocess context and generate smart metadata
-python -m src.preprocessor.preprocessing_context \
-  --context data/context/{doc_id}.json
+python -m src.preprocessor.preprocessing_context --context data/context/{doc_id}.json
 
 # 3. Generate Slidev-compatible slides
-python -m src.generator.slide_generator \
-  data/lectures/{file_name}.json slidev/slides.md
+python -m src.generator.slide_generator data/lectures/{file_name}.json slidev/slides.md
 
 # 4. Preview the generated slides using Slidev
 cd slidev
