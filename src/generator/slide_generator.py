@@ -3,12 +3,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.generator.agents.content import ContentAgent
-from src.generator.agents.markdown import MarkdownAgent
+from src.generator.agents.slidev_renderer import SlidevRenderer
 from src.generator.agents.validator import SlidevValidatorAgent
-from src.generator.agents.asset_manager import AssetManager
 import json
 
-def generate_slidev_presentation(lecture_json_path: str, output_slides_path: str = "slidev/slides.md"):
+def generate_slidev_presentation(
+    lecture_json_path: str, 
+    output_slides_path: str = "slidev/slides.md",
+    template_name: str = "dark_modern"
+):
     print("=" * 60)
     print("Slidev Presentation Generator")
     print("=" * 60)
@@ -19,47 +22,39 @@ def generate_slidev_presentation(lecture_json_path: str, output_slides_path: str
     
     print(f"✓ Loaded {len(lecture_data.get('slides', []))} slides")
     
-    print("\nStep 1: Optimizing content with ContentAgent...")
+    print("\nStage 1: Content Planner (LLM → JSON)")
     content_agent = ContentAgent()
-    design_ready_data = content_agent.process_lecture(lecture_data)
+    slide_json = content_agent.generate_slide_json(lecture_data)
     
-    simplified_path = lecture_json_path.replace('.json', '_design_ready.json')
-    with open(simplified_path, 'w', encoding='utf-8') as f:
-        json.dump(design_ready_data, f, ensure_ascii=False, indent=2)
-    print(f"✓ Saved design-ready JSON to: {simplified_path}")
+    json_path = lecture_json_path.replace('.json', '_slide_structure.json')
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(slide_json, f, ensure_ascii=False, indent=2)
+    print(f"✓ Generated content JSON")
     
-    print("\nStep 1.5: Copying lecture images to slidev/public...")
-    asset_manager = AssetManager()
-    design_ready_data = asset_manager.process_lecture_assets(design_ready_data, lecture_json_path)
-    print(f"✓ Images copied to slidev/public")
+    print(f"\nStage 2: Slidev Renderer (Python → Markdown)")
+    print(f"  Template: {template_name}")
+    renderer = SlidevRenderer(template_name=template_name)
+    markdown_content = renderer.render_slidev(slide_json)
+    print(f"✓ Rendered {len(markdown_content)} characters")
     
-    print("\nStep 2: Generating Slidev markdown with MarkdownAgent...")
-    markdown_agent = MarkdownAgent()
-    markdown_content = markdown_agent.generate_slidev_markdown(design_ready_data)
-    print(f"✓ Generated {len(markdown_content)} characters of markdown")
-    
-    print("\nStep 3: Validating and fixing with SlidevValidatorAgent...")
+    print(f"\nStage 3: Validation")
     validator = SlidevValidatorAgent()
     result = validator.validate_and_fix(markdown_content, output_slides_path)
     
     if result["success"]:
-        print(f"\nSUCCESS! Presentation generated successfully")
-        print(f"   Attempts: {result['attempts']}")
-        print(f"   Output: {output_slides_path}")
+        print(f"\nSUCCESS")
+        print(f"Output: {output_slides_path}")
     else:
-        print(f"\nWARNING: Build has errors after {result['attempts']} attempts")
-        print(f"   Output saved to: {output_slides_path}")
-        print(f"   Errors: {result['errors']['error_output'][:200]}...")
+        print(f"\nBuild has errors")
+        print(f"   Check: {output_slides_path}")
     
     print("\n" + "=" * 60)
-    print("Generation Complete!")
-    print("=" * 60)
     
     return result
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        sys.exit(1)
+       sys.exit(1)
     
     lecture_path = sys.argv[1]
     output_path = sys.argv[2] if len(sys.argv) > 2 else "slidev/slides.md"

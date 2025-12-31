@@ -13,7 +13,18 @@ class AssetManager:
             img_file.unlink()
     
     def copy_lecture_images(self, lecture_data: Dict[str, Any], lecture_json_path: str) -> Dict[str, str]:
-        lecture_dir = Path(lecture_json_path).parent
+        lecture_path = Path(lecture_json_path)
+        lecture_id = lecture_data.get('lecture_title', '')
+        data_assets_dir = lecture_path.parent.parent / 'assets'
+        
+        target_asset_dir = None
+        if lecture_id and (data_assets_dir / lecture_id / 'images').exists():
+            target_asset_dir = data_assets_dir / lecture_id / 'images'
+        else:
+            target_asset_dir = lecture_path.parent / 'assets'
+            
+        print(f"Looking for assets in: {target_asset_dir}")
+        
         image_mapping = {}
         
         for slide in lecture_data.get('slides', []):
@@ -25,16 +36,20 @@ class AssetManager:
             if not image_id:
                 continue
             
-            source_path = lecture_dir / 'assets' / f"{image_id}.png"
-            if not source_path.exists():
-                source_path = lecture_dir / 'assets' / f"{image_id}.jpg"
-            if not source_path.exists():
-                source_path = lecture_dir / 'assets' / f"{image_id}.jpeg"
+            source_path = None
+            if target_asset_dir.exists():
+                for ext in ['.png', '.jpg', '.jpeg']:
+                    potential_path = target_asset_dir / f"{image_id}{ext}"
+                    if potential_path.exists():
+                        source_path = potential_path
+                        break
             
-            if source_path.exists():
+            if source_path and source_path.exists():
                 dest_path = self.public_dir / source_path.name
                 shutil.copy2(source_path, dest_path)
                 image_mapping[image_id] = f"/{source_path.name}"
+            else:
+                 print(f"Warning: Image {image_id} not found in {target_asset_dir}")
         
         return image_mapping
     

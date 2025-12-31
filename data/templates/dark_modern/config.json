@@ -1,0 +1,5 @@
+{
+    "name": "dark_modern",
+    "description": "Dark theme with modern gradients and animations",
+    "bg_class": "bg-[#0a0a0a] text-gray-100"
+}
