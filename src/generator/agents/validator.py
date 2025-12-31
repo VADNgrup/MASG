@@ -7,7 +7,7 @@ from src.utils.config import config
 
 class SlidevValidatorAgent:
     def __init__(self, model: str = "gpt-4o", slidev_dir: str = "slidev"):
-        self.llm = ChatOpenAI(model=model, temperature=0.1, max_tokens=8000)
+        self.llm = ChatOpenAI(model=model, temperature=0.1)
         self.model = model
         self.slidev_dir = Path(slidev_dir)
         self.max_retries = 3

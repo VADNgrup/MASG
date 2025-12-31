@@ -6,7 +6,7 @@ from src.utils.config import config
 
 class MarkdownAgent:
     def __init__(self, model: str = "gpt-4o", template_path: str = "data/template/1.md"):
-        self.llm = ChatOpenAI(model=model, temperature=0.2, max_tokens=16000)
+        self.llm = ChatOpenAI(model=model, temperature=0.2)
         self.model = model
         self.template_path = template_path
         self.template_content = self._load_template()
@@ -43,13 +43,50 @@ KEY PATTERNS TO FOLLOW:
    - Borders: border border-white/10
    - Shadows: shadow-xl shadow-purple-900/10
 
-3. LATEX FORMULAS:
-   - CRITICAL: LaTeX formulas stand ALONE, NOT wrapped in any tags
-   - Inline: $x^2 + y^2 = z^2$
-   - Display: $$\\int_0^\\infty e^{{-x}} dx = 1$$
-   - Example from template: Just write the formula directly in HTML
-   - WRONG: <p>$formula$</p>
-   - CORRECT: $formula$ (standalone)
+3. LATEX FORMULAS - CRITICAL STANDALONE RULE:
+   - CRITICAL: LaTeX MUST be completely outside ALL div/HTML structures
+   - LaTeX cannot be a child of ANY HTML element
+   
+   WRONG - LaTeX inside parent div:
+   ```
+   <div class="grid grid-cols-12">
+     <div class="col-span-12">
+       <p>Text here</p>
+       $$formula$$
+     </div>
+   </div>
+   ```
+   
+   CORRECT - LaTeX outside all divs:
+   ```
+   <div class="grid grid-cols-12">
+     <div class="col-span-12">
+       <p>Text here</p>
+     </div>
+   </div>
+   
+   $$formula$$
+   ```
+   
+   CORRECT - Multiple formulas:
+   ```
+   <div class="col-span-6">
+     <p class="mb-4">Formula 1:</p>
+   </div>
+   
+   $$\\\\sin^2 x + \\\\cos^2 x = 1$$
+   
+   <div class="col-span-6">
+     <p class="mb-4">Formula 2:</p>
+   </div>
+   
+   KEY RULES:
+   - Close ALL divs before writing LaTeX
+   - LaTeX must be at root level of slide (after frontmatter ---)
+   - Use single backslash in LaTeX: \\sin not \\\\sin
+   - For inline math in text: use $...$
+   - For display math: use $$...$$ on separate lines
+
 
 4. ICONS:
    - Use carbon icons: <carbon:icon-name class="text-2xl text-blue-400" />
@@ -110,7 +147,22 @@ Generate the complete markdown now:"""
         elif "```" in markdown_content:
             markdown_content = markdown_content.split("```")[1].split("```")[0].strip()
         
+        markdown_content = self._fix_latex_escaping(markdown_content)
+        
         return markdown_content
+    
+    def _fix_latex_escaping(self, content: str) -> str:
+        import re
+        
+        def fix_formula(match):
+            formula = match.group(0)
+            formula = formula.replace('\\\\', '\\')
+            return formula
+        
+        content = re.sub(r'\$\$[^$]+\$\$', fix_formula, content, flags=re.DOTALL)
+        content = re.sub(r'\$[^$]+\$', fix_formula, content)
+        
+        return content
     
     def save_to_slidev(self, markdown_content: str, output_path: str = "slidev/slides.md") -> str:
         output_file = Path(output_path)

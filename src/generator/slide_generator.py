@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.generator.agents.content import ContentAgent
 from src.generator.agents.markdown import MarkdownAgent
 from src.generator.agents.validator import SlidevValidatorAgent
+from src.generator.agents.asset_manager import AssetManager
 import json
 
 def generate_slidev_presentation(lecture_json_path: str, output_slides_path: str = "slidev/slides.md"):
@@ -26,6 +27,11 @@ def generate_slidev_presentation(lecture_json_path: str, output_slides_path: str
     with open(simplified_path, 'w', encoding='utf-8') as f:
         json.dump(design_ready_data, f, ensure_ascii=False, indent=2)
     print(f"✓ Saved design-ready JSON to: {simplified_path}")
+    
+    print("\nStep 1.5: Copying lecture images to slidev/public...")
+    asset_manager = AssetManager()
+    design_ready_data = asset_manager.process_lecture_assets(design_ready_data, lecture_json_path)
+    print(f"✓ Images copied to slidev/public")
     
     print("\nStep 2: Generating Slidev markdown with MarkdownAgent...")
     markdown_agent = MarkdownAgent()

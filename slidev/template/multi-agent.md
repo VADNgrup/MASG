@@ -1,5 +1,5 @@
 ---
-layout: Standard
+layout: standard
 class: p-0 bg-[#0a0a0a] text-gray-100 font-sans overflow-hidden
 transition: slide-left
 ---
@@ -58,7 +58,7 @@ transition: slide-left
   </div>
 
 ---
-layout: Standard
+layout: standard
 class: p-0 bg-[#0a0a0a] text-gray-100 font-sans overflow-hidden
 ---
 
@@ -97,7 +97,7 @@ class: p-0 bg-[#0a0a0a] text-gray-100 font-sans overflow-hidden
 </div>
 
 ---
-layout: Standard
+layout: standard
 class: p-0 bg-[#0a0a0a] text-gray-100
 ---
 
@@ -145,7 +145,7 @@ class: p-0 bg-[#0a0a0a] text-gray-100
 </div>
 
 ---
-layout: Standard
+layout: standard
 class: p-0 bg-[#0a0a0a] flex items-center justify-center
 ---
 
@@ -183,7 +183,7 @@ class: p-0 bg-[#0a0a0a] flex items-center justify-center
 </div>
 
 ---
-layout: Standard
+layout: standard
 class: p-0 bg-[#0a0a0a] text-gray-100
 ---
 
@@ -224,7 +224,7 @@ class: p-0 bg-[#0a0a0a] text-gray-100
 </div>
 
 ---
-layout: Standard
+layout: standard
 class: p-0 bg-[#0a0a0a] text-gray-100
 ---
 
@@ -275,7 +275,7 @@ class: p-0 bg-[#0a0a0a] text-gray-100
 </div>
 
 ---
-layout: Standard
+layout: standard
 class: p-0 bg-[#0a0a0a] text-gray-100
 ---
 
@@ -316,7 +316,7 @@ class: p-0 bg-[#0a0a0a] text-gray-100
 </div>
 
 ---
-layout: Standard
+layout: standard
 class: p-0 bg-[#0a0a0a] text-gray-100 flex items-center justify-center
 ---
 
@@ -349,7 +349,7 @@ class: p-0 bg-[#0a0a0a] text-gray-100 flex items-center justify-center
 </div>
 
 ---
-layout: Standard
+layout: standard
 class: p-0 bg-[#0a0a0a] text-gray-100
 ---
 
@@ -447,7 +447,7 @@ class: p-0 bg-[#0a0a0a] text-gray-100
 </div>
 
 ---
-layout: Standard
+layout: standard
 class: p-0 bg-[#0a0a0a] text-gray-100 flex items-center justify-center overflow-hidden
 ---
 

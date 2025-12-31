@@ -7,7 +7,7 @@ from src.utils.config import config
 
 class ContentAgent:
     def __init__(self, model: str = "gpt-4o"):
-        self.llm = ChatOpenAI(model=model, temperature=0.3, max_tokens=16000)
+        self.llm = ChatOpenAI(model=model, temperature=0.3)
         self.model = model
         
         self.MIN_BULLET_POINTS = 2
@@ -216,9 +216,6 @@ Apply all 5 requirements:
             return design_slide
             
         except json.JSONDecodeError as e:
-            print(f"Warning: JSON parse error for slide {slide.slide_id}: {str(e)}")
-            print(f"Content preview: {content[:200] if 'content' in locals() else 'N/A'}")
-            
             fallback = {
                 "slide_number": slide_number,
                 "title": slide.title,
