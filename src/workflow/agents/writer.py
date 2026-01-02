@@ -5,6 +5,7 @@ from src.models.context import DocumentContext
 from src.models.slide import SlideContent
 from src.utils.config import config
 from src.optimization.lightning_integration import lightning_integration
+from src.utils.latex_processor import process_slide_latex
 
 class WriterAgent:
     def _extract_relevant_text(self, section: Dict, context: DocumentContext) -> str:
@@ -46,36 +47,6 @@ class WriterAgent:
         
         return full_text[:100000]
     
-    def _fix_incomplete_json(self, json_str: str, original_error: Exception) -> Dict:
-        try:
-            json_str = json_str.strip()
-            
-            if json_str.startswith('{{'):
-                json_str = json_str[1:]
-            
-            if not json_str.startswith('{'):
-                json_str = '{' + json_str.split('{', 1)[-1] if '{' in json_str else json_str
-            
-            if '"speaker_notes": "' in json_str:
-                last_note_start = json_str.rfind('"speaker_notes": "')
-                if last_note_start >= 0:
-                    start_note = last_note_start + len('"speaker_notes": "')
-                    note_content = json_str[start_note:]
-                    note_content = note_content.rstrip().rstrip('"').rstrip(',').rstrip('}')
-                    note_content = note_content.replace('"', "'")
-                    json_str = json_str[:start_note] + note_content + '"}'
-            
-            if '"image_query":' not in json_str:
-                json_str = json_str.rstrip().rstrip(',').rstrip('}') + ', "image_query": null}'
-            
-            if not json_str.rstrip().endswith('}'):
-                json_str = json_str.rstrip().rstrip(',').rstrip('}') + '}'
-            
-            data = json.loads(json_str)
-            return data
-        except json.JSONDecodeError as fix_error:
-            raise ValueError(f"Failed to parse incomplete JSON. Original: {str(original_error)[:200]}. Fix: {str(fix_error)[:200]}. Content: {json_str[:1000]}") from original_error
-    
     def _get_available_images_for_section(self, section: Dict, context: DocumentContext) -> str:
         relevant_images = []
         
@@ -90,6 +61,7 @@ class WriterAgent:
         if relevant_images:
             return f"\nAvailable images from document:\n" + "\n".join(relevant_images[:5])
         return ""
+    
     def __init__(self, model: str = "gpt-4o"):
         self.llm = ChatOpenAI(model=model, temperature=0.4, max_tokens=16000)
         self.model = model
@@ -115,6 +87,19 @@ CRITICAL: PRESERVE THE ORIGINAL TONE, STYLE, AND CONTENT STRUCTURE
 - When source material contains tables, maintain them in complete markdown format
 - Keep technical content, formulas, code snippets, and structured data intact
 
+MATHEMATICAL FORMULAS - CRITICAL LATEX RULES:
+- ALL mathematical expressions MUST be wrapped in LaTeX delimiters
+- Use $...$ for inline math: "The formula $\\sin^2 x + \\cos^2 x = 1$ is fundamental"
+- Use $$...$$ for block/display math on its own line
+- Trigonometric functions MUST use backslash: $\\sin$, $\\cos$, $\\tan$, $\\cot$, NOT sin, cos, tan
+- Greek letters MUST use LaTeX: $\\alpha$, $\\beta$, $\\pi$, NOT α, β, π in plain text
+- Fractions: $\\frac{a}{b}$ NOT a/b for important formulas
+- Superscripts: $x^2$, $\\sin^2 x$ NOT x^2 or sin²x
+- Subscripts: $x_1$, $a_n$ NOT x1 or a_n in plain text
+- Special symbols: $\\neq$, $\\leq$, $\\geq$, $\\pm$, $\\infty$
+- Example CORRECT: "Công thức cơ bản: $\\sin^2 \\alpha + \\cos^2 \\alpha = 1$"
+- Example WRONG: "Công thức cơ bản: sin²α + cos²α = 1"
+
 CONTENT PRESERVATION RULES:
 - If source has tables in markdown format, preserve them EXACTLY as they appear
 - Example: Keep tables like "| Cột 1 | Cột 2 |\n| ----- | ----- |\n| 1 | 2 |" completely intact
@@ -127,13 +112,16 @@ THINK STEP-BY-STEP:
 2. What are the 3-5 MOST important points? Preserve their original impact and meaning
 3. How did the source present these points? Maintain that style and approach
 4. Are there tables, code, or structured content? Keep them complete and unmodified
-5. Can one slide cover this? If too much, prioritize the most impactful points while keeping structures intact
+5. Are there mathematical formulas? Wrap ALL of them in proper LaTeX $...$ or $$...$$
+6. Can one slide cover this? If too much, prioritize the most impactful points while keeping structures intact
 
 CREATE SLIDES IN THE SAME LANGUAGE AS THE SOURCE MATERIAL WITH:
 - Title (max 8 words, capture the essence and energy of the content)
 - Content array with 3-5 items:
   * SPECIAL CASE - TABLES: If source contains markdown tables, include the COMPLETE table as ONE item in content array
     Example: ["| Cột 1 | Cột 2 | Cột 3 |\n| ----- | ----- | ----- |\n| 1 | 2 | 3 |", "Additional context point", "Another point"]
+  * SPECIAL CASE - MATH: All formulas MUST be in LaTeX format with $ or $$
+    Example: ["Hệ thức cơ bản: $\\sin^2 x + \\cos^2 x = 1$", "Với $\\cos x \\neq 0$: $\\tan x = \\frac{\\sin x}{\\cos x}$"]
   * For regular content: 3-5 bullet points (each 8-15 words)
   * PRESERVE the original phrasing and energy when possible
   * Use the same language style as source - if source uses vivid examples, keep them!
@@ -223,7 +211,8 @@ Source material excerpt:
 {f"PREVIOUS FEEDBACK TO ADDRESS: {feedback}" if feedback else ""}
 
 Generate ONE slide for this section. Use the SAME language as the source material automatically.
-If image needed, create SPECIFIC query matching slide content (not generic "unit circle")."""
+If image needed, create SPECIFIC query matching slide content (not generic "unit circle").
+REMEMBER: ALL mathematical expressions MUST be wrapped in LaTeX $...$ or $$...$$ delimiters!"""
         
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
         response = self.llm.invoke([
@@ -231,35 +220,53 @@ If image needed, create SPECIFIC query matching slide content (not generic "unit
             {"role": "user", "content": user_prompt}
         ])
         
-        try:
-            data = json.loads(response.content)
-        except json.JSONDecodeError:
-            content = response.content.strip()
-            
-            if "```json" in content:
-                parts = content.split("```json")
-                if len(parts) > 1:
-                    content = parts[1].split("```")[0]
-            elif "```" in content:
-                parts = content.split("```")
-                if len(parts) >= 3:
-                    content = parts[1]
-            
-            content = content.strip()
-            
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError as e:
-                import re
-                json_match = re.search(r'\{[\s\S]*\}', content)
-                if json_match:
-                    json_str = json_match.group()
-                    try:
-                        data = json.loads(json_str)
-                    except json.JSONDecodeError:
-                        data = self._fix_incomplete_json(json_str, e)
-                else:
-                    raise ValueError(f"No JSON found in LLM response: {content[:500]}") from e
+        data = self._parse_json_response(response.content)
+        
+        data = process_slide_latex(data)
         
         return SlideContent(**data)
+    
+    def _parse_json_response(self, response_content: str, retry_count: int = 0) -> Dict:
+        content = response_content.strip()
+        
+        if "```json" in content:
+            parts = content.split("```json")
+            if len(parts) > 1:
+                content = parts[1].split("```")[0]
+        elif "```" in content:
+            parts = content.split("```")
+            if len(parts) >= 3:
+                content = parts[1]
+        
+        content = content.strip()
+        
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            if retry_count >= 2:
+                raise ValueError(f"Failed to parse JSON after {retry_count} retries: {str(e)[:200]}") from e
+            
+            fixed_content = self._llm_fix_json(content, str(e))
+            return self._parse_json_response(fixed_content, retry_count + 1)
+    
+    def _llm_fix_json(self, broken_json: str, error_message: str) -> str:
+        fix_prompt = f"""The following JSON has a syntax error. Fix it and return ONLY the corrected JSON.
 
+ERROR: {error_message}
+
+BROKEN JSON:
+{broken_json[:3000]}
+
+COMMON ISSUES TO FIX:
+1. Escape backslashes in LaTeX: \\frac, \\sin, \\cos should be \\\\frac, \\\\sin, \\\\cos in JSON strings
+2. Escape special characters: newlines should be \\n
+3. Close unclosed strings, braces, brackets
+4. Remove trailing commas before closing braces
+
+Return ONLY the fixed valid JSON, no explanations:"""
+
+        response = self.llm.invoke([
+            {"role": "user", "content": fix_prompt}
+        ])
+        
+        return response.content.strip()

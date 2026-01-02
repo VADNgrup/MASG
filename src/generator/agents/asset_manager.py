@@ -1,12 +1,95 @@
 import shutil
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import json
+import re
+
+
+class AssetResolver:
+    def __init__(self, base_assets_dir: str = "data/assets", public_dir: str = "slidev/public/assets"):
+        self.base_assets_dir = Path(base_assets_dir)
+        self.public_dir = Path(public_dir)
+        self.public_dir.mkdir(parents=True, exist_ok=True)
+        self.image_cache: Dict[str, str] = {}
+        self.lecture_id: Optional[str] = None
+    
+    def set_lecture_context(self, lecture_id: str):
+        self.lecture_id = lecture_id
+        self.image_cache.clear()
+        
+        lecture_assets = self.base_assets_dir / lecture_id
+        if lecture_assets.exists():
+            self._scan_and_copy_assets(lecture_assets)
+        
+        generated_assets = self.base_assets_dir / "generated"
+        if generated_assets.exists():
+            self._scan_and_copy_assets(generated_assets)
+    
+    def _scan_and_copy_assets(self, source_dir: Path):
+        for ext in ['*.png', '*.jpg', '*.jpeg', '*.gif', '*.webp', '*.svg']:
+            for img_file in source_dir.rglob(ext):
+                image_id = img_file.stem
+                dest_path = self.public_dir / img_file.name
+                
+                if not dest_path.exists():
+                    shutil.copy2(img_file, dest_path)
+                
+                self.image_cache[image_id] = f"/assets/{img_file.name}"
+    
+    def resolve(self, image_ref: Optional[str]) -> Optional[str]:
+        if not image_ref:
+            return None
+        
+        if image_ref.startswith(('http://', 'https://', '/')):
+            return image_ref
+        
+        image_ref = image_ref.replace('/assets/', '').replace('assets/', '')
+        image_id = Path(image_ref).stem
+        
+        if image_id in self.image_cache:
+            return self.image_cache[image_id]
+        
+        for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']:
+            for search_dir in [self.base_assets_dir, self.public_dir.parent]:
+                for img_file in search_dir.rglob(f"{image_id}{ext}"):
+                    dest_path = self.public_dir / img_file.name
+                    if not dest_path.exists():
+                        shutil.copy2(img_file, dest_path)
+                    resolved = f"/assets/{img_file.name}"
+                    self.image_cache[image_id] = resolved
+                    return resolved
+        
+        return f"/assets/{image_ref}.png"
+    
+    def process_slides(self, slides_data: Dict[str, Any]) -> Dict[str, Any]:
+        for slide in slides_data.get("slides", []):
+            if "image" in slide and slide["image"]:
+                slide["image"] = self.resolve(slide["image"])
+            
+            if "cards" in slide:
+                for card in slide["cards"]:
+                    if "image" in card:
+                        card["image"] = self.resolve(card["image"])
+            
+            if "stats" in slide:
+                for stat in slide["stats"]:
+                    if "image" in stat:
+                        stat["image"] = self.resolve(stat["image"])
+        
+        return slides_data
+    
+    def clear_public_assets(self):
+        if self.public_dir.exists():
+            for f in self.public_dir.glob("*"):
+                if f.is_file():
+                    f.unlink()
+
 
 class AssetManager:
     def __init__(self, slidev_public_dir: str = "slidev/public"):
         self.public_dir = Path(slidev_public_dir)
         self.public_dir.mkdir(parents=True, exist_ok=True)
+        self.resolver = AssetResolver(public_dir=str(self.public_dir / "assets"))
     
     def clear_old_images(self):
         for img_file in self.public_dir.glob("img_*"):

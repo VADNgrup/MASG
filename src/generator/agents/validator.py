@@ -1,9 +1,129 @@
 from langchain_openai import ChatOpenAI
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import subprocess
 import time
+import re
 from pathlib import Path
-from src.utils.config import config
+from dataclasses import dataclass
+from enum import Enum
+
+
+class ErrorType(Enum):
+    LATEX = "latex"
+    HTML = "html"
+    YAML = "yaml"
+    VUE = "vue"
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class ParsedError:
+    error_type: ErrorType
+    message: str
+    line_number: Optional[int]
+    context: Optional[str]
+
+
+class ErrorAnalyzer:
+    LATEX_PATTERNS = [
+        r"KaTeX.*error",
+        r"Unexpected.*math",
+        r"Invalid.*formula",
+        r"\$.*not.*closed",
+        r"MathJax",
+    ]
+    
+    HTML_PATTERNS = [
+        r"Unclosed.*tag",
+        r"Invalid.*attribute",
+        r"Unexpected.*token.*<",
+        r"Expected.*>",
+    ]
+    
+    VUE_PATTERNS = [
+        r"v-motion",
+        r"carbon:",
+        r"component.*not.*found",
+        r"Unknown.*directive",
+    ]
+    
+    YAML_PATTERNS = [
+        r"YAML.*error",
+        r"frontmatter",
+        r"Invalid.*layout",
+    ]
+    
+    def analyze(self, error_output: str) -> List[ParsedError]:
+        errors = []
+        
+        for pattern in self.LATEX_PATTERNS:
+            if re.search(pattern, error_output, re.IGNORECASE):
+                errors.append(ParsedError(
+                    error_type=ErrorType.LATEX,
+                    message=self._extract_message(error_output, pattern),
+                    line_number=self._extract_line_number(error_output),
+                    context=self._extract_context(error_output)
+                ))
+        
+        for pattern in self.HTML_PATTERNS:
+            if re.search(pattern, error_output, re.IGNORECASE):
+                errors.append(ParsedError(
+                    error_type=ErrorType.HTML,
+                    message=self._extract_message(error_output, pattern),
+                    line_number=self._extract_line_number(error_output),
+                    context=self._extract_context(error_output)
+                ))
+        
+        for pattern in self.VUE_PATTERNS:
+            if re.search(pattern, error_output, re.IGNORECASE):
+                errors.append(ParsedError(
+                    error_type=ErrorType.VUE,
+                    message=self._extract_message(error_output, pattern),
+                    line_number=self._extract_line_number(error_output),
+                    context=self._extract_context(error_output)
+                ))
+        
+        for pattern in self.YAML_PATTERNS:
+            if re.search(pattern, error_output, re.IGNORECASE):
+                errors.append(ParsedError(
+                    error_type=ErrorType.YAML,
+                    message=self._extract_message(error_output, pattern),
+                    line_number=self._extract_line_number(error_output),
+                    context=self._extract_context(error_output)
+                ))
+        
+        if not errors:
+            errors.append(ParsedError(
+                error_type=ErrorType.UNKNOWN,
+                message=error_output[:500],
+                line_number=None,
+                context=None
+            ))
+        
+        return errors
+    
+    def _extract_message(self, output: str, pattern: str) -> str:
+        match = re.search(f".*{pattern}.*", output, re.IGNORECASE)
+        return match.group(0) if match else output[:200]
+    
+    def _extract_line_number(self, output: str) -> Optional[int]:
+        match = re.search(r"line[:\s]+(\d+)", output, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+        match = re.search(r":(\d+):", output)
+        if match:
+            return int(match.group(1))
+        return None
+    
+    def _extract_context(self, output: str) -> Optional[str]:
+        lines = output.split('\n')
+        for i, line in enumerate(lines):
+            if 'error' in line.lower():
+                start = max(0, i - 2)
+                end = min(len(lines), i + 3)
+                return '\n'.join(lines[start:end])
+        return None
+
 
 class SlidevValidatorAgent:
     def __init__(self, model: str = "gpt-4o", slidev_dir: str = "slidev"):
@@ -11,8 +131,10 @@ class SlidevValidatorAgent:
         self.model = model
         self.slidev_dir = Path(slidev_dir)
         self.max_retries = 3
+        self.error_analyzer = ErrorAnalyzer()
+        self.error_history: List[Dict[str, Any]] = []
     
-    def check_terminal_errors(self, timeout: int = 10) -> Dict[str, Any]:
+    def check_terminal_errors(self, timeout: int = 30) -> Dict[str, Any]:
         try:
             result = subprocess.run(
                 ["npm", "run", "build"],
@@ -27,6 +149,9 @@ class SlidevValidatorAgent:
             
             has_errors = result.returncode != 0
             error_output = result.stderr if has_errors else ""
+            
+            if has_errors and not error_output:
+                error_output = result.stdout
             
             return {
                 "has_errors": has_errors,
@@ -49,49 +174,63 @@ class SlidevValidatorAgent:
                 "return_code": -1
             }
     
-    def analyze_and_fix_errors(self, markdown_content: str, error_info: Dict[str, Any]) -> str:
-        system_prompt = """You are a Slidev debugging expert who fixes markdown errors.
+    def _build_fix_prompt(self, markdown_content: str, error_info: Dict[str, Any], attempt: int) -> tuple:
+        parsed_errors = self.error_analyzer.analyze(error_info['error_output'])
+        
+        error_summary = "\n".join([
+            f"- Type: {e.error_type.value}, Line: {e.line_number or 'unknown'}, Message: {e.message[:200]}"
+            for e in parsed_errors
+        ])
+        
+        history_context = ""
+        if self.error_history:
+            history_context = "\n\nPREVIOUS FIX ATTEMPTS:\n"
+            for h in self.error_history[-2:]:
+                history_context += f"- Attempt {h['attempt']}: {h['error_type']} - {h['fix_applied'][:100]}\n"
+        
+        system_prompt = f"""You are a Slidev markdown debugger. Fix the errors based on analysis.
 
-COMMON ERRORS TO FIX:
+ERROR ANALYSIS:
+{error_summary}
+{history_context}
 
-1. LATEX SYNTAX ERRORS:
-   - Missing closing braces: $\\frac{a}{b$ → $\\frac{a}{b}$
-   - Wrong escaping: $\\alpha$ might need $$\\alpha$$
-   - Special characters: Use proper LaTeX commands
+FIX STRATEGIES BY ERROR TYPE:
 
-2. HTML/VUE ERRORS:
-   - Unclosed tags: <div> without </div>
-   - Invalid attributes
-   - Wrong class names
+LATEX ERRORS:
+- Ensure all math is wrapped in $$ for block or $ for inline
+- Use proper LaTeX: \\sin, \\cos, \\frac{{{{}}}}{{{{}}}}, \\sqrt{{{{}}}}
+- Close all braces properly
+- Escape special chars in LaTeX
 
-3. MARKDOWN ERRORS:
-   - Malformed tables
-   - Missing frontmatter
-   - Invalid YAML
+HTML/VUE ERRORS:
+- Close all tags properly
+- Remove invalid attributes
+- Check v-motion directives syntax
 
-4. COMPONENT ERRORS:
-   - Unknown carbon icons
-   - Invalid v-motion directives
+YAML ERRORS:
+- Ensure --- delimiters are correct
+- Check layout names are valid
+- Proper indentation
 
-FIXING STRATEGY:
-- Read error message carefully
-- Identify the problematic line/section
-- Apply minimal fix
-- Preserve all content and styling
-- Don't change working parts
+ATTEMPT {attempt}/{self.max_retries} - Be more aggressive if previous fixes didn't work.
 
 Return ONLY the fixed markdown, no explanations."""
 
-        user_prompt = f"""Fix this Slidev markdown that has errors:
+        user_prompt = f"""Fix this Slidev markdown:
 
-ERROR INFO:
-{error_info['error_output']}
+RAW ERROR:
+{error_info['error_output'][:1000]}
 
-CURRENT MARKDOWN:
+MARKDOWN:
 {markdown_content}
 
-Fix the errors and return the corrected markdown:"""
+Return the corrected markdown:"""
 
+        return system_prompt, user_prompt
+    
+    def analyze_and_fix_errors(self, markdown_content: str, error_info: Dict[str, Any], attempt: int) -> str:
+        system_prompt, user_prompt = self._build_fix_prompt(markdown_content, error_info, attempt)
+        
         response = self.llm.invoke([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -101,8 +240,19 @@ Fix the errors and return the corrected markdown:"""
         
         if "```markdown" in fixed_content:
             fixed_content = fixed_content.split("```markdown")[1].split("```")[0].strip()
+        elif "```md" in fixed_content:
+            fixed_content = fixed_content.split("```md")[1].split("```")[0].strip()
         elif "```" in fixed_content:
-            fixed_content = fixed_content.split("```")[1].split("```")[0].strip()
+            parts = fixed_content.split("```")
+            if len(parts) >= 3:
+                fixed_content = parts[1].strip()
+        
+        parsed_errors = self.error_analyzer.analyze(error_info['error_output'])
+        self.error_history.append({
+            "attempt": attempt,
+            "error_type": parsed_errors[0].error_type.value if parsed_errors else "unknown",
+            "fix_applied": fixed_content[:100]
+        })
         
         return fixed_content
     
@@ -110,8 +260,10 @@ Fix the errors and return the corrected markdown:"""
         slides_file = Path(slides_path)
         slides_file.write_text(markdown_content, encoding='utf-8')
         
-        for attempt in range(self.max_retries):
-            print(f"Validation attempt {attempt + 1}/{self.max_retries}...")
+        self.error_history.clear()
+        
+        for attempt in range(1, self.max_retries + 1):
+            print(f"Validation attempt {attempt}/{self.max_retries}...")
             
             time.sleep(2)
             
@@ -122,24 +274,27 @@ Fix the errors and return the corrected markdown:"""
                 return {
                     "success": True,
                     "markdown": markdown_content,
-                    "attempts": attempt + 1,
+                    "attempts": attempt,
                     "errors": None
                 }
             
+            parsed_errors = self.error_analyzer.analyze(error_info["error_output"])
             print(f"✗ Build errors detected:")
-            print(error_info["error_output"][:500])
+            for err in parsed_errors[:3]:
+                print(f"  - [{err.error_type.value}] {err.message[:100]}")
             
-            if attempt < self.max_retries - 1:
-                print(f"Attempting to fix errors...")
-                markdown_content = self.analyze_and_fix_errors(markdown_content, error_info)
+            if attempt < self.max_retries:
+                print(f"Attempting fix #{attempt}...")
+                markdown_content = self.analyze_and_fix_errors(markdown_content, error_info, attempt)
                 slides_file.write_text(markdown_content, encoding='utf-8')
             else:
-                print(f"Max retries reached. Returning last version with errors.")
+                print(f"Max retries reached. Returning last version.")
                 return {
                     "success": False,
                     "markdown": markdown_content,
-                    "attempts": attempt + 1,
-                    "errors": error_info
+                    "attempts": attempt,
+                    "errors": error_info,
+                    "parsed_errors": [{"type": e.error_type.value, "message": e.message} for e in parsed_errors]
                 }
         
         return {

@@ -21,7 +21,7 @@ class: p-0 bg-[#0a0a0a] text-gray-100
       </h3>
       <ul class="space-y-4 text-gray-400 text-sm">
         {% for item in left_items %}
-        <li class="flex items-center gap-3"> <carbon:dot-mark class="text-red-500"/> {{ item }} </li>
+        <li class="flex items-center gap-3"> <carbon:dot-mark class="text-red-500"/> {{ item|latex }} </li>
         {% endfor %}
       </ul>
     </div>
@@ -34,7 +34,7 @@ class: p-0 bg-[#0a0a0a] text-gray-100
       </h3>
       <ul class="space-y-4 text-gray-100 text-sm">
         {% for item in right_items %}
-        <li class="flex items-center gap-3 font-medium"> <carbon:flash class="text-yellow-400"/> {{ item }} </li>
+        <li class="flex items-center gap-3 font-medium"> <carbon:flash class="text-yellow-400"/> {{ item|latex }} </li>
         {% endfor %}
       </ul>
     </div>
