@@ -34,5 +34,6 @@ api_llm_test.py
 PROJECT_STRUCT.md
 PROJECT.md
 test
+ppt-agent-benchmark/*
 
 
