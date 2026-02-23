@@ -10,13 +10,8 @@ class AssetMetadata(BaseModel):
 class ImageAsset(BaseModel):
     image_id: str
     file_path: str
-    page_number: int
-    priority: int = Field(default=1)
-    caption_rag: Optional[str] = None
-    caption_display: Optional[str] = None
+    caption: str
     metadata: AssetMetadata
-    content_type: Optional[str] = None
-    is_decoration: bool = False
 
 class AssetCollection(BaseModel):
     images: List[ImageAsset] = Field(default_factory=list)
@@ -30,6 +25,4 @@ class AssetCollection(BaseModel):
                 return image
         return None
     
-    def get_by_page(self, page_number: int) -> List[ImageAsset]:
-        return [img for img in self.images if img.page_number == page_number]
 

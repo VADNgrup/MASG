@@ -1,3 +1,4 @@
+import llm_extension
 from langchain_openai import ChatOpenAI
 from typing import Dict, Optional
 import json
@@ -6,7 +7,7 @@ from src.models.slide import SlideContent
 from src.utils.config import config
 
 class SlideRefinerAgent:
-    def __init__(self, model: str = "gpt-4o"):
+    def __init__(self, model: str = "gpt-4.1-mini"):
         self.llm = ChatOpenAI(model=model, temperature=0.3)
     
     def refine_slide(

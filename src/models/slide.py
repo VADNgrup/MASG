@@ -12,13 +12,10 @@ class ImageReference(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class SlideContent(BaseModel):
-    slide_id: str
+    slide_number: int
+    slide_title: str
     slide_type: str
-    title: str
     content: List[str]
-    speaker_notes: str
-    image: Optional[ImageReference] = None
-    image_query: Optional[str] = None
 
 class LectureMetadata(BaseModel):
     source_document_id: str

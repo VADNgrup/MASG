@@ -1,24 +1,17 @@
 from langgraph.graph import StateGraph, END
 from typing import Dict, Any
-import uuid
 from src.workflow.state import WorkflowState
 from src.workflow.agents.planner import PlannerAgent
 from src.workflow.agents.writer import WriterAgent
-from src.workflow.agents.asset_manager import AssetManager
 from src.workflow.agents.reviewer import ReviewerAgent
-from src.workflow.agents.refiner import SlideRefinerAgent
 from src.workflow.agents.coverage_checker import ContentCoverageChecker
-from src.optimization.reward_function import compute_and_emit_reward
-from src.optimization.lightning_manager import lightning_manager
 
 def create_workflow() -> StateGraph:
     workflow = StateGraph(WorkflowState)
     
     planner = PlannerAgent()
     writer = WriterAgent()
-    asset_manager = AssetManager()
     reviewer = ReviewerAgent()
-    refiner = SlideRefinerAgent()
     coverage_checker = ContentCoverageChecker()
     
     def planner_node(state: WorkflowState) -> Dict[str, Any]:
@@ -26,48 +19,26 @@ def create_workflow() -> StateGraph:
         return {
             "lecture_plan": plan,
             "current_section_idx": 0,
-            "slides": [],
-            "image_decisions": []
+            "slides": []
         }
     
     def writer_node(state: WorkflowState) -> Dict[str, Any]:
-        sections = state["lecture_plan"]["sections"]
-        slides = state["slides"].copy() if state["slides"] else []
+        outline_md = state["lecture_plan"]["outline"]
         
         feedback = None
         if state.get("reviewer_feedback"):
             feedback = state["reviewer_feedback"].summary
         
-        for section in sections:
-            slide = writer.draft_slide(section, state["document_context"], feedback)
-            slide_number = len(slides) + 1
-            slide.slide_id = f"slide_{slide_number:03d}"
-            slides.append(slide)
+        slides = writer.draft_slide_from_outline(
+            outline_md,
+            state["document_context"],
+            feedback
+        )
         
         return {
             "slides": slides,
-            "current_section_idx": len(sections)
+            "current_section_idx": len(slides)
         }
-    
-    async def asset_manager_node(state: WorkflowState) -> Dict[str, Any]:
-        slides = state["slides"]
-        image_decisions = state.get("image_decisions", []).copy()
-        
-        for slide in slides:
-            if not slide.image_query or slide.image:
-                continue
-            
-            image_ref, decision_log = await asset_manager.resolve_image(
-                slide.image_query,
-                state["document_context"],
-                slide_title=slide.title,
-                slide_content=slide.content
-            )
-            
-            slide.image = image_ref
-            image_decisions.append(decision_log)
-        
-        return {"image_decisions": image_decisions}
     
     async def reviewer_node(state: WorkflowState) -> Dict[str, Any]:
         coverage = coverage_checker.check_coverage(
@@ -87,34 +58,18 @@ def create_workflow() -> StateGraph:
         
         return {
             "reviewer_feedback": feedback,
-            "rubric_scores": feedback.criteria,
-            "optimization_hints": {"coverage": coverage}
+            "rubric_scores": feedback.criteria
         }
-    
-    def optimization_node(state: WorkflowState) -> Dict[str, Any]:
-        task_id = str(uuid.uuid4())
-        
-        rubric_scores = state.get("rubric_scores", {})
-        optimization_hints = state.get("optimization_hints", {})
-        coverage_metrics = optimization_hints.get("coverage", {})
-        
-        if rubric_scores:
-            compute_and_emit_reward(rubric_scores, coverage_metrics, task_id)
-            lightning_manager.increment_trace_count()
-            
-            if lightning_manager.should_train():
-                lightning_manager.train()
-        
-        return {}
     
     def should_continue(state: WorkflowState) -> str:
         if state["current_iteration"] >= 3:
             return "end"
         
-        if not state.get("reviewer_feedback"):
-            return "review"
+        feedback = state.get("reviewer_feedback")
+        if not feedback:
+            return "end"
         
-        decision = state["reviewer_feedback"].decision
+        decision = feedback.decision
         
         if decision == "ACCEPT":
             return "end"
@@ -124,39 +79,31 @@ def create_workflow() -> StateGraph:
             return "end"
     
     def increment_iteration(state: WorkflowState) -> Dict[str, Any]:
+        new_iteration = state["current_iteration"] + 1
+        print(f"\n{'='*60}")
+        print(f"🔄 Iteration {new_iteration}/3 - Retrying with feedback...")
+        print(f"{'='*60}\n")
         return {
-            "current_iteration": state["current_iteration"] + 1,
+            "current_iteration": new_iteration,
             "current_section_idx": 0,
             "slides": []
         }
     
     workflow.add_node("planner", planner_node)
     workflow.add_node("writer", writer_node)
-    workflow.add_node("asset_manager", asset_manager_node)
     workflow.add_node("reviewer", reviewer_node)
-    workflow.add_node("optimization", optimization_node)
     workflow.add_node("increment", increment_iteration)
     
-    def should_continue_writing(state: WorkflowState) -> str:
-        sections = state["lecture_plan"]["sections"]
-        current_idx = state["current_section_idx"]
-        
-        if current_idx >= len(sections):
-            return "done_writing"
-        else:
-            return "continue_writing"
+
     
     workflow.set_entry_point("planner")
     workflow.add_edge("planner", "writer")
-    workflow.add_edge("writer", "asset_manager")
-    workflow.add_edge("asset_manager", "reviewer")
-    workflow.add_edge("reviewer", "optimization")
+    workflow.add_edge("writer", "reviewer")
     
     workflow.add_conditional_edges(
-        "optimization",
+        "reviewer",
         should_continue,
         {
-            "review": "reviewer",
             "retry": "increment",
             "end": END
         }

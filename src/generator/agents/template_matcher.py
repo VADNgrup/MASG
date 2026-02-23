@@ -1,3 +1,4 @@
+import pinkyne_extension
 from langchain_openai import ChatOpenAI
 from pathlib import Path
 from typing import Dict, Any, List

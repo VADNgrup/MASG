@@ -18,11 +18,10 @@ class AssetManager:
     def save_image(
         self, 
         image_bytes: bytes, 
-        page_number: int, 
         image_index: int = 0,
-        priority: int = 1
+        caption: str = ""
     ) -> ImageAsset:
-        image_id = f"img_{page_number:03d}_{image_index:02d}"
+        image_id = f"img_{image_index:02d}"
         
         img = Image.open(io.BytesIO(image_bytes))
         
@@ -55,9 +54,8 @@ class AssetManager:
         image_asset = ImageAsset(
             image_id=image_id,
             file_path=relative_path,
-            page_number=page_number,
-            priority=priority,
-            metadata=metadata
+            caption = caption,
+            metadata = metadata
         )
         
         self.images.append(image_asset)

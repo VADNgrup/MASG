@@ -1,33 +1,57 @@
+import llm_extension
 import base64
 import time
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 from openai import OpenAI
 from tqdm import tqdm
-
 from src.utils.config import config
-from src.utils.file_utils import save_json, load_json
-from src.utils.file_utils import save_json, load_json
 
 class VisionCaptionGenerator:
-    def __init__(self, cache_file: Optional[Path] = None):
+    def __init__(self, model: str = None):
+        """
+        Initialize the Vision Caption Generator.
+        
+        Args:
+            model: OpenAI model to use (defaults to config.VISION_MODEL)
+        """
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-        self.cache_file = cache_file
-        self.cache: Dict[str, Dict[str, str]] = {}
-        
-        if cache_file and cache_file.exists():
-            self.cache = load_json(cache_file)
+        self.model = model or config.VISION_MODEL
+        self.max_tokens = config.VISION_MAX_TOKENS
+        self.temperature = config.VISION_TEMPERATURE
     
-    def _encode_image(self, image_path: Path) -> str:
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
-    
-    def _generate_caption(self, image_path: Path, prompt: str) -> str:
-        base64_image = self._encode_image(image_path)
+    def generate_caption(self, image_bytes: bytes, context: str) -> str:
+        """
+        Generate a descriptive caption for an image based on the provided context.
         
+        Args:
+            image_bytes: Raw image data in bytes
+            context: Contextual information about the image (e.g., surrounding text, topic)
+        
+        Returns:
+            str: Generated caption for the image
+        """
+        # Encode image to base64
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        
+        # Create prompt that combines context with image analysis
+        prompt = f"""You are analyzing an image from an educational document. 
+
+Context from the document:
+{context}
+
+Based on the context and the image content, generate a clear, concise, and descriptive caption for this image. The caption should:
+1. Accurately describe what the image shows
+2. Connect the image to the surrounding context
+3. Be suitable for educational purposes
+4. Be 2-3 sentences long
+
+Return ONLY the caption text, without any additional formatting or explanation."""
+
         try:
+            # Call OpenAI Vision API
             response = self.client.chat.completions.create(
-                model=config.VISION_MODEL,
+                model=self.model,
                 messages=[
                     {
                         "role": "user",
@@ -36,83 +60,73 @@ class VisionCaptionGenerator:
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                    "url": f"data:image/png;base64,{base64_image}"
                                 }
                             }
                         ]
                     }
                 ],
-                max_tokens=config.VISION_MAX_TOKENS,
-                temperature=config.VISION_TEMPERATURE
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
             )
             
-            return response.choices[0].message.content.strip()
-        
+            # Extract and return the caption
+            caption = response.choices[0].message.content.strip()
+            return caption
+            
         except Exception as e:
-            print(f"Error generating caption for {image_path.name}: {e}")
-            return ""
+            print(f"Error generating caption: {e}")
+            # Return a fallback caption based on context
+            return f"Image related to: {context[:100]}..." if context else "Educational image"
     
-    def generate_dual_captions(
-        self, 
-        image_path: Path, 
-        image_id: str,
-        content_type: Optional[str] = None
-    ) -> Tuple[str, str]:
-        if image_id in self.cache:
-            cached = self.cache[image_id]
-            return cached.get('caption_rag', ''), cached.get('caption_display', '')
+    def generate_table_caption(self, table_markdown: str, context: str) -> str:
+        """
+        Generate a descriptive caption for a table based on its content and context.
         
-        context_hint = ""
-        if content_type:
-            if content_type == "formula":
-                context_hint = "This is a mathematical formula/equation. "
-            elif content_type == "diagram":
-                context_hint = "This is a technical diagram or chart. "
-            elif content_type == "table_image":
-                context_hint = "This is a table shown as an image. "
+        Args:
+            table_markdown: The table content in markdown format
+            context: Contextual information (e.g., surrounding text from prev/next lines)
         
-        rag_prompt = (
-            f"{context_hint}"
-            "Describe this educational image in detail with specific keywords. "
-            "Include: diagram types, technical terms, numerical data, relationships shown, key concepts. "
-            "Make it searchable and information-rich."
-        )
-        
-        display_prompt = (
-            f"{context_hint}"
-            "Provide a brief, clear caption for this educational image (1-2 sentences). "
-            "Make it concise and easy to understand."
-        )
-        
-        caption_rag = self._generate_caption(image_path, rag_prompt)
-        time.sleep(0.5)
-        
-        caption_display = self._generate_caption(image_path, display_prompt)
-        
-        self.cache[image_id] = {
-            'caption_rag': caption_rag,
-            'caption_display': caption_display
-        }
-        
-        if self.cache_file:
-            save_json(self.cache, self.cache_file)
-        
-        return caption_rag, caption_display
-    
-    def batch_generate_captions(
-        self, 
-        image_data: List[Tuple[Path, str, Optional[str]]]
-    ) -> Dict[str, Tuple[str, str]]:
-        results = {}
-        
-        for image_path, image_id, content_type in tqdm(image_data, desc="Generating captions"):
-            caption_rag, caption_display = self.generate_dual_captions(
-                image_path, 
-                image_id, 
-                content_type
-            )
-            results[image_id] = (caption_rag, caption_display)
-            time.sleep(0.5)
-        
-        return results
+        Returns:
+            str: Generated caption for the table
+        """
+        # Create prompt for table caption generation
+        prompt = f"""You are analyzing a table from an educational document.
 
+Context from the document:
+{context}
+
+Table content:
+{table_markdown}
+
+Based on the table content and surrounding context, generate a clear, concise, and descriptive caption for this table. The caption should:
+1. Accurately describe what data the table presents
+2. Connect the table to the surrounding context
+3. Be suitable for educational purposes
+4. Start with "Table:" or "Table X:" format
+5. Be 1-2 sentences long
+
+Return ONLY the caption text, without any additional formatting or explanation."""
+
+        try:
+            # Call OpenAI API for text-based caption generation
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",  # Use text model for table captions
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=200,
+                temperature=0.3
+            )
+            
+            # Extract and return the caption
+            caption = response.choices[0].message.content.strip()
+            return caption
+            
+        except Exception as e:
+            print(f"Error generating table caption: {e}")
+            # Return a fallback caption based on context
+            return f"Table: {context[:100]}..." if context else "Data table"

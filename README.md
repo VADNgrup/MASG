@@ -7,12 +7,12 @@ This repository contains ideas and an experimental pipeline for **automatic lect
 Follow the steps below to generate lectures and slides:
 
 ```bash
-# 1. Extract document context from a raw file
+# 1. Extract document context from a raw file (includes automatic chart generation)
 python -m src.extractor.extract_file --input data/raw/{file_name}.{file_type}
 
 # 2. Preprocess context and generate smart metadata
 python -m src.preprocessor.preprocessing_context --context data/context/{doc_id}.json
-
+#python -m src.preprocessor.preprocessing_context --context data/context/607fe87f-b0f0-48b2-9c3d-ef5ccea059e1.json
 # 3. Generate Slidev-compatible slides
 python -m src.generator.slide_generator data/lectures/{file_name}.json slidev/slides.md
 

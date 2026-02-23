@@ -30,9 +30,8 @@ class ContentCoverageChecker:
         
         all_slide_text = ""
         for slide in slides:
-            all_slide_text += " " + slide.title
+            all_slide_text += " " + slide.slide_title
             all_slide_text += " " + " ".join(slide.content)
-            all_slide_text += " " + slide.speaker_notes
         
         slide_phrases = self.extract_key_phrases(all_slide_text)
         

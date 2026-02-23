@@ -4,15 +4,16 @@ from pydantic import BaseModel, Field
 from .asset import AssetCollection
 
 class TextContent(BaseModel):
-    clean_text: str
     markdown: str
     page_count: int
 
 class TableData(BaseModel):
     table_id: str
-    page_number: int
     markdown: str
-    raw_text: str
+    table_caption: str
+    should_visualize: str
+    chart_path: Optional[str] = None  
+    chart_type: Optional[str] = None  
 
 class ProcessingMetadata(BaseModel):
     total_images: int

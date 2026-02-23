@@ -9,6 +9,7 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
     UNSPLASH_API_KEY = os.getenv("UNSPLASH_API_KEY")
+    SERPER_API_KEY = os.getenv("SERPER_API_KEY")
     
     BASE_DIR = Path(__file__).parent.parent.parent
     DATA_DIR = BASE_DIR / "data"
@@ -40,6 +41,7 @@ class Config:
     REVIEWER_MODEL = "gpt-4o"
     REFINER_MODEL = "gpt-4o"
     CLASSIFIER_MODEL = "gpt-4o-mini"
+    TABLE_VIZ_MODEL = "gpt-4o-mini"  # Cost-effective model for table visualization evaluation
     
     MIN_COVERAGE_PERCENT = 70
     

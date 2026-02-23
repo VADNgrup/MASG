@@ -1,3 +1,4 @@
+import pinkyne_extension
 from langchain_openai import ChatOpenAI
 from typing import Dict, Any, List
 import json

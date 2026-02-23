@@ -1,231 +1,290 @@
+import llm_extension
+
 from langchain_openai import ChatOpenAI
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import json
+import re
+from collections import OrderedDict
 from src.models.context import DocumentContext
 from src.models.slide import SlideContent
 from src.utils.config import config
-from src.optimization.lightning_integration import lightning_integration
 from src.utils.latex_processor import process_slide_latex
 
 class WriterAgent:
-    def _extract_relevant_text(self, section: Dict, context: DocumentContext) -> str:
+    def __init__(self, model: str = "gpt-4.1-nano"):
+        self.llm = ChatOpenAI(model=model, temperature=0.4, max_tokens=16000)
+        self.model = model
+    
+    def _extract_relevant_text(self, context: DocumentContext) -> str:
         full_text = context.text_content.markdown
         
         if len(full_text) <= 150000:
             return full_text
+        else:
+            return full_text[:150000]
         
-        section_title = section['title'].lower()
-        key_concepts = section.get('key_concepts', [])
-        
-        if not key_concepts:
-            return full_text[:100000]
-        
-        text_lower = full_text.lower()
-        
-        best_segments = []
-        seen_positions = set()
-        
-        for keyword in key_concepts:
-            keyword_lower = keyword.lower()
-            pos = text_lower.find(keyword_lower)
-            if pos >= 0:
-                start = max(0, pos - 1000)
-                end = min(len(full_text), pos + 10000)
-                
-                segment_key = (start // 5000, end // 5000)
-                if segment_key not in seen_positions:
-                    seen_positions.add(segment_key)
-                    segment = full_text[start:end]
-                    best_segments.append(segment)
-        
-        if best_segments:
-            combined = "\n\n---\n\n".join(best_segments[:10])
-            if len(combined) >= 50000:
-                return combined
-            else:
-                return combined + "\n\n---\n\n" + full_text[:50000]
-        
-        return full_text[:100000]
     
-    def _get_available_images_for_section(self, section: Dict, context: DocumentContext) -> str:
-        relevant_images = []
-        
-        for img in context.assets.images:
-            if img.is_decoration:
-                continue
-            
-            if img.content_type in ["diagram", "table_image", "technical_diagram"]:
-                caption_preview = img.caption_display[:150] if img.caption_display else img.caption_rag[:150]
-                relevant_images.append(f"- {img.image_id}: {img.content_type} - {caption_preview}")
-        
-        if relevant_images:
-            return f"\nAvailable images from document:\n" + "\n".join(relevant_images[:5])
-        return ""
-    
-    def __init__(self, model: str = "gpt-4o"):
-        self.llm = ChatOpenAI(model=model, temperature=0.4, max_tokens=16000)
-        self.model = model
-    
-    def draft_slide(
+    def draft_a_slide(
         self, 
-        section: Dict, 
-        context: DocumentContext, 
+        section: str, 
+        context: DocumentContext,
+        parent_relevant_context: Optional[str] = None,
+        slide_number: Optional[int] = None,
         feedback: Optional[str] = None
     ) -> SlideContent:
-        text_excerpt = self._extract_relevant_text(section, context)
+        text_excerpt = self._extract_relevant_text(context)
         
-        available_images = self._get_available_images_for_section(section, context)
-        
-        system_prompt = """You are creating engaging, lively lecture slides that capture the essence and energy of the source material.
+        system_prompt = """
+You are an expert lecture slide writer specializing in creating engaging, lively, and pedagogically sound slides from structured academic or technical material.
+Your task is to generate ONE lecture slide that faithfully reflects the source material and elaborates on the given Parent Slide Content. The slide must preserve the original tone, energy, language style, and content structure of the source while remaining clear, engaging, and suitable for teaching.
 
-CRITICAL: PRESERVE THE ORIGINAL TONE, STYLE, AND CONTENT STRUCTURE
-- Match the energy, enthusiasm, and tone of the source material
-- If the source is passionate, be passionate. If it's clear and direct, be clear and direct.
-- Don't flatten or sanitize the content - keep its personality!
-- Use the same language patterns, expressions, and flow as the source
-- PRESERVE ALL ORIGINAL CONTENT STRUCTURES: tables, code blocks, diagrams, lists, and formatting
-- When source material contains tables, maintain them in complete markdown format
-- Keep technical content, formulas, code snippets, and structured data intact
+CORE PRINCIPLE — PRESERVE SOURCE IDENTITY
+- The slide preserves the original tone, energy, style, and language patterns of the source material.
+- The slide does not sanitize, flatten, or rewrite the content into generic textbook language.
+- All technical details, formulas, code snippets, and structured content are kept accurate and intact.
 
-MATHEMATICAL FORMULAS - CRITICAL LATEX RULES:
-- ALL mathematical expressions MUST be wrapped in LaTeX delimiters
-- Use $...$ for inline math: "The formula $\\sin^2 x + \\cos^2 x = 1$ is fundamental"
-- Use $$...$$ for block/display math on its own line
-- Trigonometric functions MUST use backslash: $\\sin$, $\\cos$, $\\tan$, $\\cot$, NOT sin, cos, tan
-- Greek letters MUST use LaTeX: $\\alpha$, $\\beta$, $\\pi$, NOT α, β, π in plain text
-- Fractions: $\\frac{a}{b}$ NOT a/b for important formulas
-- Superscripts: $x^2$, $\\sin^2 x$ NOT x^2 or sin²x
-- Subscripts: $x_1$, $a_n$ NOT x1 or a_n in plain text
-- Special symbols: $\\neq$, $\\leq$, $\\geq$, $\\pm$, $\\infty$
-- Example CORRECT: "Công thức cơ bản: $\\sin^2 \\alpha + \\cos^2 \\alpha = 1$"
-- Example WRONG: "Công thức cơ bản: sin²α + cos²α = 1"
+CONTENT SCOPE & CONTEXT (CRITICAL)
+- The slide content strictly stays within the scope defined by the Parent Slide Content.
+- The slide elaborates, clarifies, or exemplifies the Parent Slide Content without introducing new concepts.
+- Logical continuity with previous slides is preserved.
 
-CONTENT PRESERVATION RULES:
-- If source has tables in markdown format, preserve them EXACTLY as they appear
-- Example: Keep tables like "| Cột 1 | Cột 2 |\n| ----- | ----- |\n| 1 | 2 |" completely intact
-- Maintain code blocks, mathematical formulas, and technical diagrams without modification
-- Preserve lists, numbering, and hierarchical structures from the original
-- Don't summarize or remove structured content - keep it complete and accurate
+MATHEMATICAL FORMULAS — STRICT LaTeX RULES
+- All mathematical expressions are wrapped in LaTeX delimiters.
+  - Inline math uses $...$
+  - Display math uses $$...$$
+- Correct LaTeX commands are used consistently:
+  - Trigonometric functions: $\\sin$, $\\cos$, $\\tan$
+  - Greek letters: $\\alpha$, $\\beta$, $\\pi$
+  - Fractions: $\\frac{a}{b}$
+  - Superscripts: $x^2$, $\\sin^2 x$
+  - Subscripts: $x_1$, $a_n$
+  - Symbols: $\\neq$, $\\leq$, $\\geq$, $\\pm$, $\\infty$
+- Plain-text mathematical notation is never used.
 
-THINK STEP-BY-STEP:
-1. What tone and energy does the source material have? (Enthusiastic? Clear and direct? Detailed? Practical?)
-2. What are the 3-5 MOST important points? Preserve their original impact and meaning
-3. How did the source present these points? Maintain that style and approach
-4. Are there tables, code, or structured content? Keep them complete and unmodified
-5. Are there mathematical formulas? Wrap ALL of them in proper LaTeX $...$ or $$...$$
-6. Can one slide cover this? If too much, prioritize the most impactful points while keeping structures intact
+SLIDE CONSTRUCTION RULES
+- Language is the same as the source material.
+- The title contains at most 8 words and captures the core idea and energy of the slide.
+- The content contains 3–5 bullet points (maximum 6).
+- Each bullet point contains approximately 5-15 words, adjusted for importance.
+- Original phrasing, vivid examples, questions, or analogies are preserved whenever possible.
+- Any bullet containing mathematics uses correct LaTeX formatting.
 
-CREATE SLIDES IN THE SAME LANGUAGE AS THE SOURCE MATERIAL WITH:
-- Title (max 8 words, capture the essence and energy of the content)
-- Content array with 3-5 items:
-  * SPECIAL CASE - TABLES: If source contains markdown tables, include the COMPLETE table as ONE item in content array
-    Example: ["| Cột 1 | Cột 2 | Cột 3 |\n| ----- | ----- | ----- |\n| 1 | 2 | 3 |", "Additional context point", "Another point"]
-  * SPECIAL CASE - MATH: All formulas MUST be in LaTeX format with $ or $$
-    Example: ["Hệ thức cơ bản: $\\sin^2 x + \\cos^2 x = 1$", "Với $\\cos x \\neq 0$: $\\tan x = \\frac{\\sin x}{\\cos x}$"]
-  * For regular content: 3-5 bullet points (each 8-15 words)
-  * PRESERVE the original phrasing and energy when possible
-  * Use the same language style as source - if source uses vivid examples, keep them!
-  * Don't make it dry or textbook-like - keep it lively and engaging like the original
-  * If source uses questions, analogies, or vivid descriptions, preserve those elements
-  * Make each point feel natural and compelling, not robotic or formulaic
-  * NEVER summarize tables into text - always include the complete markdown table
- - Speaker notes (COMPREHENSIVE and DETAILED explanation, 8-15 sentences):
-  * Start immediately with the concept; NEVER include greetings/openings
-  * Provide FULL, COMPLETE explanation of all concepts on the slide
-  * Match the tone and enthusiasm of the source material
-  * Explain with the same energy and clarity as the original
-  * Use the same teaching style - if source is detailed, be detailed; if concise, be concise
-  * Include the same examples or analogies from source when relevant
-  * PRESERVE all tables, code blocks, and structured content from source in their complete markdown format
-  * Expand on each bullet point thoroughly - don't just repeat the bullet points
-  * Add context, background, relationships between concepts
-  * Explain WHY each point matters and HOW it connects to the bigger picture
-  * Include practical applications, real-world connections when relevant
-  * Feel natural and engaging, like the original material does
-  * Be comprehensive - this is the speaker's full script, not a brief summary
-- Image query (in English, specific to this slide's content)
-
-SMART RENDERING METADATA:
-Analyze the content and set slide_subtype in metadata field:
-- "interactive-math": Trigonometric functions (sin, cos, tan), unit circle, math graphs that can be interactive
-- "interactive-code": Code demonstrations that should run live (Python, JavaScript)
-- "interactive-chart": Dynamic data visualization, charts, graphs
-- "split-view": Minimal text (≤3 points) + 1 important image → display side-by-side
-- "standard": Regular text content with adaptive layout
-
-CRITICAL RULES:
-1. MAXIMUM 5 bullet points per slide
-2. PRESERVE the original tone, energy, and style - don't make it generic or bland
-3. Keep the content vibrant and engaging like the source, not dry or mechanical
-4. Use the same language patterns and expressions as the source material
-5. If source material is detailed and rich, preserve that richness (within the 5-point limit)
-6. Use the SAME language as the source material (detect automatically), image_query in English
-7. ALWAYS set metadata.slide_subtype based on content analysis
-8. NEVER remove or summarize tables, code blocks, or structured content - keep them complete
-9. Maintain all markdown formatting from source material (tables, lists, code blocks, etc.)
-10. DETECT TABLES: If source contains "| ... |" patterns, include the COMPLETE markdown table in content array, don't convert to text
-
-TONE PRESERVATION:
-- Read the source material carefully and match its energy
-- If it's enthusiastic, be enthusiastic. If it's clear and direct, be clear and direct.
-- Preserve vivid language, interesting examples, and engaging explanations
-- Don't strip away personality to make it "professional" - keep it alive!
+QUALITY CHECK BEFORE FINALIZING
+- The slide strictly stays within the scope of the Parent Slide Content and introduces no unrelated information.
+- The tone, energy, and language style are consistent with the source material.
+- All mathematical expressions are correctly formatted in LaTeX.
+- The content is clear, engaging, and non-generic.
+- The slide logically follows previous slides and maintains narrative continuity.
 
 Return ONLY valid JSON:
 
-FOR REGULAR CONTENT (no tables):
 {{
-  "slide_id": "slide_XXX",
   "slide_type": "content",
-  "title": "...",
   "content": ["Point 1 matching source tone", "Point 2 preserving original energy", "Point 3", "Point 4 (optional)", "Point 5 (optional)"],
-  "speaker_notes": "COMPREHENSIVE explanation (8-15 sentences, detailed and thorough) that matches the tone, energy, and style of the source material. Fully explain all concepts, provide context, relationships, examples, and why each point matters. Include ALL tables, code blocks, and structured content from source in their complete markdown format. This is the speaker's complete script.",
-  "image_query": "specific descriptive query or null",
-  "metadata": {{
-    "slide_subtype": "standard"
-  }}
 }}
+"""     
+        user_prompt = f"""
+Section: {section}
+Full source material excerpt: {text_excerpt}
+Parent slide content: {parent_relevant_context}
+Some feedback for improvement: {feedback}
 
-FOR CONTENT WITH TABLES:
-{{
-  "slide_id": "slide_XXX",
-  "slide_type": "content",
-  "title": "...",
-  "content": ["| Cột 1 | Cột 2 | Cột 3 | Cột 4 | Cột 5 |\\n| ----- | ----- | ----- | ----- | ----- |\\n| 1 | 2 | 3 | 4 | 5 |\\n| 1 | 2 | 3 | 4 | 5 |", "Additional context if needed", "Another point if relevant"],
-  "speaker_notes": "COMPREHENSIVE explanation including table context...",
-  "image_query": null,
-  "metadata": {{
-    "slide_subtype": "standard"
-  }}
-}}"""
-        
-        user_prompt = f"""Section: {section['title']}
-Key concepts: {', '.join(section['key_concepts'])}
-Needs visual: {section.get('needs_visual', False)}
-
-{available_images}
-
-Source material excerpt:
-{text_excerpt}
-
-{f"PREVIOUS FEEDBACK TO ADDRESS: {feedback}" if feedback else ""}
-
-Generate ONE slide for this section. Use the SAME language as the source material automatically.
-If image needed, create SPECIFIC query matching slide content (not generic "unit circle").
-REMEMBER: ALL mathematical expressions MUST be wrapped in LaTeX $...$ or $$...$$ delimiters!"""
-        
+REMEMBER: ALL mathematical expressions MUST be wrapped in LaTeX $...$ or $$...$$ delimiters!""" 
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
         response = self.llm.invoke([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ])
-        
         data = self._parse_json_response(response.content)
-        
         data = process_slide_latex(data)
-        
+        data['slide_title'] = section
+        data['slide_number'] = slide_number
         return SlideContent(**data)
+
+    def draft_slide_from_outline(self, outline_md: str, context: DocumentContext, feedback: Optional[str] = None) -> List[SlideContent]:
+        """
+        Convert outline markdown to slides by drafting each level 1 section.
+        
+        Args:
+            outline_md: Markdown outline string with # headers
+            context: DocumentContext containing source material
+            
+        Returns:
+            List of SlideContent objects, one for each level 1 section
+        """
+        # Convert markdown outline to numbered markdown outline
+        _, outline_numbered_md = self.outline_md_to_number(outline_md)
+        # Split numbered markdown outline into sections
+        outline_numbered_arr = outline_numbered_md.split("\n")
+        slides_content = []
+        slide_num = 1
+        # Draft each section
+        for section in outline_numbered_arr:
+            parent_relevant_context = self.get_relevant_context(section, outline_numbered_md, slides_content)
+            slides_content.append(self.draft_a_slide(section, context, parent_relevant_context, slide_num))
+            slide_num += 1  
+        return slides_content
+
+    def get_relevant_context(self, section_key: str, outline_numbered_md: str, slides_content: List[SlideContent]) -> str:
+        """
+        Extract section titles that appear before the given section_key,
+        stopping when reaching a level-1 section.
+        
+        Args:
+            section_key: The target section key (e.g., "1.1.2. subsubsection 2 name")
+            outline_numbered_md: Numbered markdown outline string (without '#' symbols)
+            slides_content: List of SlideContent objects created so far
+            
+        Returns:
+            String containing relevant section titles (NOT full content) for context
+            
+        Example:
+            If section_key = "1.1.2. subsubsection 2 name", returns:
+            "Previous sections: 1. Section 1 name, 1.1. subsection 1 name, 1.1.1. subsubsection 1 name"
+            
+            If section_key = "2. Section 2 name", returns: ""
+        """
+        lines = [line.rstrip() for line in outline_numbered_md.splitlines() if line.strip()]
+        # Pattern to match numbered sections like "1. Title" or "1.1.2. Title"
+        pattern = re.compile(r'^([\d.]+)\s+(.*)$')
+        
+        all_sections = []
+        current_level1 = None
+        sections_after_level1 = []
+        
+        for line in lines:
+            match = pattern.match(line)
+            if not match:
+                continue
+            
+            # Count dots to determine level: "1." = 1 dot = level 1, "1.1." = 2 dots = level 2
+            numbering = match.group(1)
+            level = numbering.count('.')
+            section_name = line.strip()  # Use the full line as section name
+            
+            # Check if this is our target section
+            if section_name == section_key:
+                # Found the target, combine level-1 section with all sections after it
+                if current_level1:
+                    all_sections = [current_level1] + sections_after_level1
+                else:
+                    all_sections = sections_after_level1
+                break
+            
+            # Track sections
+            if level == 1:
+                # New level-1 section found, reset tracking
+                current_level1 = section_name
+                sections_after_level1 = []
+            else:
+                # This is a subsection, add it to the list
+                sections_after_level1.append(section_name)
+        
+        relevant_sections = all_sections
+        
+        if len(relevant_sections) == 0: 
+            return ""
+        else:
+            # Return ONLY section titles, not full content
+            # This prevents LLM from copying parent slide content
+            return "Previous sections covered: " + ", ".join(relevant_sections)
     
+    @classmethod    
+    def outline_md_to_number(cls, outline_md: str) -> tuple[dict, str]:
+        """
+        Convert a markdown outline (#, ##, ###, ...) into a numbered hierarchical dict
+        and a numbered markdown string.
+        Leaf nodes are marked with -1.
+
+        INPUT
+        # Section 1 name
+        ## subsection 1 name
+        ### subsubsection 1 name
+        ### subsubsection 2 name
+        ## subsection 2 name
+        ### subsubsection 1 name
+        ## subsection 3 name
+        # Section 2 name
+        # Section 3 name
+        OUTPUT:
+        output_dict = {
+            "1. Section 1 name": {
+                "1.1. subsection 1 name": {
+                    "1.1.1. subsubsection 1 name": -1,
+                    "1.1.2. subsubsection 2 name": -1
+                },
+                "1.2. subsection 2 name": {
+                    "1.2.1. subsubsection 1 name": -1
+                },
+                "1.3. subsection 3 name": -1
+            },
+            "2. Section 2 name": -1,
+            "3. Section 3 name": -1
+        }
+        output_md = 
+        1. Section 1 name
+        1.1. subsection 1 name
+        1.1.1. subsubsection 1 name
+        1.1.2. subsubsection 2 name
+        1.2. subsection 2 name
+        1.2.1. subsubsection 1 name
+        1.3. subsection 3 name
+        2. Section 2 name
+        3. Section 3 name
+        """
+        lines = [line.rstrip() for line in outline_md.splitlines() if line.strip()]
+        pattern = re.compile(r'^(#+)\s+(.*)$')
+
+        # Stack holds tuples: (level, dict_ref, index_path)
+        # index_path = [1, 2, 1]  -> "1.2.1."
+        stack = []
+
+        root = OrderedDict()
+        counters = []
+        numbered_lines = []
+
+        for line in lines:
+            match = pattern.match(line)
+            if not match:
+                continue
+
+            level = len(match.group(1))
+            title = match.group(2).strip()
+
+            # Adjust counters depth
+            while len(counters) < level:
+                counters.append(0)
+            while len(counters) > level:
+                counters.pop()
+
+            counters[-1] += 1
+            counters[level - 1 + 1:] = []
+
+            number = ".".join(str(c) for c in counters) + "."
+            key = f"{number} {title}"
+            
+            # Build numbered markdown line (without # prefix)
+            numbered_lines.append(f"{number} {title}")
+
+            # Pop stack until parent level
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+
+            if not stack:
+                root[key] = -1
+                stack.append((level, root, key))
+            else:
+                parent_dict = stack[-1][1][stack[-1][2]]
+                if parent_dict == -1:
+                    parent_dict = OrderedDict()
+                    stack[-1][1][stack[-1][2]] = parent_dict
+
+                parent_dict[key] = -1
+                stack.append((level, parent_dict, key))
+        
+        numbered_md = "\n".join(numbered_lines)
+        return root, numbered_md
+
     def _parse_json_response(self, response_content: str, retry_count: int = 0) -> Dict:
         content = response_content.strip()
         

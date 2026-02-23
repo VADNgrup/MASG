@@ -17,7 +17,6 @@ class SlideType(str, Enum):
     HERO = "hero"
     THANKYOU = "thankyou"
 
-
 class CardItem(BaseModel):
     heading: str
     description: str
@@ -51,11 +50,12 @@ class ContactItem(BaseModel):
 
 class BaseSlide(BaseModel):
     slide_type: SlideType
-    title: str
+    title: Optional[str] = None  # Allow None for special slides (title/thankyou)
 
 
 class VisualSlide(BaseSlide):
     slide_type: Literal[SlideType.VISUAL] = SlideType.VISUAL
+    title: Optional[str] = None
     description: str
     image: Optional[str] = None
     category: Optional[str] = None

@@ -7,6 +7,21 @@ from src.models.asset import AssetCollection, ImageAsset
 from src.ingestion.parser import ParsedContent
 from src.utils.file_utils import save_json
 from src.utils.config import config
+from llama_parse import LlamaParse
+from src.utils.config import config
+
+def llama_parse_pdf(pdf_path):
+    parser = LlamaParse(
+        api_key=config.LLAMA_CLOUD_API_KEY,
+        result_type="markdown",
+        verbose=True,
+        language="vi",
+    )
+    documents = parser.load_data(str(pdf_path))
+    full_text = ""
+    for doc in documents:
+        full_text = full_text + doc.text + "\n"
+    return full_text
 
 class ContextWindowBuilder:
     def __init__(self, document_id: str, source_file: str, start_time: Optional[float] = None):
@@ -21,21 +36,11 @@ class ContextWindowBuilder:
         images: List[ImageAsset]
     ) -> DocumentContext:
         
+        # full_text already contains tables from extract_texts()
         full_text = '\n\n'.join(parsed_content.text_blocks)
         
-        markdown_with_tables = full_text
-        
-        if tables_markdown:
-            tables_section = "\n\n## Tables\n\n"
-            for table in tables_markdown:
-                tables_section += f"\n### {table.table_id} (Page {table.page_number})\n\n"
-                tables_section += table.markdown + "\n\n"
-            
-            markdown_with_tables = full_text + tables_section
-        
         text_content = TextContent(
-            clean_text=full_text,
-            markdown=markdown_with_tables,
+            markdown=full_text,  # Tables already included in full_text
             page_count=parsed_content.page_count
         )
         

@@ -1,3 +1,4 @@
+import pinkyne_extension
 from openai import OpenAI
 from src.utils.config import config
 

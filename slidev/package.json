@@ -9,8 +9,13 @@
   },
   "dependencies": {
     "@slidev/cli": "^52.11.1",
-    "@slidev/theme-default": "latest",
+    "@slidev/theme-bricks": "^0.25.0",
+    "@slidev/theme-default": "^0.25.0",
     "@slidev/theme-seriph": "latest",
+    "@vueuse/motion": "^3.0.3",
     "vue": "^3.5.26"
+  },
+  "devDependencies": {
+    "@slidev/types": "^52.11.3"
   }
 }

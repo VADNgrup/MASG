@@ -1,3 +1,4 @@
+import llm_extension
 from langchain_openai import ChatOpenAI
 from typing import List, Dict, Any
 import json
@@ -5,10 +6,9 @@ import re
 from src.models.context import DocumentContext
 from src.models.slide import SlideContent, ReviewerFeedback, CriterionScore
 from src.utils.config import config
-from src.optimization.lightning_integration import lightning_integration
 
 class ReviewerAgent:
-    def __init__(self, model: str = "gpt-4o"):
+    def __init__(self, model: str = "gpt-4.1-mini"):
         self.llm = ChatOpenAI(model=model, temperature=0.2)
         self.model = model
     
@@ -20,12 +20,10 @@ class ReviewerAgent:
     ) -> ReviewerFeedback:
         faithfulness = await self._evaluate_faithfulness(slides, context)
         pedagogical = await self._evaluate_pedagogical_flow(slides, lecture_plan)
-        visual = await self._evaluate_visual_alignment(slides, context)
         
         overall_score = (
-            faithfulness.score * 0.4 +
-            pedagogical.score * 0.35 +
-            visual.score * 0.25
+            faithfulness.score * 0.5 +
+            pedagogical.score * 0.5
         )
         
         if overall_score >= 75:
@@ -36,7 +34,7 @@ class ReviewerAgent:
             decision = "REJECT"
         
         specific_feedback = self._compile_specific_feedback(
-            slides, faithfulness, pedagogical, visual
+            slides, faithfulness, pedagogical
         )
         
         return ReviewerFeedback(
@@ -44,8 +42,7 @@ class ReviewerAgent:
             decision=decision,
             criteria={
                 "faithfulness": faithfulness,
-                "pedagogical_flow": pedagogical,
-                "visual_alignment": visual
+                "pedagogical_flow": pedagogical
             },
             specific_feedback=specific_feedback,
             summary=self._generate_summary(overall_score, decision, specific_feedback)
@@ -62,7 +59,7 @@ SOURCE DOCUMENT:
 {context.text_content.markdown[:10000]}
 
 SLIDES:
-{json.dumps([{"title": s.title, "content": s.content} for s in slides], indent=2)}
+{json.dumps([{"slide_title": s.slide_title, "content": s.content} for s in slides], indent=2)}
 
 Evaluate:
 1. Are there any facts/numbers/claims NOT in source?
@@ -90,7 +87,7 @@ PLANNED OUTLINE:
 {json.dumps(lecture_plan, indent=2)}
 
 SLIDES:
-{json.dumps([{"title": s.title, "content": s.content, "speaker_notes": s.speaker_notes} for s in slides], indent=2)}
+{json.dumps([{"slide_title": s.slide_title, "content": s.content} for s in slides], indent=2)}
 
 Check:
 1. Content density: Maximum 5 bullets per slide? Each bullet <= 15 words? Total per slide <= 75 words?
@@ -109,36 +106,7 @@ Return ONLY valid JSON:
         response = await self.llm.ainvoke(prompt)
         return self._parse_criterion_response(response.content)
     
-    async def _evaluate_visual_alignment(
-        self,
-        slides: List[SlideContent],
-        context: DocumentContext
-    ) -> CriterionScore:
-        slides_with_images = [s for s in slides if s.image]
-        
-        if not slides_with_images:
-            return CriterionScore(score=100, issues=[], suggestions=[])
-        
-        prompt = f"""Evaluate visual alignment:
 
-SLIDES WITH IMAGES:
-{json.dumps([{"title": s.title, "image_query": s.image_query} for s in slides_with_images], indent=2)}
-
-Check:
-1. Does image query match slide content?
-2. Are there slides that NEED images but don't have them?
-
-Return ONLY valid JSON:
-{{
-  "score": 80,
-  "issues": [],
-  "suggestions": []
-}}"""
-        
-        # Auto-instrumented by agentlightning
-        
-        response = await self.llm.ainvoke(prompt)
-        return self._parse_criterion_response(response.content)
     
     def _parse_criterion_response(self, content: str) -> CriterionScore:
         try:
@@ -151,17 +119,33 @@ Return ONLY valid JSON:
                 clean_content = clean_content.split("```")[1].split("```")[0]
             data = json.loads(clean_content.strip())
         
+        # Safely handle issues list
         if isinstance(data.get("issues"), list):
-            data["issues"] = [
-                f"Slide {item['slide']}: {item['issue']}" if isinstance(item, dict) else str(item)
-                for item in data["issues"]
-            ]
+            processed_issues = []
+            for item in data["issues"]:
+                if isinstance(item, dict):
+                    # Try to extract issue from dict, fallback to string representation
+                    if 'issue' in item and 'slide' in item:
+                        processed_issues.append(f"Slide {item['slide']}: {item['issue']}")
+                    else:
+                        # Just convert entire dict to string if structure is different
+                        processed_issues.append(str(item))
+                else:
+                    processed_issues.append(str(item))
+            data["issues"] = processed_issues
         
+        # Safely handle suggestions list
         if isinstance(data.get("suggestions"), list):
-            data["suggestions"] = [
-                f"Slide {item['slide']}: {item['suggestion']}" if isinstance(item, dict) else str(item)
-                for item in data["suggestions"]
-            ]
+            processed_suggestions = []
+            for item in data["suggestions"]:
+                if isinstance(item, dict):
+                    if 'suggestion' in item and 'slide' in item:
+                        processed_suggestions.append(f"Slide {item['slide']}: {item['suggestion']}")
+                    else:
+                        processed_suggestions.append(str(item))
+                else:
+                    processed_suggestions.append(str(item))
+            data["suggestions"] = processed_suggestions
         
         return CriterionScore(**data)
     
@@ -169,12 +153,11 @@ Return ONLY valid JSON:
         self,
         slides: List[SlideContent],
         faithfulness: CriterionScore,
-        pedagogical: CriterionScore,
-        visual: CriterionScore
+        pedagogical: CriterionScore
     ) -> List[Dict[str, str]]:
         feedback = []
         
-        for issue in faithfulness.issues + pedagogical.issues + visual.issues:
+        for issue in faithfulness.issues + pedagogical.issues:
             match = re.search(r"[Ss]lide[_\s]?(\d+|[a-z0-9_]+)", issue)
             if match:
                 slide_ref = match.group(1)
@@ -193,8 +176,6 @@ Return ONLY valid JSON:
             return "faithfulness"
         elif any(kw in issue_lower for kw in ["too much text", "too long", "unclear"]):
             return "pedagogical_flow"
-        elif any(kw in issue_lower for kw in ["image", "visual", "missing"]):
-            return "visual_alignment"
         else:
             return "general"
     

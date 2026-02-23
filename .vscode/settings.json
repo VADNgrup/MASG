@@ -1,0 +1,8 @@
+{
+    "slidev.include": [
+        "**/slides.md",
+        "slidev/template/multi-agent.md",
+        "slide_test.md",
+        "slidev/slides.md"
+    ]
+}
