@@ -65,7 +65,7 @@ SLIDE CONSTRUCTION RULES
 - Language is the same as the source material.
 - The title contains at most 8 words and captures the core idea and energy of the slide.
 - The content contains 3–5 bullet points (maximum 6).
-- Each bullet point contains approximately 5-15 words, adjusted for importance.
+- Each bullet point contains approximately 5-12 words, adjusted for importance.
 - Original phrasing, vivid examples, questions, or analogies are preserved whenever possible.
 - Any bullet containing mathematics uses correct LaTeX formatting.
 
@@ -77,10 +77,19 @@ QUALITY CHECK BEFORE FINALIZING
 - The slide logically follows previous slides and maintains narrative continuity.
 
 Return ONLY valid JSON:
-
+There are two types of slides: content slide and comparison slide.
+1. With content slide: 
 {{
   "slide_type": "content",
   "content": ["Point 1 matching source tone", "Point 2 preserving original energy", "Point 3", "Point 4 (optional)", "Point 5 (optional)"],
+}}
+2. With comparison slide: 
+{{
+  "slide_type": "comparison",
+  "content": {
+    "comparison_object_1_name": ["Point 1 matching source tone", "Point 2 preserving original energy", "Point 3", "Point 4 (optional)", "Point 5 (optional)"],
+    "comparison_object_2_name": ["Point 1 matching source tone", "Point 2 preserving original energy", "Point 3", "Point 4 (optional)", "Point 5 (optional)"],
+  }
 }}
 """     
         user_prompt = f"""
@@ -121,8 +130,8 @@ REMEMBER: ALL mathematical expressions MUST be wrapped in LaTeX $...$ or $$...$$
         # Draft each section
         for section in outline_numbered_arr:
             parent_relevant_context = self.get_relevant_context(section, outline_numbered_md, slides_content)
-            slides_content.append(self.draft_a_slide(section, context, parent_relevant_context, slide_num))
-            slide_num += 1  
+            slides_content.append(self.draft_a_slide(section, context, parent_relevant_context, slide_num, feedback=feedback))
+            slide_num += 1
         return slides_content
 
     def get_relevant_context(self, section_key: str, outline_numbered_md: str, slides_content: List[SlideContent]) -> str:

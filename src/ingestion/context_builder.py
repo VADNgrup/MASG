@@ -10,18 +10,6 @@ from src.utils.config import config
 from llama_parse import LlamaParse
 from src.utils.config import config
 
-def llama_parse_pdf(pdf_path):
-    parser = LlamaParse(
-        api_key=config.LLAMA_CLOUD_API_KEY,
-        result_type="markdown",
-        verbose=True,
-        language="vi",
-    )
-    documents = parser.load_data(str(pdf_path))
-    full_text = ""
-    for doc in documents:
-        full_text = full_text + doc.text + "\n"
-    return full_text
 
 class ContextWindowBuilder:
     def __init__(self, document_id: str, source_file: str, start_time: Optional[float] = None):
@@ -37,7 +25,7 @@ class ContextWindowBuilder:
     ) -> DocumentContext:
         
         # full_text already contains tables from extract_texts()
-        full_text = '\n\n'.join(parsed_content.text_blocks)
+        full_text = parsed_content.full_text
         
         text_content = TextContent(
             markdown=full_text,  # Tables already included in full_text

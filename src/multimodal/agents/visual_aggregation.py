@@ -6,9 +6,6 @@ from pathlib import Path
 
 
 class VisualAggregation:
-    def __init__(self, model: str = "gpt-4.1-nano"):
-        self.llm = ChatOpenAI(model=model, temperature=0.4, max_tokens=16000)
-        self.model = model
     
     def aggregate_media_from_lecture(self, lecture_dict: Dict[str, Any]) -> Dict[str, Any]:
         """

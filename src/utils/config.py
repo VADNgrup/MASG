@@ -10,6 +10,12 @@ class Config:
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
     UNSPLASH_API_KEY = os.getenv("UNSPLASH_API_KEY")
     SERPER_API_KEY = os.getenv("SERPER_API_KEY")
+    VLM_BASE_URL = os.getenv("VLM_BASE_URL")
+    VLM_API_KEY = os.getenv("VLM_API_KEY")
+    VLM_MODEL_NAME = os.getenv("VLM_MODEL_NAME")
+
+    EVAL_LANGUAGE_MODEL = os.getenv("EVAL_BASE_URL")
+    EVAL_VISION_MODEL = os.getenv("EVAL_API_KEY")
     
     BASE_DIR = Path(__file__).parent.parent.parent
     DATA_DIR = BASE_DIR / "data"

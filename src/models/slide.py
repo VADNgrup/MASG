@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, List, Dict, Any
 from datetime import datetime
+from typing import Union
 
 class ImageReference(BaseModel):
     source: Literal["original", "tavily", "generated"]
@@ -15,7 +16,7 @@ class SlideContent(BaseModel):
     slide_number: int
     slide_title: str
     slide_type: str
-    content: List[str]
+    content: Union[List[str], Dict[str, List[str]]]
 
 class LectureMetadata(BaseModel):
     source_document_id: str

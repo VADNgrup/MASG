@@ -26,7 +26,7 @@ class MatplotlibChartGenerator:
     def __init__(self):
         """Initialize with OpenAI client"""
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-        self.model = config.OPENAI_MODEL if hasattr(config, 'OPENAI_MODEL') else "gpt-4o-mini"
+        self.model = config.OPENAI_MODEL if hasattr(config, 'OPENAI_MODEL') else "qwen3-30b-a3b-instruct-2507"
         print("✓ Matplotlib Chart Generator initialized successfully")
     
     def markdown_to_dataframe(self, markdown: str) -> Optional[pd.DataFrame]:

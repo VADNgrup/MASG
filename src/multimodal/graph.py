@@ -23,7 +23,7 @@ def create_multimodal_workflow() -> StateGraph:
     workflow = StateGraph(MultimodalState)
     
     # Initialize agents
-    query_agent = GenerateQueryAgent()
+    query_agent = GenerateQueryAgent("qwen3-30b-a3b")
     aggregation_agent = VisualAggregation()
     image_distribution_agent = ImageDistribution()
     table_distribution_agent = TableChartDistribution()
@@ -96,9 +96,11 @@ def create_multimodal_workflow() -> StateGraph:
         )
         
         print(f"\nDistributed {len(distributions)} images to slides")
+        print(f"   aggregated_media total_images after distribution: {aggregated_media.get('total_images', 0)}")
         
         return {
             "image_distributions": distributions,
+            "aggregated_media": aggregated_media,  # propagate mutations (downloaded images added)
             "used_images": used_images
         }
     
@@ -157,7 +159,7 @@ def main():
     
     # Run workflow with initial state
     initial_state = {
-        "lecture_id": "lec_b481e59e",
+        "lecture_id": "lec_6895e38a",
         "used_images": set(),
         "used_tables": set()
     }

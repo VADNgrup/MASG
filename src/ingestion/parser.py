@@ -1,224 +1,292 @@
+import os
 import llm_extension
 import re
 import logging
 from PIL import Image
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from docling.document_converter import DocumentConverter
 from src.utils.config import config
-from src.ingestion.table_filter import TableFilter
 from io import BytesIO
+from src.ingestion.table_filter import TableFilter
 from src.ingestion.image_filter import ImageFilter
-from docling_core.types.doc import ImageRefMode, PictureItem, TableItem
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.document_converter import DocumentConverter, PdfFormatOption
 from src.ingestion.vision_model import VisionCaptionGenerator
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.output import text_from_rendered
+from marker.config.parser import ConfigParser
+from marker.converters.table import TableConverter
+from marker.renderers.markdown import MarkdownRenderer
+from marker.schema import BlockTypes
+from marker.schema.blocks import Table
+from marker.schema.document import Document
+from marker.models import create_model_dict
+import json
+import base64
+import fitz 
+from openai import OpenAI
 
 _log = logging.getLogger(__name__)
 
 
 IMAGE_RESOLUTION_SCALE = 2.0
 
+os.environ["TORCH_DEVICE"] = "cuda"
+
 class ParsedContent:
     def __init__(self):
-        self.text_blocks: List[str] = []
+        self.full_text: str = ""
         self.tables: List[Dict[str, Any]] = []  # Changed from List[str] to match actual data
         self.images: List[Dict[str, Any]] = []
         self.page_count: int = 0
 
 class DocumentParser:
     def __init__(self, pdf_path: Path):
-        pipeline_options = PdfPipelineOptions()
-        pipeline_options.images_scale = IMAGE_RESOLUTION_SCALE
-        pipeline_options.generate_page_images = True
-        pipeline_options.generate_picture_images = True
-        pipeline_options.ocr_options.lang = ["vi", "en"]
-        doc_converter = DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-            }
+        config_dict = {
+            "output_format": "markdown",
+            "use_llm": True,
+            # Ép dùng OpenAIService
+            "llm_service": "marker.services.openai.OpenAIService",
+            # Ollama config
+            "openai_base_url": config.VLM_BASE_URL,
+            "openai_api_key": config.VLM_API_KEY,
+            "openai_model": config.VLM_MODEL_NAME,
+        }
+        parser = ConfigParser(config_dict)
+
+        converter = PdfConverter(
+            config=parser.generate_config_dict(),
+            artifact_dict=create_model_dict(),
+            processor_list=parser.get_processors(),
+            renderer=parser.get_renderer(),
+            llm_service=parser.get_llm_service(),
         )
+
+        print("🔍 Converting PDF with Ollama LLM...")
         self.pdf_path = pdf_path
-        self.result = doc_converter.convert(self.pdf_path)
+        self.doc = fitz.open(self.pdf_path)
+        rendered = converter(self.pdf_path)
+        self.full_text, _, self.images = text_from_rendered(rendered)
         self.table_filter = TableFilter()
-        self.image_filter = ImageFilter()
         
     def parse_document(self) -> ParsedContent:
         content = ParsedContent()
-        content.text_blocks = self.extract_texts()
+        content.full_text = self.extract_texts()
         content.tables = self.extract_tables()
         content.images = self.extract_figures()
-        content.page_count = len(self.result.document.pages)
+        content.page_count = len(self.doc)
+        self.doc.close()
         return content
 
-    def extract_texts(self) -> List[str]:
-        doc = self.result.document
-        pages_markdown = {}  
-        for page_no, page in doc.pages.items():
-            page_text_parts = []
-            
-            for item, level in doc.iterate_items():
-                if hasattr(item, 'prov') and item.prov:
-                    for prov in item.prov:
-                        if hasattr(prov, 'page_no') and prov.page_no == page_no:
-                            item_type = type(item).__name__
-                            # Handle section headers with proper markdown formatting
-                            if item_type == 'SectionHeaderItem':
-                                if hasattr(item, 'text') and item.text:
-                                    heading_level = min(level + 1, 6)  # Markdown supports h1-h6
-                                    heading_prefix = '#' * heading_level
-                                    page_text_parts.append(f"{heading_prefix} {item.text}")
-                            # Handle regular text
-                            elif hasattr(item, 'text') and item.text:
-                                page_text_parts.append(item.text)
-                            # Handle tables (TableItem only, not PictureItem)
-                            elif item_type == 'TableItem' and hasattr(item, 'export_to_markdown'):
-                                table_md = item.export_to_markdown()
-                                if table_md:
-                                    page_text_parts.append(table_md)
-                            break
-            
-            page_markdown = "\n\n".join(page_text_parts)
-            pages_markdown[page_no] = page_markdown
+    def extract_texts(self) -> str:
+        return self.full_text
         
-        # Convert dict to sorted list by page number
-        sorted_pages = sorted(pages_markdown.items())
-        return [content for _, content in sorted_pages]
-
     def extract_tables(self) -> List[Dict[str, Any]]:
         tables = []
-
-        # Get main table caption within 2 lines
-        def get_main_table_caption(cap):
-            CAPTION_RE = re.compile(
-                r'^\s*(table|tab\.?,|bảng)\s*\d+\s*[:\.]',
-                re.IGNORECASE
-            )
-            if bool(CAPTION_RE.match(cap)): return True
-            else: return False
-        lines = self.result.document.export_to_markdown().splitlines()
-        for idx, table in enumerate(self.result.document.tables):
-            table_markdown = table.export_to_markdown()
-            table_arr = table_markdown.splitlines()
-            prev_line_table, next_line_table = table_arr[0], table_arr[-1]
-            prev_line = ""
-            next_line = ""
-            table_caption = ""
-            for i, line in enumerate(lines):
-                if prev_line_table and prev_line_table in line:
-                    prev_line = ""
-                    for j in range(i - 1, -1, -1):
-                        text = lines[j].strip()
-                        if text and not text.startswith("<!--"):
-                            prev_line = text
-                            break
-                elif next_line_table and next_line_table in line:
-                    next_line = ""
-                    for j in range(i + 1, len(lines)):
-                        text = lines[j].strip()
-                        if text and not text.startswith("<!--"):
-                            next_line = text
-                            break
-            if get_main_table_caption(prev_line): 
-                table_caption = prev_line
-            elif get_main_table_caption(next_line): 
-                table_caption = next_line
-            else:
-                # If no caption found, use vision caption generator with table context
-                table_context = f"Table need caption\n{prev_line}\n{next_line}"
-                vision_caption_generator = VisionCaptionGenerator()
-                table_caption = vision_caption_generator.generate_table_caption(
-                    table_markdown=table_markdown,
-                    context=table_context
-                )
-
-            # Check if table should be visualized
+        table_page_information = self.get_table_page_information()
+        table_index = 0
+        for table_page in table_page_information:
+            table_markdown = table_page['table']
+            table_caption = table_page['caption']
             should_visualize = self.table_filter.should_visualize_table(table_markdown)
             tables.append({
-                'table_id': f"table_{idx+1:03d}",
+                'table_id': f"table_{table_index+1:03d}",
                 'markdown': table_markdown,
                 'table_caption': table_caption,
                 'should_visualize': should_visualize
             })
+            table_index += 1
         return tables
 
-    def extract_figures(self, ratio = 0.02) -> List[Dict[str, Any]]:
-        # Get main caption within 2 lines
-        def get_main_image_caption(cap):
-            CAPTION_RE = re.compile(
-                r'^\s*(figure|fig\.?|hình)\s*\d+\s*[:\.]',
-                re.IGNORECASE
-            )
-            if bool(CAPTION_RE.match(cap)): return True
-            else: return False
-        
-        # Get Every Relevant Image Caption
-        vision_caption_generator = VisionCaptionGenerator()
-        lines = self.result.document.export_to_markdown().splitlines()
-        captions = []
-        for i, line in enumerate(lines):
-            if "<!-- image -->" in line:
-                # Find nearest line above
-                prev_line = ""
-                for j in range(i - 1, -1, -1):
-                    text = lines[j].strip()
-                    if text and not text.startswith("<!--"):
-                        prev_line = text
-                        break
-                
-                if get_main_image_caption(prev_line):
-                    captions.append(prev_line)
-                    continue
-
-                # Find nearest line below
-                next_line = ""
-                for j in range(i + 1, len(lines)):
-                    text = lines[j].strip()
-                    if text and not text.startswith("<!--"):
-                        next_line = text
-                        break
-
-                if get_main_image_caption(next_line):
-                    captions.append(next_line)
-                    continue
-                # If no caption found, use vision caption generator
-                image_context = "Image need caption" + prev_line + "\n" + next_line
-                captions.append(image_context)
-
-        # Find Document Size
-        doc_area = 0
-        image_index = 0
-        for page_no, page in self.result.document.pages.items():
-            page_no = page.page_no
-            pil_img = page.image.pil_image
-            w, h = pil_img.size
-            print("\nDocument size: {w} x {h}\n")
-            doc_area = w * h
-            break
-        
-        # Get Image having valid size
-        image_index = 0
-        actual_image_index = 0
+    def extract_figures(self) -> List[Dict[str, Any]]:
         images = []
-        for element, _level in self.result.document.iterate_items():
-            if isinstance(element, PictureItem):
-                img_bytes = BytesIO()
-                element.get_image(self.result.document).save(img_bytes, "PNG")
-                w, h = Image.open(img_bytes).size
-                if (w*h) / doc_area > ratio: # Check Valid Size Image
-
-                    # Check if image need caption
-                    if "Image need caption" in captions[actual_image_index]:
-                        vision_caption_generator = VisionCaptionGenerator()
-                        captions[actual_image_index] = vision_caption_generator.generate_caption(img_bytes.getvalue(), captions[actual_image_index])
-                    
-                    images.append({
-                        'image_index':image_index,
-                        'image_bytes':img_bytes.getvalue(),
-                        'relevant_caption': captions[actual_image_index],
-                    })
-                    image_index += 1
-                actual_image_index += 1
-
+        image_page_information = self.get_image_page_information(self.images)
+        image_index = 0
+        for image_page in image_page_information:
+            img_bytes = BytesIO()
+            img = image_page['image']
+            img.save(img_bytes, format='PNG')
+            images.append({
+                'image_index':image_index,
+                'image_bytes':img_bytes.getvalue(),
+                'page_number': image_page['page'],
+                'raw_name': image_page['raw_name'],
+                'relevant_caption': image_page['caption'],
+            })
+            image_index += 1
         return images
+    
+    def get_image_page_information(self, images) -> List[Dict[str, Any]]:
+        image_page_information = []
+        for key, value in images.items():
+            page_index = re.search(r'page_(\d+)', key)
+            image_page = {"page": page_index.group(1), "raw_name": key, "image": value}
+            image_page_information.append(image_page)
+
+        # Đếm số ảnh trên mỗi trang
+        image_page_count = {}
+        for image_page in image_page_information:
+            page = image_page['page']
+            image_page_count[page] = image_page_count.get(page, 0) + 1
+
+        # Lấy caption cho từng trang (gọi get_caption một lần / trang)
+        page_captions: Dict[str, List[str]] = {}
+        for page, count in image_page_count.items():
+            page_captions[page] = self.get_caption(int(page), count, type_search="image")
+
+        # Gán caption vào từng phần tử theo thứ tự xuất hiện trong trang
+        page_index_tracker: Dict[str, int] = {}
+        for image_page in image_page_information:
+            page = image_page['page']
+            idx = page_index_tracker.get(page, 0)
+            image_page['caption'] = page_captions[page][idx]
+            page_index_tracker[page] = idx + 1
+
+        # Postprocessing: sinh caption cho những ảnh bị "No Caption"
+        full_text = self.extract_texts()
+        text_lines = full_text.splitlines()
+        vision_generator = VisionCaptionGenerator()
+
+        for image_page in image_page_information:
+            if image_page['caption'].strip().lower() == "no caption":
+                raw_name = image_page['raw_name']
+
+                # Tìm dòng chứa raw_name trong full text
+                target_line_idx = None
+                for i, line in enumerate(text_lines):
+                    if raw_name in line:
+                        target_line_idx = i
+                        break
+
+                # Lấy ±15 dòng làm context
+                if target_line_idx is not None:
+                    start = max(0, target_line_idx - 15)
+                    end = min(len(text_lines), target_line_idx + 15 + 1)
+                    context = "\n".join(text_lines[start:end])
+                else:
+                    context = ""
+
+                # Chuyển ảnh sang bytes PNG
+                img_bytes_io = BytesIO()
+                img = image_page['image']
+                img.save(img_bytes_io, format='PNG')
+                img_bytes = img_bytes_io.getvalue()
+
+                # Sinh caption bằng VisionCaptionGenerator
+                image_page['caption'] = vision_generator.generate_caption(img_bytes, context)
+
+        return image_page_information
+
+    
+    def get_table_page_information(self) -> List[Dict[str, Any]]:
+        config_parser = ConfigParser({})
+        converter = TableConverter(
+            artifact_dict=create_model_dict(),
+            config=config_parser.generate_config_dict(),
+        )
+        document = converter.build_document(self.pdf_path)
+        renderer = MarkdownRenderer()
+        markdown_output = renderer(document)
+        tables = document.contained_blocks((BlockTypes.Table,))
+        tables_content = markdown_output.markdown.split("\n\n")
+        table_page_information = []
+        for i in range(len(tables)):
+            table_page = {"page": tables[i].page_id, "table": tables_content[i]}
+            table_page_information.append(table_page)
+
+        # Đếm số bảng trên mỗi trang
+        table_page_count = {}
+        for table_page in table_page_information:
+            page = table_page['page']
+            table_page_count[page] = table_page_count.get(page, 0) + 1
+
+        # Lấy caption cho từng trang (gọi get_caption một lần / trang)
+        page_captions: Dict[str, List[str]] = {}
+        for page, count in table_page_count.items():
+            page_captions[page] = self.get_caption(int(page), count, type_search="table")
+
+        # Gán caption vào từng phần tử theo thứ tự xuất hiện trong trang
+        page_index_tracker: Dict[str, int] = {}
+        for table_page in table_page_information:
+            page = table_page['page']
+            idx = page_index_tracker.get(page, 0)
+            table_page['caption'] = page_captions[page][idx]
+            page_index_tracker[page] = idx + 1
+
+        # Postprocessing: sinh caption cho những bảng bị "No Caption"
+        full_text = self.extract_texts()
+        text_lines = full_text.splitlines()
+        vision_generator = VisionCaptionGenerator()
+
+        for table_page in table_page_information:
+            if table_page['caption'].strip().lower() == "no caption":
+                table_markdown_content = table_page['table']
+                
+                # Tìm dòng đầu tiên của bảng trong full text
+                first_table_line = table_markdown_content.strip().splitlines()[0] if table_markdown_content.strip() else ""
+                target_line_idx = None
+                for i, line in enumerate(text_lines):
+                    if first_table_line and first_table_line in line:
+                        target_line_idx = i
+                        break
+
+                # Lấy ±15 dòng làm context
+                if target_line_idx is not None:
+                    start = max(0, target_line_idx - 15)
+                    end = min(len(text_lines), target_line_idx + 15 + 1)
+                    context = "\n".join(text_lines[start:end])
+                else:
+                    context = ""
+
+                # Sinh caption bằng VisionCaptionGenerator
+                table_page['caption'] = vision_generator.generate_table_caption(table_markdown_content, context)
+
+        return table_page_information
+
+    
+    def get_caption(self, page_id, object_number, type_search = "image") -> List[str]:
+        BASE_URL = f"{config.VLM_BASE_URL}v1"
+        API_KEY = config.VLM_API_KEY
+        MODEL = config.VLM_MODEL_NAME
+        page_index = page_id
+        page = self.doc.load_page(page_index)
+        pix = page.get_pixmap(dpi=200)
+        image_bytes = pix.tobytes("png")
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+        client = OpenAI(
+            base_url=BASE_URL,
+            api_key=API_KEY
+        )
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"""This page contains {object_number} {type_search}. Extract the caption for each {type_search}, if available.
+                            Return a JSON array of exactly {object_number} strings, one caption per {type_search}, in the order they appear on the page. If a {type_search} has no caption, use "No Caption" as the value. Do not include any explanation, only output the JSON array.
+                            Example output (if the 2nd {type_search} has no caption): ["Caption of first {type_search}", "No Caption", "Caption of third {type_search}"]"""
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            temperature=0.2
+        )
+        raw_content = response.choices[0].message.content.strip()
+        match = re.search(r'\[.*\]', raw_content, re.DOTALL)
+        if match:
+            captions: List[str] = json.loads(match.group())
+        else:
+            captions = []
+        # Đảm bảo đúng object_number phần tử
+        captions = captions[:object_number]
+        captions += ["No Caption"] * (object_number - len(captions))
+        return captions
+    

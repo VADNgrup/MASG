@@ -15,7 +15,7 @@ class PlannerAgent:
         sections = re.split(r'\n#\s+', text)
         return [s.strip() for s in sections if len(s.strip()) > 50]
     
-    def create_outline(self, context: DocumentContext) -> Dict[str, Any]:
+    def create_outline(self, context: DocumentContext, feedback: str = None) -> Dict[str, Any]:
         full_text = context.text_content.markdown
         
         text_sections = self._split_into_logical_sections(full_text)
@@ -23,19 +23,25 @@ class PlannerAgent:
         text_length = len(full_text)
         
         if text_length < 3000:
-            target_main_sections = "2-3"
-            target_number_slide = "3-5"
+            target_main_sections = "2"
             complexity_level = "concise"
         elif text_length < 10000:
-            target_main_sections = "3-4"
-            target_number_slide = "5-7"
+            target_main_sections = "3"
             complexity_level = "detailed"
         else:
-            target_main_sections = "4-5"
-            target_number_slide = "7-9"
+            target_main_sections = "4"
             complexity_level = "comprehensive"
 
         tables_assets_info = f"# Avaliable Table \n {context.tables}\n # Avaliable Image \n {context.assets.images}"
+        
+        feedback_block = ""
+        if feedback:
+            feedback_block = f"""
+ REVISION FEEDBACK FROM PREVIOUS OUTLINE REVIEW:
+{feedback}
+
+Apply all the suggestions above when generating this revised outline.
+"""
         
         prompt = f"""
 You are a senior lecture designer and slide-structure architect.
@@ -50,26 +56,24 @@ FULL DOCUMENT TEXT:
 {full_text}
 SOME INFORMATION ABOUT TABLES and ASSETS:
 {tables_assets_info}
-
+{feedback_block}
 STEP 2: Create lecture outline
-Generate a hierarchical outline with EXACTLY {target_main_sections} major sections and EXACTLY {target_number_slide} total slides.
+Generate a hierarchical outline with EXACTLY {target_main_sections} major sections.
 
 STRICT REQUIREMENTS:
 1. Count of "# Title" lines = {target_main_sections} (NO MORE, NO LESS)
-2. Count of ALL titles (# + ##) = {target_number_slide} (NO MORE, NO LESS)
-3. Each major section = ONE core concept from the document
-4. Maximum 2 heading levels:
+2. Each major section = ONE core concept from the document
+3. Maximum 2 heading levels:
    - Use "# Title" for major sections
    - Use "## Title" for subsections  
-5. A major section may or may not have subsections
-6. Do NOT combine unrelated concepts
-7. Do NOT add content not in the source document
-8. Do NOT include topic name itself in the outline
-9. Do NOT include explanations or comments
+4. A major section may or may not have subsections. If it has subsections, it MUST have at least 2 subsections (never just 1)
+5. Do NOT combine unrelated concepts
+6. Do NOT add content not in the source document
+7. Do NOT include topic name itself in the outline
+8. Do NOT include explanations or comments
 
 VERIFY BEFORE SUBMITTING:
 - Total "# Title" = {target_main_sections}
-- Total "# Title" + "## Title" = {target_number_slide}
 
 Output ONLY the markdown outline:
 """
@@ -79,5 +83,5 @@ Output ONLY the markdown outline:
         
         return {
             "outline": outline_md
-        } 
+        }
 

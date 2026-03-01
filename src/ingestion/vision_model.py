@@ -13,10 +13,13 @@ class VisionCaptionGenerator:
         Initialize the Vision Caption Generator.
         
         Args:
-            model: OpenAI model to use (defaults to config.VISION_MODEL)
+            model: VLM model to use (defaults to config.VLM_MODEL_NAME)
         """
-        self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-        self.model = model or config.VISION_MODEL
+        BASE_URL = f"{config.VLM_BASE_URL}/v1"
+        API_KEY = config.VLM_API_KEY
+        MODEL = config.VLM_MODEL_NAME
+        self.client = OpenAI(base_url=BASE_URL, api_key=API_KEY)
+        self.model = model or MODEL
         self.max_tokens = config.VISION_MAX_TOKENS
         self.temperature = config.VISION_TEMPERATURE
     
@@ -109,17 +112,17 @@ Based on the table content and surrounding context, generate a clear, concise, a
 Return ONLY the caption text, without any additional formatting or explanation."""
 
         try:
-            # Call OpenAI API for text-based caption generation
+            # Call VLM API for text-based caption generation
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",  # Use text model for table captions
+                model=self.model,
                 messages=[
                     {
                         "role": "user",
                         "content": prompt
                     }
                 ],
-                max_tokens=200,
-                temperature=0.3
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
             )
             
             # Extract and return the caption

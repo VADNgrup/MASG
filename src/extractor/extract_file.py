@@ -3,7 +3,7 @@ import argparse
 import uuid
 import time
 import logging
-
+import os
 from pathlib import Path
 from tqdm import tqdm
 from src.utils.config import config
@@ -14,21 +14,6 @@ from src.ingestion.context_builder import ContextWindowBuilder
 from src.ingestion.image_filter import ImageFilter
 from src.models.context import TableData
 from src.ingestion.generate_charts import generate_charts_for_context
-from llama_parse import LlamaParse
-from src.utils.config import config
-
-def llama_parse_pdf(pdf_path):
-    parser = LlamaParse(
-        api_key=config.LLAMA_CLOUD_API_KEY,
-        result_type="markdown",
-        verbose=True,
-        language="vi",
-    )
-    documents = parser.load_data(str(pdf_path))
-    full_text = ""
-    for doc in documents:
-        full_text = full_text + doc.text + "\n"
-    return full_text
 
 def main():
     parser = argparse.ArgumentParser(description="Phase 1: Multimodal Ingestion Pipeline")
@@ -36,8 +21,8 @@ def main():
     parser.add_argument("--output", default=None, help="Output directory for context JSON")
     args = parser.parse_args()
     
-    input_path = Path(args.input)
-    if not input_path.exists():
+    input_path = args.input
+    if not os.path.exists(input_path):
         print(f"Error: Input file not found: {input_path}")
         return
     
@@ -47,13 +32,11 @@ def main():
     document_id = str(uuid.uuid4())
     print(f"\n{'='*60}")
     print(f"Document ID: {document_id}")
-    print(f"Source: {input_path.name}")
     print(f"{'='*60}\n")
     
-    print("[1/6] Parsing document and extract text with LlamaParse...")
+    print("[1/6] Marker Parsing...")
     doc_parser = DocumentParser(input_path) #Text Extraction
     parsed_content = doc_parser.parse_document()
-    print(f"✓ Extracted {parsed_content.page_count} pages")
     
     print("\n[2/6] Extracting and saving images...")
     asset_manager = AssetManager(document_id)
@@ -72,15 +55,12 @@ def main():
     tables_markdown = [TableData(**tbl) for tbl in parsed_content.tables]
     
     print("\n[4/6] Building context window...")
-    builder = ContextWindowBuilder(document_id, input_path.name, start_time=processing_start)
+    builder = ContextWindowBuilder(document_id, Path(input_path).name, start_time=processing_start)
     context = builder.build_context(
         parsed_content=parsed_content,
         tables_markdown=tables_markdown,
         images=all_images
     )
-     ## Bonus: LLama Parse support PDF OCR on Vietnamese
-    full_text = llama_parse_pdf(input_path)
-    context.text_content.markdown = full_text
 
     print("\n[5/6] Saving context JSON...")
     output_path = builder.save_context(context)
