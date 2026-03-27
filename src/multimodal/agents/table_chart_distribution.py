@@ -1,16 +1,14 @@
-import llm_extension
-from langchain_openai import ChatOpenAI
-from typing import List, Dict, Optional, Any, Set
+from typing import List, Dict, Any, Set
 import json
 from pathlib import Path
-from src.utils.config import config
+from src.utils.fuzzy_distance import fuzzy_distance
 
 
 class TableChartDistribution:
     def __init__(self, model: str = "gpt-5"):
-        self.llm = ChatOpenAI(model=model, temperature=0.3, max_tokens=2000)
-        self.model = model
-    
+        # Model param kept for backward compatibility but no longer used
+        pass
+
     def distribute_tables(
         self,
         lecture_id: str,
@@ -19,219 +17,103 @@ class TableChartDistribution:
         used_tables: Set[str]
     ) -> List[Dict[str, Any]]:
         """
-        Distribute tables to slides based on content relevance using LLM scoring.
+        Distribute tables to slides by fuzzy-matching slide tables against context tables.
+        
+        Strategy:
+            1. Find all slides with slide_type == "have_table"
+            2. For each slide's table, fuzzy-match against all context tables
+            3. Pick the highest-scoring context table as the match
+            4. If that context table has a chart_path, assign it
         
         Args:
             lecture_id: Lecture ID for saving results
             lecture_dict: Lecture dictionary with slides
-            aggregated_media: Aggregated media containing tables
+            aggregated_media: Aggregated media containing context tables
             used_tables: Set of already used table IDs
             
         Returns:
             List of table distributions with slide_number, table_data, and optional chart_path
         """
         distributions = []
-        
-        # Get tables from aggregated media
-        tables = aggregated_media.get('tables', [])
+
+        # Context tables from aggregated media
+        context_tables = aggregated_media.get('tables', [])
         slides = lecture_dict.get('slides', [])
-        
-        if not tables or not slides:
+
+        if not context_tables or not slides:
             print("No tables or slides found")
             return distributions
-        
-        print(f"\nDistributing {len(tables)} tables to {len(slides)} slides...")
-        
-        for table_idx, table in enumerate(tables):
-            table_id = f"table_{table_idx}"
-            
-            # Skip if already used
-            if table_id in used_tables:
-                print(f"  Table {table_idx} already used, skipping...")
+
+        print(f"\nDistributing tables via fuzzy matching...")
+        print(f"  Context tables: {len(context_tables)}, Slides: {len(slides)}")
+
+        for slide_entry in slides:
+            slide = slide_entry.get('slide', {})
+            slide_type = slide.get('slide_type', '')
+            slide_number = slide.get('slide_number', 0)
+
+            # Only process slides with table type
+            if slide_type != 'have_table':
                 continue
-            
-            table_markdown = table.get('markdown', '')
-            table_caption = table.get('table_caption', '')
-            
-            if not table_markdown:
+
+            table_info = slide.get('table')
+            if not table_info:
                 continue
-            
-            print(f"\n  Processing table {table_idx}: {table_caption[:50]}...")
-            
-            # Score table against all slides
-            best_slide = self._find_best_slide_for_table(
-                table_markdown=table_markdown,
-                table_caption=table_caption,
-                slides=slides
-            )
-            
-            if best_slide:
+
+            slide_table_md = table_info.get('table_markdown', '')
+            slide_table_caption = table_info.get('table_caption', '')
+
+            if not slide_table_md:
+                continue
+
+            print(f"\n  Slide {slide_number} ({slide.get('slide_title', '')}):")
+
+            # Fuzzy match against all context tables
+            best_score = -1
+            best_ctx_table = None
+            best_ctx_id = None
+
+            for ctx_idx, ctx_table in enumerate(context_tables):
+                ctx_id = ctx_table.get('table_id', f'table_{ctx_idx}')
+
+                # Skip already used tables
+                if ctx_id in used_tables:
+                    continue
+
+                ctx_md = ctx_table.get('markdown', '')
+                if not ctx_md:
+                    continue
+
+                score = fuzzy_distance(slide_table_md, ctx_md)
+
+                print(f"    vs {ctx_id}: {score:.1f}")
+
+                if score > best_score:
+                    best_score = score
+                    best_ctx_table = ctx_table
+                    best_ctx_id = ctx_id
+
+            if best_ctx_table and best_score > 0:
+                chart_path = best_ctx_table.get('chart_path') or best_ctx_table.get('image_table_path')
+
                 distributions.append({
-                    'slide_number': best_slide['slide_number'],
-                    'table_data': table_markdown,
-                    'table_caption': table_caption,
-                    'chart_path': table.get('chart_path', None),
-                    'relevance_score': best_slide['score']
+                    'slide_number': slide_number,
+                    'table_data': best_ctx_table.get('markdown', ''),
+                    'table_caption': best_ctx_table.get('table_caption', slide_table_caption),
+                    'chart_path': chart_path,
+                    'relevance_score': best_score
                 })
-                
-                used_tables.add(table_id)
-                print(f"    → Assigned to slide {best_slide['slide_number']} (score: {best_slide['score']:.2f})")
+
+                used_tables.add(best_ctx_id)
+                print(f"Matched {best_ctx_id} (score: {best_score:.1f}), chart: {chart_path}")
             else:
-                print(f"    → No suitable slide found")
-        
+                print(f"No matching context table found")
+
         # Save results
         output_path = Path(f"data/lectures/{lecture_id}_table_distribution.json")
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(distributions, f, indent=2, ensure_ascii=False)
-        
-        print(f"\n✓ Saved table distributions to: {output_path}")
-        
+
+        print(f"\nSaved table distributions to: {output_path}")
+
         return distributions
-    
-    def _find_best_slide_for_table(
-        self,
-        table_markdown: str,
-        table_caption: str,
-        slides: List[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Find the best matching slide for a table using LLM scoring.
-        
-        Args:
-            table_markdown: Table content in markdown format
-            table_caption: Table caption/title
-            slides: List of slides with content
-            
-        Returns:
-            Dict with slide_number and score, or None if no good match
-        """
-        # Prepare slides summary for LLM
-        slides_summary = []
-        for slide in slides:
-            slide_num = slide.get('slide_number', 0)
-            slide_title = slide.get('title', 'Untitled')
-            slide_content = slide.get('content', '')
-            
-            slides_summary.append({
-                'slide_number': slide_num,
-                'title': slide_title,
-                'content': slide_content[:500]  # Limit content length
-            })
-        
-        # Create prompt for LLM
-        prompt = f"""You are analyzing a table from an educational document and need to determine which slide it best supports.
-
-Table Caption: {table_caption}
-
-Table Content (first 500 chars):
-{table_markdown[:500]}
-
-Available Slides:
-{json.dumps(slides_summary, indent=2, ensure_ascii=False)}
-
-Task: For each slide, rate how relevant and supportive this table is to the slide's content on a scale of 0-10, where:
-- 0-3: Not relevant or unrelated
-- 4-6: Somewhat related, provides context
-- 7-8: Directly relevant, supports the content
-- 9-10: Highly relevant, essential for understanding the slide
-
-Return ONLY a JSON array with scores for each slide:
-[
-  {{"slide_number": 1, "score": 5, "reason": "brief explanation"}},
-  {{"slide_number": 2, "score": 8, "reason": "brief explanation"}}
-]
-
-Return ONLY valid JSON, no additional text."""
-
-        try:
-            # Call LLM
-            response = self.llm.invoke(prompt)
-            content = response.content.strip()
-            
-            # Parse JSON response
-            # Remove markdown code blocks if present
-            if content.startswith('```'):
-                content = content.split('```')[1]
-                if content.startswith('json'):
-                    content = content[4:]
-            
-            scores = json.loads(content)
-            
-            # Find the slide with highest score
-            if not scores:
-                return None
-            
-            best_match = max(scores, key=lambda x: x.get('score', 0))
-            
-            # Only return if score is above threshold (6.0)
-            if best_match.get('score', 0) >= 6.0:
-                return {
-                    'slide_number': best_match['slide_number'],
-                    'score': best_match['score'],
-                    'reason': best_match.get('reason', '')
-                }
-            
-            return None
-            
-        except json.JSONDecodeError as e:
-            print(f"    Error parsing LLM response: {e}")
-            print(f"    Response: {content[:200]}...")
-            return None
-        except Exception as e:
-            print(f"    Error scoring table: {e}")
-            return None
-
-
-# Main function for testing
-def main():
-    """Test the TableChartDistribution class"""
-    print("=" * 60)
-    print("Testing TableChartDistribution")
-    print("=" * 60)
-    
-    # Initialize the distributor
-    distributor = TableChartDistribution()
-    
-    # Sample data
-    lecture_id = "lec_607fe87f"
-    
-    # Load lecture data
-    with open(f"data/lectures/{lecture_id}.json", 'r', encoding='utf-8') as f:
-        lecture_dict = json.load(f)
-    
-    # Load aggregated media
-    source_id = lecture_dict['metadata']['source_document_id']
-    with open(f"data/media/{source_id}_media.json", 'r', encoding='utf-8') as f:
-        aggregated_media = json.load(f)
-    
-    # Track used tables
-    used_tables = set()
-
-    print(f"Total slides: {len(lecture_dict['slides'])}")
-    print(f"Total tables: {len(aggregated_media['tables'])}")
-    
-    # Distribute tables
-    distributions = distributor.distribute_tables(
-        lecture_id=lecture_id,
-        lecture_dict=lecture_dict,
-        aggregated_media=aggregated_media,
-        used_tables=used_tables
-    )
-    
-    # Display results
-    print("\n" + "=" * 60)
-    print("Distribution Results")
-    print("=" * 60)
-    
-    for dist in distributions:
-        print(f"\nSlide {dist['slide_number']}:")
-        print(f"  Caption: {dist['table_caption'][:80]}...")
-        print(f"  Score: {dist['relevance_score']:.2f}")
-        if dist.get('chart_path'):
-            print(f"  Chart: {dist['chart_path']}")
-    
-    print(f"\n✓ Distributed {len(distributions)} tables")
-
-
-if __name__ == "__main__":
-    main()

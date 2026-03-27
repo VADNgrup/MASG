@@ -3,10 +3,11 @@ from langchain_openai import ChatOpenAI
 from typing import List, Dict, Optional
 import json
 from pathlib import Path
+from src.utils.parse_llm_response import parse_json_response
 
 
 class GenerateQueryAgent:
-    def __init__(self, model: str = "gpt-5"):
+    def __init__(self, model: str = "qwen3-35b"):
         self.llm = ChatOpenAI(model=model, temperature=0.4, max_tokens=16000)
         self.model = model
     
@@ -80,7 +81,8 @@ QUERY GENERATION RULES:
 
 IMPORTANT CONSTRAINTS:
 - NOT every slide needs visualization
-- Only suggest visualizations that genuinely enhance understanding
+- Slides introducing a new concept for the first time → benefit from illustrative images
+- Slides with abstract ideas → benefit from concrete visual examples
 - The number of visualizations should be ≤ total number of slides
 - Prioritize slides where visuals are most impactful
 
@@ -91,6 +93,8 @@ Return ONLY valid JSON array:
 ]
 
 If no slides need visualization, return an empty array: []
+
+Do NOT include slide_content in the JSON — that field is added programmatically.
 """
         
         # Prepare slides content for analysis
@@ -120,6 +124,18 @@ Return the JSON array of visualization needs:
         if not isinstance(need_visualization, list):
             return []
         
+        # Build a lookup map: slide_number -> slide_content string
+        slide_content_map: Dict[int, str] = {}
+        for slide in slides:
+            slide_num = slide.get('slide_number')
+            title = slide.get('slide_title', '')
+            content = slide.get('content', [])
+            if isinstance(content, list):
+                content_str = ' '.join(content)
+            else:
+                content_str = str(content)
+            slide_content_map[slide_num] = f"{title}. {content_str}".strip()
+
         # Filter and validate each item
         validated_results = []
         total_slides = len(slides)
@@ -131,7 +147,8 @@ Return the JSON array of visualization needs:
                 if 1 <= slide_num <= total_slides:
                     validated_results.append({
                         'slide_number': slide_num,
-                        'query': str(item['query']).strip()
+                        'query': str(item['query']).strip(),
+                        'slide_content': slide_content_map.get(slide_num, '')
                     })
         
         return validated_results
@@ -165,74 +182,8 @@ Return the JSON array of visualization needs:
         
         return '\n\n'.join(formatted)
     
-    def _parse_json_response(self, response_content: str, retry_count: int = 0) -> List[Dict]:
-        """
-        Parse JSON response from LLM, with retry logic for malformed JSON.
-        
-        Args:
-            response_content: Raw response from LLM
-            retry_count: Number of retry attempts
-            
-        Returns:
-            Parsed JSON object (list of dicts)
-        """
-        content = response_content.strip()
-        
-        # Extract JSON from markdown code blocks
-        if "```json" in content:
-            parts = content.split("```json")
-            if len(parts) > 1:
-                content = parts[1].split("```")[0]
-        elif "```" in content:
-            parts = content.split("```")
-            if len(parts) >= 3:
-                content = parts[1]
-        
-        content = content.strip()
-        
-        try:
-            result = json.loads(content)
-            return result if isinstance(result, list) else []
-        except json.JSONDecodeError as e:
-            if retry_count >= 2:
-                print(f"Failed to parse JSON after {retry_count} retries: {str(e)[:200]}")
-                return []
-            
-            # Try to fix the JSON using LLM
-            fixed_content = self._llm_fix_json(content, str(e))
-            return self._parse_json_response(fixed_content, retry_count + 1)
-    
-    def _llm_fix_json(self, broken_json: str, error_message: str) -> str:
-        """
-        Use LLM to fix malformed JSON.
-        
-        Args:
-            broken_json: The malformed JSON string
-            error_message: Error message from JSON parser
-            
-        Returns:
-            Fixed JSON string
-        """
-        fix_prompt = f"""The following JSON has a syntax error. Fix it and return ONLY the corrected JSON array.
-
-ERROR: {error_message}
-
-BROKEN JSON:
-{broken_json[:2000]}
-
-COMMON ISSUES TO FIX:
-1. Escape backslashes in strings
-2. Remove trailing commas before closing brackets/braces
-3. Close unclosed strings, braces, brackets
-4. Ensure proper quote escaping
-
-Return ONLY the fixed valid JSON array, no explanations:"""
-
-        response = self.llm.invoke([
-            {"role": "user", "content": fix_prompt}
-        ])
-        
-        return response.content.strip()
+    def _parse_json_response(self, response_content: str) -> List[Dict]:
+        return parse_json_response(response_content, self.llm.invoke)
     
     def save_visualization_queries(
         self, 

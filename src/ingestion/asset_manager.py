@@ -1,12 +1,16 @@
 import uuid
+import logging
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from PIL import Image
 import io
 
 from src.models.asset import ImageAsset, AssetMetadata
 from src.utils.config import config
 from src.utils.file_utils import ensure_dir
+from src.ingestion.image_filter import ImageFilter
+
+_log = logging.getLogger(__name__)
 
 class AssetManager:
     def __init__(self, document_id: str):
@@ -14,15 +18,23 @@ class AssetManager:
         self.asset_dir = config.ASSETS_DIR / document_id / "images"
         ensure_dir(self.asset_dir)
         self.images: List[ImageAsset] = []
+        self._image_filter = ImageFilter()
     
     def save_image(
-        self, 
-        image_bytes: bytes, 
+        self,
+        image_bytes: bytes,
         image_index: int = 0,
-        caption: str = ""
-    ) -> ImageAsset:
+        caption: str = "",
+        reference_context: str = ""
+    ) -> Optional[ImageAsset]:
+        # Apply pre-filter before doing any disk I/O
+        passed, reason = self._image_filter.pre_filter(image_bytes)
+        if not passed:
+            _log.info("[AssetManager] Skipping image %02d — filter: %s", image_index, reason)
+            return None
+
         image_id = f"img_{image_index:02d}"
-        
+
         img = Image.open(io.BytesIO(image_bytes))
         
         if img.mode == 'RGBA':

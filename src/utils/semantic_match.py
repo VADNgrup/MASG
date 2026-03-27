@@ -1,55 +1,69 @@
 from sentence_transformers import SentenceTransformer
+from transformers import CLIPProcessor, CLIPModel
+from typing import Optional
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from typing import List, Optional, Tuple
-from src.models.asset import ImageAsset
+from pathlib import Path
+from PIL import Image
+import torch
 
 class SemanticMatcher:
-    def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
-        self.model = SentenceTransformer(model_name)
-        self.cache = {}
+    def __init__(
+        self, 
+        lm_model_embedding: str = "Qwen/Qwen3-Embedding-0.6B", 
+        clip_model_embedding: str = "openai/clip-vit-base-patch32"
+    ):
+        self.embedding_model = SentenceTransformer(
+            lm_model_embedding,
+            trust_remote_code=True
+        )
+        self.clip_model = CLIPModel.from_pretrained(clip_model_embedding)
+        self.clip_processor = CLIPProcessor.from_pretrained(clip_model_embedding)
+        
     
-    def compute_similarity(self, query: str, caption: str) -> float:
-        query_embedding = self._get_embedding(query)
-        caption_embedding = self._get_embedding(caption)
+    def sentence_similarity(self, sentence_1: str, sentence_2: str) -> float:
+        embedding_1 = self._get_text_embedding(sentence_1)
+        embedding_2 = self._get_text_embedding(sentence_2)
         
         similarity = cosine_similarity(
-            query_embedding.reshape(1, -1),
-            caption_embedding.reshape(1, -1)
+            embedding_1.reshape(1, -1),
+            embedding_2.reshape(1, -1)
         )[0][0]
         
         return float(similarity)
     
-    def find_best_match(
-        self, 
-        query: str, 
-        candidates: List[ImageAsset],
-        threshold: float = 0.6
-    ) -> Optional[Tuple[str, float, str]]:
-        best_score = 0
-        best_id = None
-        best_path = None
-        
-        for img in candidates:
-            if not img.caption_rag or img.is_decoration:
-                continue
-            
-            score = self.compute_similarity(query, img.caption_rag)
-            
-            if score > best_score:
-                best_score = score
-                best_id = img.image_id
-                best_path = img.file_path
-        
-        if best_score >= threshold:
-            return (best_id, best_score, best_path)
-        return None
+    def _get_text_embedding(self, text: str):
+        text_embedding = self.embedding_model.encode(text, convert_to_numpy=True)
+        return text_embedding
     
-    def _get_embedding(self, text: str) -> np.ndarray:
-        if text in self.cache:
-            return self.cache[text]
+    def text_image_similarity(self, text: str, image_path: str) -> float:
+        text_clip_embedding = self._get_text_clip_embedding(text)
+        image_clip_embedding = self._get_image_clip_embedding(image_path)
         
-        embedding = self.model.encode(text)
-        self.cache[text] = embedding
-        return embedding
+        similarity = cosine_similarity(
+            text_clip_embedding.reshape(1, -1),
+            image_clip_embedding.reshape(1, -1)
+        )[0][0]
+        return float(similarity)
+
+    def _get_text_clip_embedding(self, text: str):
+        inputs = self.clip_processor(
+            text=[text],
+            return_tensors="pt",
+            padding=True,
+            truncation=True
+        )
+        with torch.no_grad():
+            text_clip_embedding = self.clip_model.get_text_features(**inputs)
+            text_clip_embedding = text_clip_embedding / text_clip_embedding.norm(dim=-1, keepdim=True)
+        return text_clip_embedding.squeeze(0).cpu().numpy()
+
+    def _get_image_clip_embedding(self, image_path: str):
+        image = Image.open(image_path).convert("RGB")
+        inputs = self.clip_processor(images=image, return_tensors="pt")
+        with torch.no_grad():
+            image_clip_embedding = self.clip_model.get_image_features(**inputs)
+            image_clip_embedding = image_clip_embedding / image_clip_embedding.norm(dim=-1, keepdim=True)
+        return image_clip_embedding.squeeze(0).cpu().numpy()
 

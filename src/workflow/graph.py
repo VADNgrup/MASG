@@ -1,221 +1,245 @@
 from langgraph.graph import StateGraph, END
 from typing import Dict, Any
+import json
 from src.workflow.state import WorkflowState
 from src.workflow.agents.planner import PlannerAgent
 from src.workflow.agents.writer import WriterAgent
 from src.workflow.agents.writer_reviewer import ReviewerAgent
-from src.workflow.agents.planner_reviewer import PlannerReviewerAgent
+from src.workflow.agents.writer_refiner import WriterRefinerAgent
+from src.workflow.agents.plan_specer import PlanSpecerAgent
+from src.models.feedback import WriterReview
+from src.utils.config import Config
 
 
-def _build_feedback_string(fb) -> str:
-    """Convert a ReviewerFeedback object into a structured text block for LLM prompts."""
-    lines = [
-        f"=== REVIEWER FEEDBACK (Overall: {fb.overall_score:.1f}/100 — {fb.decision}) ===",
-        fb.summary,
-        "",
-    ]
-    for criterion_name, criterion_score in fb.criteria.items():
-        lines.append(f"[{criterion_name.upper()}]  Score: {criterion_score.score:.0f}/100")
-        for issue in criterion_score.issues:
-            lines.append(f"  ✗ {issue}")
-        for suggestion in criterion_score.suggestions:
-            lines.append(f"  → {suggestion}")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def _print_review_scores(label: str, fb) -> None:
-    """Print per-criterion scores and weighted average for a reviewer pass."""
-    weight = 1.0 / len(fb.criteria)          # equal weights (20% each for 5 criteria)
-    weighted_avg = sum(c.score * weight for c in fb.criteria.values())
+def _print_writer_review(label: str, review: WriterReview) -> None:
+    failed = review.failed_slides
+    total  = len(review.slide_reviews)
     print(f"\n  {'─'*50}")
-    print(f"  {label} scores:")
-    for name, criterion in fb.criteria.items():
-        bar = '█' * int(criterion.score // 10) + '░' * (10 - int(criterion.score // 10))
-        print(f"    {name:<22} {bar}  {criterion.score:5.1f}/100")
+    print(f"  {label}:  {total - len(failed)}/{total} slides passed")
+    for sr in review.slide_reviews:
+        status = "✓" if sr.passed else "✗"
+        n_crit = len(sr.convincing_critical_issues)
+        n_min  = len(sr.minor_issues)
+        print(f"    {status} Slide {sr.slide_index:>2}: '{sr.slide_title[:35]}'  "
+              f"critical={n_crit}  minor={n_min}")
     print(f"  {'─'*50}")
-    print(f"  Weighted Average (×{weight:.0%} each):   {weighted_avg:5.1f}/100  →  {fb.decision}")
+    print(f"  Decision: {'ACCEPT' if review.passed else 'RETRY'}  "
+          f"(critical issues: {review.convincing_critical_count}  minor: {review.minor_count})")
     print(f"  {'─'*50}\n")
 
 
+def _count_coverage_critical_issues(review: WriterReview) -> int:
+    count = 0
+    for sr in review.slide_reviews:
+        cov = sr.criteria.get("coverage")
+        if cov:
+            count += len(cov.convincing_critical_issues)
+    return count
+
+
+def _extract_coverage_feedback(review: WriterReview) -> str:
+    issue_list = []
+    suggestion_list = []
+    for sr in review.slide_reviews:
+        cov = sr.criteria.get("coverage")
+        if not cov:
+            continue
+        for issue in cov.convincing_critical_issues:
+            issue_list.append(f"[Slide {sr.slide_index} '{sr.slide_title}']: {issue.description}")
+            if issue.suggestion:
+                suggestion_list.append(f"[Slide {sr.slide_index}]: {issue.suggestion}")
+
+    feedback = {
+        "issue_list": issue_list,
+        "suggestion": suggestion_list,
+    }
+    return json.dumps(feedback, ensure_ascii=False, indent=2)
+
+
 def create_workflow() -> StateGraph:
-    workflow = StateGraph(WorkflowState)
-    planner          = PlannerAgent("qwen3-30b-a3b")
-    planner_reviewer = PlannerReviewerAgent("qwen3.5-plus-2026-02-15")
-    writer           = WriterAgent("qwen3-30b-a3b")
-    reviewer         = ReviewerAgent("qwen3.5-plus-2026-02-15")
+    workflow     = StateGraph(WorkflowState)
+    planner      = PlannerAgent(Config.LLM_MODEL_NAME)
+    writer       = WriterAgent(Config.LLM_MODEL_NAME)
+    reviewer     = ReviewerAgent(Config.LLM_MODEL_NAME)
+    refiner      = WriterRefinerAgent(Config.LLM_MODEL_NAME)
+    plan_specer  = PlanSpecerAgent(Config.LLM_MODEL_NAME)
 
-    # ------------------------------------------------------------------ #
-    # PLANNER NODE                                                         #
-    # ------------------------------------------------------------------ #
+
     def planner_node(state: WorkflowState) -> Dict[str, Any]:
-        feedback = None
-        if state.get("planner_reviewer_feedback"):
-            feedback = _build_feedback_string(state["planner_reviewer_feedback"])
-
-        plan = planner.create_outline(state["document_context"], feedback=feedback)
-        return {
-            "lecture_plan": plan,
-            "current_section_idx": 0,
-            "slides": [],
-        }
-
-    # ------------------------------------------------------------------ #
-    # PLANNER REVIEWER NODE                                                #
-    # ------------------------------------------------------------------ #
-    async def planner_reviewer_node(state: WorkflowState) -> Dict[str, Any]:
-        feedback = await planner_reviewer.evaluate(
-            state["lecture_plan"],
-            state["document_context"],
-        )
-        plan_iter = state.get("planner_iteration", 0)
-        _print_review_scores(f"Planner Reviewer (plan iteration {plan_iter})", feedback)
-
-        # Keep the best-scoring plan across all iterations
-        current_best_score = state.get("best_plan_score", -1.0)
-        if feedback.overall_score > current_best_score:
-            print(f"  ★ New best plan!  {feedback.overall_score:.1f} > {current_best_score:.1f}")
-            return {
-                "planner_reviewer_feedback": feedback,
-                "best_plan":        state["lecture_plan"],
-                "best_plan_score":  feedback.overall_score,
-            }
-
-        return {
-            "planner_reviewer_feedback": feedback,
-        }
-
-    def should_continue_planner(state: WorkflowState) -> str:
-        if state.get("planner_iteration", 0) >= 3:
-            return "write"
-
-        feedback = state.get("planner_reviewer_feedback")
-        if not feedback:
-            return "write"
-
-        if feedback.decision == "ACCEPT":
-            return "write"
-        elif feedback.decision == "RETRY" and state.get("planner_iteration", 0) < 3:
-            return "retry_plan"
+        # Use coverage feedback from writer backtrack if available
+        feedback_str = state.get("coverage_feedback")
+        if feedback_str:
+            print(f"\n{'='*60}")
+            print(f" Planner — Re-generating outline with coverage feedback...")
+            print(f"{'='*60}\n")
         else:
-            return "write"
+            print(f"\n{'='*60}")
+            print(f" Planner — Generating initial outline...")
+            print(f"{'='*60}\n")
 
-    def increment_planner_iteration(state: WorkflowState) -> Dict[str, Any]:
-        new_iter = state.get("planner_iteration", 0) + 1
+        plan = planner.create_outline(state["document_context"], feedback=feedback_str)
+
+        title_response = planner.llm.invoke(
+            f"Based on the following lecture outline, generate a concise and descriptive lecture title (max 10 words, no quotes).\n\n"
+            f"Outline:\n{plan['outline']}\n\n"
+            f"Return ONLY the title, nothing else."
+        )
+        lecture_title = title_response.content.strip().strip('"').strip("'")
+        print(f"\nGenerated lecture title: {lecture_title}\n")
+
+        return {
+            "lecture_plan":        plan,
+            "lecture_title":       lecture_title,
+            "current_section_idx": 0,
+            "slides":              [],
+            "current_iteration":   0,
+        }
+
+    def plan_specer_node(state: WorkflowState) -> Dict[str, Any]:
+        outline_md = state["lecture_plan"]["outline"]
         print(f"\n{'='*60}")
-        print(f"Planner iteration {new_iter}/3 — Revising outline...")
+        print(f" Plan Specer — Specifying slide specs from outline...")
         print(f"{'='*60}\n")
-        return {"planner_iteration": new_iter}
+        specs = plan_specer.specify(outline_md, state["document_context"])
+        return {"slide_specs": specs}
 
-    # ------------------------------------------------------------------ #
-    # WRITER NODE                                                          #
-    # ------------------------------------------------------------------ #
     def writer_node(state: WorkflowState) -> Dict[str, Any]:
         outline_md = state["lecture_plan"]["outline"]
-
-        feedback = None
-        if state.get("reviewer_feedback"):
-            feedback = _build_feedback_string(state["reviewer_feedback"])
-
+        slide_specs = state.get("slide_specs", [])
         slides = writer.draft_slide_from_outline(
             outline_md,
             state["document_context"],
-            feedback,
+            slide_specs=slide_specs,
+            feedback=None,
         )
         return {
-            "slides": slides,
+            "slides":              slides,
             "current_section_idx": len(slides),
         }
 
-    # ------------------------------------------------------------------ #
-    # WRITER REVIEWER NODE                                                 #
-    # ------------------------------------------------------------------ #
     async def reviewer_node(state: WorkflowState) -> Dict[str, Any]:
-        feedback = await reviewer.evaluate(
+        review = await reviewer.evaluate(
             state["slides"],
             state["document_context"],
             state["lecture_plan"],
         )
         write_iter = state.get("current_iteration", 0)
-        _print_review_scores(f"Writer Reviewer (write iteration {write_iter})", feedback)
+        _print_writer_review(f"Writer Reviewer (iteration {write_iter})", review)
 
-        # Keep the best-scoring slides across all iterations
-        current_best_score = state.get("best_slides_score", -1.0)
-        if feedback.overall_score > current_best_score:
-            print(f"  ★ New best slides! {feedback.overall_score:.1f} > {current_best_score:.1f}")
+        # Keep the best slides (fewest convincing critical issues)
+        current_best_score = state.get("best_slides_score", float("inf"))
+        n_critical = review.convincing_critical_count
+
+        if n_critical < current_best_score:
+            print(f"New best slides!  {n_critical} critical issues (was {current_best_score})")
             return {
-                "reviewer_feedback":   feedback,
-                "rubric_scores":       feedback.criteria,
+                "reviewer_feedback":   review,
                 "best_slides":         state["slides"],
-                "best_slides_score":   feedback.overall_score,
-                "best_slides_feedback": feedback,
+                "best_slides_score":   float(n_critical),
+                "best_slides_feedback": review,
             }
 
-        return {
-            "reviewer_feedback": feedback,
-            "rubric_scores":     feedback.criteria,
-        }
+        return {"reviewer_feedback": review}
 
     def should_continue(state: WorkflowState) -> str:
-        if state.get("current_iteration", 0) >= 3:
+        review = state.get("reviewer_feedback")
+        if not review:
             return "end"
 
-        feedback = state.get("reviewer_feedback")
-        if not feedback:
+        # If all slides passed → done
+        if review.passed:
             return "end"
 
-        if feedback.decision == "ACCEPT":
-            return "end"
-        elif feedback.decision == "RETRY" and state.get("current_iteration", 0) < 3:
+        current_iter = state.get("current_iteration", 0)
+
+        # Still have retries left → refine
+        if current_iter < Config.FEEDBACK_INTERATION_NUMBER:
             return "retry"
-        else:
-            return "end"
+
+        # Out of retries (iteration >= 3): check coverage for backtrack
+        coverage_critical = _count_coverage_critical_issues(review)
+        backtrack_used = state.get("planner_backtrack_used", False)
+
+        if coverage_critical >= 5 and not backtrack_used:
+            print(f"\nCoverage has {coverage_critical} critical issues after 3 iterations.")
+            print(f"Backtracking to planner (1-time only)...\n")
+            return "backtrack_planner"
+
+        return "end"
 
     def increment_iteration(state: WorkflowState) -> Dict[str, Any]:
         new_iter = state.get("current_iteration", 0) + 1
         print(f"\n{'='*60}")
-        print(f" Writer iteration {new_iter}/3 — Retrying with feedback...")
+        print(f" Writer iteration {new_iter}/3 — Refining failed slides...")
         print(f"{'='*60}\n")
+        return {"current_iteration": new_iter}
+
+    def writer_refiner_node(state: WorkflowState) -> Dict[str, Any]:
+        review: WriterReview = state["reviewer_feedback"]
+        outline_md = state["lecture_plan"]["outline"]
+
+        refined_slides = refiner.refine(
+            slides=list(state["slides"]),
+            writer_review=review,
+            context=state["document_context"],
+            outline_md=outline_md,
+            slide_specs=state.get("slide_specs", []),
+        )
+        return {"slides": refined_slides}
+
+    def backtrack_to_planner_node(state: WorkflowState) -> Dict[str, Any]:
+        review: WriterReview = state["reviewer_feedback"]
+        feedback_json = _extract_coverage_feedback(review)
+
+        print(f"\n{'='*60}")
+        print(f" Backtrack — Sending coverage feedback to planner:")
+        print(feedback_json[:500])
+        print(f"{'='*60}\n")
+
         return {
-            "current_iteration": new_iter,
-            "current_section_idx": 0,
-            "slides": [],
+            "coverage_feedback":      feedback_json,
+            "planner_backtrack_used": True,
+            "current_iteration":      0,
+            "best_slides":            None,
+            "best_slides_score":      float("inf"),
+            "best_slides_feedback":   None,
         }
 
-    # ------------------------------------------------------------------ #
-    # WIRE UP THE GRAPH                                                    #
-    # ------------------------------------------------------------------ #
-    workflow.add_node("planner",          planner_node)
-    workflow.add_node("planner_reviewer", planner_reviewer_node)
-    workflow.add_node("increment_plan",   increment_planner_iteration)
-    workflow.add_node("writer",           writer_node)
-    workflow.add_node("reviewer",         reviewer_node)
-    workflow.add_node("increment",        increment_iteration)
+    def finalize_slides_node(state: WorkflowState) -> Dict[str, Any]:
+        best = state.get("best_slides")
+        if best:
+            n_iter = state.get("current_iteration", 0)
+            print(f"\nUsing best slides (tracked across {n_iter} writer iteration(s))")
+            return {"slides": best}
+        return {}
+
+    workflow.add_node("planner",              planner_node)
+    workflow.add_node("plan_specer",          plan_specer_node)
+    workflow.add_node("writer",               writer_node)
+    workflow.add_node("reviewer",             reviewer_node)
+    workflow.add_node("increment",            increment_iteration)
+    workflow.add_node("writer_refiner",       writer_refiner_node)
+    workflow.add_node("backtrack_to_planner", backtrack_to_planner_node)
+    workflow.add_node("finalize_slides",      finalize_slides_node)
 
     workflow.set_entry_point("planner")
-    workflow.add_edge("planner", "planner_reviewer")
-
-    workflow.add_conditional_edges(
-        "planner_reviewer",
-        should_continue_planner,
-        {
-            "retry_plan": "increment_plan",
-            "write":      "writer",
-        },
-    )
-
-    workflow.add_edge("increment_plan", "planner")
-    workflow.add_edge("writer", "reviewer")
+    workflow.add_edge("planner",     "plan_specer")
+    workflow.add_edge("plan_specer", "writer")
+    workflow.add_edge("writer",      "reviewer")
 
     workflow.add_conditional_edges(
         "reviewer",
         should_continue,
         {
-            "retry": "increment",
-            "end":   END,
+            "retry":              "increment",
+            "backtrack_planner":  "backtrack_to_planner",
+            "end":                "finalize_slides",
         },
     )
 
-    workflow.add_edge("increment", "writer")
+    workflow.add_edge("increment",       "writer_refiner")
+    workflow.add_edge("writer_refiner",  "reviewer")
+    workflow.add_edge("backtrack_to_planner", "planner")
+    workflow.add_edge("finalize_slides", END)
 
     return workflow.compile()

@@ -2,13 +2,13 @@ import llm_extension
 from langchain_openai import ChatOpenAI
 from typing import List, Dict, Any
 import json
-import re
 from src.models.context import DocumentContext
-from src.models.slide import SlideContent, ReviewerFeedback, CriterionScore
-from src.utils.config import config
+from src.models.slide import SlideContent
+from src.models.feedback import Issue, CriterionResult, SlideReview, WriterReview, Severity
+
 
 class ReviewerAgent:
-    def __init__(self, model: str = "gpt-4.1-mini"):
+    def __init__(self, model):
         self.llm = ChatOpenAI(model=model, temperature=0.2)
         self.model = model
 
@@ -16,58 +16,52 @@ class ReviewerAgent:
         self,
         slides: List[SlideContent],
         context: DocumentContext,
-        lecture_plan: Dict[str, Any]
-    ) -> ReviewerFeedback:
-        faithfulness   = await self._evaluate_faithfulness(slides, context)
-        pedagogical    = await self._evaluate_pedagogical_flow(slides, lecture_plan)
-        coverage       = await self._evaluate_coverage(slides, lecture_plan, context)
-        viewer         = await self._evaluate_viewer(slides, context)
-        observer       = await self._evaluate_observer(slides, lecture_plan)
+        lecture_plan: Dict[str, Any],
+    ) -> WriterReview:
 
-        # Equal weight: 20% each
-        overall_score = (
-            faithfulness.score * 0.2 +
-            pedagogical.score  * 0.2 +
-            coverage.score     * 0.2 +
-            viewer.score       * 0.2 +
-            observer.score     * 0.2
-        )
+        # Each criterion evaluator returns a list of SlideReview (one per affected slide)
+        faith_reviews  = await self._evaluate_faithfulness(slides, context)
+        ped_reviews    = await self._evaluate_pedagogical_flow(slides, lecture_plan)
+        cov_reviews    = await self._evaluate_coverage(slides, lecture_plan, context)
+        viewer_reviews = await self._evaluate_viewer(slides, context)
+        obs_reviews    = await self._evaluate_observer(slides, lecture_plan)
 
-        if overall_score >= 80:
-            decision = "ACCEPT"
-        elif overall_score >= 50:
-            decision = "RETRY"
-        else:
-            decision = "REJECT"
+        # Merge per-criterion SlideReviews into one SlideReview per slide index
+        merged: Dict[int, SlideReview] = {}
+        for idx, slide in enumerate(slides, 1):
+            merged[idx] = SlideReview(
+                slide_index=idx,
+                slide_title=slide.slide.slide_title,
+                criteria={},
+            )
 
-        specific_feedback = self._compile_specific_feedback(
-            slides, faithfulness, pedagogical, coverage, viewer, observer
-        )
+        for criterion_name, reviews in [
+            ("faithfulness",     faith_reviews),
+            ("pedagogical_flow", ped_reviews),
+            ("coverage",         cov_reviews),
+            ("viewer",           viewer_reviews),
+            ("observer",         obs_reviews),
+        ]:
+            # Build a lookup: slide_index -> CriterionResult from this criterion's reviews
+            for sr in reviews:
+                if sr.slide_index in merged:
+                    merged[sr.slide_index].criteria[criterion_name] = sr.criteria.get(criterion_name, CriterionResult(criterion=criterion_name))
 
-        return ReviewerFeedback(
-            overall_score=overall_score,
-            decision=decision,
-            criteria={
-                "faithfulness":     faithfulness,
-                "pedagogical_flow": pedagogical,
-                "coverage":         coverage,
-                "viewer":           viewer,
-                "observer":         observer,
-            },
-            specific_feedback=specific_feedback,
-            summary=self._generate_summary(overall_score, decision, specific_feedback)
-        )
+            # Slides not mentioned by the reviewer passed that criterion cleanly
+            for slide_idx in merged:
+                if criterion_name not in merged[slide_idx].criteria:
+                    merged[slide_idx].criteria[criterion_name] = CriterionResult(criterion=criterion_name, issues=[])
 
-    # ------------------------------------------------------------------
-    # Criterion 1 – Faithfulness
-    # ------------------------------------------------------------------
+        return WriterReview(slide_reviews=list(merged.values()))
+
+    # Faithfullness
     async def _evaluate_faithfulness(
         self,
         slides: List[SlideContent],
-        context: DocumentContext
-    ) -> CriterionScore:
+        context: DocumentContext,
+    ) -> List[SlideReview]:
         slides_json = json.dumps(
-            [{"slide_title": s.slide_title, "content": s.content} for s in slides],
+            [{"slide_number": i, "slide_title": s.slide.slide_title, "content": s.content} for i, s in enumerate(slides, 1)],
             indent=2
         )
         prompt = f"""You are a fact-checker. Compare the slides against the source document and detect any inaccuracies or hallucinations.
@@ -78,37 +72,41 @@ SOURCE DOCUMENT:
 SLIDES:
 {slides_json}
 
-Evaluate each slide on these points:
-1. Is there any information NOT present in the source document?
-2. Are there unsupported claims or conclusions?
-3. Does any slide over-infer or extrapolate beyond what the source states?
-4. Are statistics, names, dates, and technical terms accurate?
-
-Score from 0 to 100 (100 = perfectly faithful). Deduct points for every violation.
+For each slide that has issues, return a JSON entry. Slides with no issues should NOT appear in the list.
 
 Return ONLY valid JSON:
 {{
-  "score": 85,
-  "issues": ["Slide 3: Year 2023 changed to 2024 (source says 2023)", "Slide 5: Claim not supported by source"],
-  "suggestions": ["Verify all dates against source", "Remove unsupported inference in Slide 5"]
-}}"""
+  "slide_reviews": [
+    {{
+      "slide_number": 3,
+      "issues": [
+        {{
+          "severity": "critical",
+          "location": "Slide 3, bullet 2",
+          "description": "Year 2023 changed to 2024 — source says 2023",
+          "suggestion": "Revert to 2023 as stated in the source",
+          "confidence_score": 0.95
+        }}
+      ]
+    }}
+  ]
+}}
+Use severity "critical" for factual errors, "minor" for style/phrasing issues."""
 
         response = await self.llm.ainvoke(prompt)
-        return self._parse_criterion_response(response.content)
+        return self._parse_slide_reviews("faithfulness", response.content, slides)
 
-    # ------------------------------------------------------------------
-    # Criterion 2 – Pedagogical Flow
-    # ------------------------------------------------------------------
+    # Pedagogical Flow
     async def _evaluate_pedagogical_flow(
         self,
         slides: List[SlideContent],
-        lecture_plan: Dict[str, Any]
-    ) -> CriterionScore:
+        lecture_plan: Dict[str, Any],
+    ) -> List[SlideReview]:
         slides_json = json.dumps(
-            [{"slide_title": s.slide_title, "content": s.content} for s in slides],
+            [{"slide_number": i, "slide_title": s.slide.slide_title, "content": s.content} for i, s in enumerate(slides, 1)],
             indent=2
         )
-        prompt = f"""Evaluate the pedagogical quality of the slides:
+        prompt = f"""Evaluate the pedagogical quality of the slides.
 
 PLANNED OUTLINE:
 {json.dumps(lecture_plan, indent=2)}
@@ -116,36 +114,43 @@ PLANNED OUTLINE:
 SLIDES:
 {slides_json}
 
-Check:
-1. Content density: Maximum 5 bullets per slide? Each bullet <= 15 words? Total per slide <= 75 words?
-2. Tone: Is the language friendly, approachable, and conversational? Avoid overly formal, rigid, or academic tone.
-3. Structure: 3-5 bullets per slide? (4-5 is ideal, 6+ is too many)
-4. Flow: Logical progression between slides?
-5. Clarity: Easy to understand? Jargon explained in friendly terms?
+Check per slide:
+1. Content density: max 5 bullets, each bullet <= 15 words, total <= 75 words per slide?
+2. Tone: friendly, conversational, not overly academic?
+3. Structure: 3-5 bullets per slide (4-5 ideal)?
+4. Flow: logical progression between slides?
+5. Clarity: jargon explained?
 
-Score from 0 to 100.
-
-Return ONLY valid JSON:
+Return ONLY valid JSON listing only slides WITH issues:
 {{
-  "score": 75,
-  "issues": ["Slide 2 has 7 bullets, too dense - should be max 5", "Slide 3 uses overly formal academic language"],
-  "suggestions": ["Split into 2 slides or reduce to 4-5 key points", "Use more friendly, conversational tone"]
+  "slide_reviews": [
+    {{
+      "slide_number": 2,
+      "issues": [
+        {{
+          "severity": "critical",
+          "location": "Slide 2",
+          "description": "7 bullets — exceeds maximum of 5",
+          "suggestion": "Split into 2 slides or reduce to 4-5 key points",
+          "confidence_score": 0.9
+        }}
+      ]
+    }}
+  ]
 }}"""
 
         response = await self.llm.ainvoke(prompt)
-        return self._parse_criterion_response(response.content)
+        return self._parse_slide_reviews("pedagogical_flow", response.content, slides)
 
-    # ------------------------------------------------------------------
-    # Criterion 3 – Coverage
-    # ------------------------------------------------------------------
+    #Coverage
     async def _evaluate_coverage(
         self,
         slides: List[SlideContent],
         lecture_plan: Dict[str, Any],
-        context: DocumentContext
-    ) -> CriterionScore:
+        context: DocumentContext,
+    ) -> List[SlideReview]:
         slides_json = json.dumps(
-            [{"slide_number": s.slide_number, "slide_title": s.slide_title, "content": s.content} for s in slides],
+            [{"slide_number": i, "slide_title": s.slide.slide_title, "content": s.content} for i, s in enumerate(slides, 1)],
             indent=2
         )
         prompt = f"""You are a curriculum reviewer. Evaluate how completely the slides cover the intended lecture outline and source material.
@@ -159,76 +164,88 @@ SOURCE DOCUMENT SUMMARY (first 5000 chars):
 SLIDES:
 {slides_json}
 
-Evaluate:
-1. Are there any sections or topics from the outline that are missing from the slides?
-2. Are any sections written too superficially (only 1-2 bullets for a major topic)?
-3. Does any section deviate from its intended focus in the outline?
-4. Is the depth of each section proportional to its importance in the outline?
+Evaluate per slide:
+1. Are sections from the outline missing or too superficial?
+2. Does any slide deviate from its intended focus?
+3. Is depth proportional to topic importance?
 
-Score from 0 to 100 (100 = complete coverage with appropriate depth).
-
-Return ONLY valid JSON:
+Return ONLY valid JSON listing only slides WITH issues:
 {{
-  "score": 80,
-  "issues": ["Section '2.3 Applications' from outline is missing entirely", "Section 1 is too shallow - only 1 bullet for a major topic"],
-  "suggestions": ["Add slides for Section 2.3", "Expand Section 1 with at least 3-4 key points"]
+  "slide_reviews": [
+    {{
+      "slide_number": 5,
+      "issues": [
+        {{
+          "severity": "critical",
+          "location": "Slide 5",
+          "description": "Section '2.3 Applications' from outline is missing entirely",
+          "suggestion": "Add content covering the Applications section",
+          "confidence_score": 0.88
+        }}
+      ]
+    }}
+  ]
 }}"""
 
         response = await self.llm.ainvoke(prompt)
-        return self._parse_criterion_response(response.content)
+        return self._parse_slide_reviews("coverage", response.content, slides)
 
-    # ------------------------------------------------------------------
-    # Criterion 4 – Viewer (Self-sufficiency for the audience)
-    # ------------------------------------------------------------------
+    # Viewer (Student)
     async def _evaluate_viewer(
         self,
         slides: List[SlideContent],
-        context: DocumentContext
-    ) -> CriterionScore:
+        context: DocumentContext,
+    ) -> List[SlideReview]:
         slides_json = json.dumps(
-            [{"slide_number": s.slide_number, "slide_title": s.slide_title, "content": s.content} for s in slides],
+            [{"slide_number": i, "slide_title": s.slide.slide_title, "content": s.content} for i, s in enumerate(slides, 1)],
             indent=2
         )
         prompt = f"""You are a student who has NOT read the source document. You can only read the slides.
 
-SOURCE DOCUMENT (for reference, do NOT assume the student has read it):
+SOURCE DOCUMENT (for reference only):
 {context.text_content.markdown[:8000]}
 
 SLIDES:
 {slides_json}
 
-Evaluate whether a student could understand the lecture topic by reading only the slides:
-1. Are key concepts explained or at least named clearly, without assuming prior knowledge?
-2. Do the slides provide enough context to follow the main ideas without the source document?
-3. Are there slides that reference something without introducing it first?
-4. Is the synthesis level appropriate - concise but not cryptic?
-5. Would someone reading only the slides walk away with a coherent understanding of the topic?
+Evaluate per slide whether a student could understand the topic by reading only the slides:
+1. Key concepts named/explained without assuming prior knowledge?
+2. Enough context to follow main ideas?
+3. References to undefined terms?
+4. Would a slide-only reader walk away with coherent understanding?
 
-Score from 0 to 100 (100 = fully self-sufficient; reader can understand without the source).
-
-Return ONLY valid JSON:
+Return ONLY valid JSON listing only slides WITH issues:
 {{
-  "score": 70,
-  "issues": ["Slide 4 uses term 'XYZ' without defining it", "Slide 7 assumes the reader knows the algorithm from Slide 2 but the connection is not stated"],
-  "suggestions": ["Add a brief definition of 'XYZ' in Slide 4", "Add a transition sentence in Slide 7 referencing the algorithm"]
+  "slide_reviews": [
+    {{
+      "slide_number": 4,
+      "issues": [
+        {{
+          "severity": "minor",
+          "location": "Slide 4, bullet 1",
+          "description": "Term 'XYZ' used without definition",
+          "suggestion": "Add a brief definition of 'XYZ'",
+          "confidence_score": 0.7
+        }}
+      ]
+    }}
+  ]
 }}"""
 
         response = await self.llm.ainvoke(prompt)
-        return self._parse_criterion_response(response.content)
+        return self._parse_slide_reviews("viewer", response.content, slides)
 
-    # ------------------------------------------------------------------
-    # Criterion 5 – Observer (Presentation quality as a lecturer/examiner)
-    # ------------------------------------------------------------------
+    # Observer (Presentation quality)
     async def _evaluate_observer(
         self,
         slides: List[SlideContent],
-        lecture_plan: Dict[str, Any]
-    ) -> CriterionScore:
+        lecture_plan: Dict[str, Any],
+    ) -> List[SlideReview]:
         slides_json = json.dumps(
-            [{"slide_number": s.slide_number, "slide_title": s.slide_title, "content": s.content} for s in slides],
+            [{"slide_number": i, "slide_title": s.slide.slide_title, "content": s.content} for i, s in enumerate(slides, 1)],
             indent=2
         )
-        prompt = f"""You are an academic examiner observing a lecture presentation. Evaluate whether these slides would make for a professional, credible, and engaging lecture.
+        prompt = f"""You are an academic examiner observing a lecture presentation.
 
 PLANNED OUTLINE:
 {json.dumps(lecture_plan, indent=2)}
@@ -236,104 +253,85 @@ PLANNED OUTLINE:
 SLIDES:
 {slides_json}
 
-Evaluate:
-1. Professional presentation: Are titles clear and informative? Is the overall structure coherent?
-2. Engagement: Do the slides guide the audience through a meaningful narrative?
-3. Academic credibility: Is the content balanced, well-organized, and appropriately detailed?
-4. Consistency: Is terminology used consistently throughout? Is the style uniform?
-5. Overall impression: Would an examiner or supervisor approve this as a quality lecture presentation?
+Evaluate per slide:
+1. Professional presentation: clear, informative titles?
+2. Engagement: guides audience through meaningful narrative?
+3. Academic credibility: balanced, well-organized?
+4. Consistency: terminology uniform throughout?
+5. Overall impression: would an examiner approve?
 
-Score from 0 to 100 (100 = exemplary lecture presentation that would impress any examiner).
-
-Return ONLY valid JSON:
+Return ONLY valid JSON listing only slides WITH issues:
 {{
-  "score": 78,
-  "issues": ["Slide 6 title is vague ('More Details') - should be specific", "Terminology inconsistency: 'model' and 'algorithm' used interchangeably"],
-  "suggestions": ["Rename Slide 6 to reflect its actual topic", "Standardize terminology: choose 'model' or 'algorithm' and use it consistently"]
+  "slide_reviews": [
+    {{
+      "slide_number": 6,
+      "issues": [
+        {{
+          "severity": "minor",
+          "location": "Slide 6 title",
+          "description": "Title is vague ('More Details') — should be specific",
+          "suggestion": "Rename Slide 6 to reflect its actual topic",
+          "confidence_score": 0.8
+        }}
+      ]
+    }}
+  ]
 }}"""
 
         response = await self.llm.ainvoke(prompt)
-        return self._parse_criterion_response(response.content)
+        return self._parse_slide_reviews("observer", response.content, slides)
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-    def _parse_criterion_response(self, content: str) -> CriterionScore:
+    def _parse_slide_reviews(
+        self,
+        criterion_name: str,
+        content: str,
+        slides: List[SlideContent],
+    ) -> List[SlideReview]:
+        """Parse LLM response into a list of SlideReview objects for this criterion."""
         try:
             data = json.loads(content)
         except Exception:
-            clean_content = content.strip()
-            if clean_content.startswith("```json"):
-                clean_content = clean_content.split("```json")[1].split("```")[0]
-            elif clean_content.startswith("```"):
-                clean_content = clean_content.split("```")[1].split("```")[0]
-            data = json.loads(clean_content.strip())
+            clean = content.strip()
+            if clean.startswith("```json"):
+                clean = clean.split("```json")[1].split("```")[0]
+            elif clean.startswith("```"):
+                clean = clean.split("```")[1].split("```")[0]
+            try:
+                data = json.loads(clean.strip())
+            except Exception:
+                return []  
 
-        # Safely handle issues list
-        if isinstance(data.get("issues"), list):
-            processed_issues = []
-            for item in data["issues"]:
-                if isinstance(item, dict):
-                    if 'issue' in item and 'slide' in item:
-                        processed_issues.append(f"Slide {item['slide']}: {item['issue']}")
-                    else:
-                        processed_issues.append(str(item))
-                else:
-                    processed_issues.append(str(item))
-            data["issues"] = processed_issues
+        valid_indices = set(range(1, len(slides) + 1))
+        result: List[SlideReview] = []
 
-        # Safely handle suggestions list
-        if isinstance(data.get("suggestions"), list):
-            processed_suggestions = []
-            for item in data["suggestions"]:
-                if isinstance(item, dict):
-                    if 'suggestion' in item and 'slide' in item:
-                        processed_suggestions.append(f"Slide {item['slide']}: {item['suggestion']}")
-                    else:
-                        processed_suggestions.append(str(item))
-                else:
-                    processed_suggestions.append(str(item))
-            data["suggestions"] = processed_suggestions
+        for entry in data.get("slide_reviews", []):
+            if not isinstance(entry, dict):
+                continue
+            slide_number = int(entry.get("slide_number", -1))
+            if slide_number not in valid_indices:
+                continue
 
-        return CriterionScore(**data)
+            slide = slides[slide_number - 1]
+            issues: List[Issue] = []
+            for item in entry.get("issues", []):
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    severity = Severity(item.get("severity", "minor").lower())
+                except ValueError:
+                    severity = Severity.MINOR
+                issues.append(Issue(
+                    severity=severity,
+                    location=str(item.get("location", f"Slide {slide_number}")),
+                    description=str(item.get("description", "")),
+                    suggestion=str(item.get("suggestion", "")),
+                    confidence_score=float(item.get("confidence_score", 0.0)),
+                ))
 
-    def _compile_specific_feedback(
-        self,
-        slides: List[SlideContent],
-        faithfulness: CriterionScore,
-        pedagogical: CriterionScore,
-        coverage: CriterionScore,
-        viewer: CriterionScore,
-        observer: CriterionScore,
-    ) -> List[Dict[str, str]]:
-        feedback = []
+            result.append(SlideReview(
+                slide_index=slide_number,
+                slide_title=slide.slide.slide_title,
+                criteria={criterion_name: CriterionResult(criterion=criterion_name, issues=issues)},
+            ))
 
-        criterion_map = {
-            "faithfulness":     faithfulness.issues,
-            "pedagogical_flow": pedagogical.issues,
-            "coverage":         coverage.issues,
-            "viewer":           viewer.issues,
-            "observer":         observer.issues,
-        }
-
-        for criterion_name, issues in criterion_map.items():
-            for issue in issues:
-                match = re.search(r"[Ss]lide[_\s]?(\d+|[a-z0-9_]+)", issue)
-                if match:
-                    slide_ref = match.group(1)
-                    feedback.append({
-                        "slide_id":  f"slide_{slide_ref}",
-                        "issue":     issue,
-                        "criterion": criterion_name,
-                    })
-
-        return feedback
-
-    def _generate_summary(self, score: float, decision: str, feedback: List[Dict]) -> str:
-        if decision == "ACCEPT":
-            return f"Slides passed review with score {score:.1f}/100. Ready for rendering."
-        elif decision == "RETRY":
-            issues_count = len(feedback)
-            return f"Score {score:.1f}/100. Found {issues_count} issues requiring revision."
-        else:
-            return f"Score {score:.1f}/100. Major issues detected. Recommend regeneration."
+        return result

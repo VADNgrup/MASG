@@ -1,4 +1,3 @@
-llama-parse>=0.4.0
 openai>=1.0.0
 pydantic>=2.0.0
 pillow>=10.0.0
@@ -11,11 +10,8 @@ numpy>=1.24.0
 langgraph>=0.0.40
 langchain>=0.1.0
 langchain-openai>=0.0.5
-sentence-transformers>=2.2.0
-pyunsplash
 scikit-learn>=1.3.0
 httpx>=0.24.0
-agentlightning>=0.1.0
-tavily-python>=0.3.0
 requests>=2.31.0
+transformers==4.38.2
 

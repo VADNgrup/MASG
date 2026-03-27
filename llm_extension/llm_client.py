@@ -33,7 +33,7 @@ class LLMClient(OpenAI):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: Optional[float] = None,
-        max_retries: int = 2,
+        max_retries: int = 6,
         **kwargs
     ):
         """

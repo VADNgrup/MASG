@@ -3,148 +3,169 @@ import llm_extension
 import io
 from pathlib import Path
 from typing import Tuple, Optional
-from PIL import Image
+from PIL import Image, ImageStat
 import numpy as np
 from openai import OpenAI
 
 from src.utils.config import config
 
 class ImageFilter:
+    # Minimum quality score (0–1) to accept an image
+    QUALITY_THRESHOLD = 0.5
+
     def __init__(self):
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-    
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def should_use_image(self, image_bytes: bytes) -> Tuple[bool, str]:
+        """
+        High-level verdict: should this image be used in a slide?
+
+        Returns:
+            (True, reason)  — image is acceptable
+            (False, reason) — image should be rejected
+        """
+        passed, reason = self.pre_filter(image_bytes)
+        if not passed:
+            return False, reason
+
+        quality = self.assess_quality(image_bytes)
+        if quality < self.QUALITY_THRESHOLD:
+            return False, f"low_quality (score={quality:.2f})"
+
+        return True, f"accepted (score={quality:.2f})"
+
+    # ------------------------------------------------------------------
+    # Pre-filter: fast structural checks
+    # ------------------------------------------------------------------
+
     def pre_filter(self, image_bytes: bytes) -> Tuple[bool, str]:
         try:
             img = Image.open(io.BytesIO(image_bytes))
-            
-            if img.mode == 'RGBA':
+
+            if img.mode != 'RGB':
                 img = img.convert('RGB')
-            elif img.mode != 'RGB':
-                img = img.convert('RGB')
-            
+
             width, height = img.size
-            
-            if width < 30 or height < 30:
+            ratio = width / height
+            r_ratio = height / width
+            if width < 300 or height < 300:
                 return False, "too_small"
-            
-            if width < 50 and height < 50:
-                area = width * height
-                if area < 1000:
-                    return False, "too_small_area"
-            
+            if ratio > 5 or r_ratio > 5:
+                return False, "too_thin"
+
             img_array = np.array(img)
-            
             if self._is_pure_single_color(img_array):
                 return False, "pure_single_color"
-            
+
             return True, "passed_pre_filter"
-            
         except Exception:
             return True, "error_assume_valid"
-    
+
+    # ------------------------------------------------------------------
+    # Quality assessment (merged from ImageQualityAssessor)
+    # ------------------------------------------------------------------
+
+    def assess_quality(self, image_bytes: bytes) -> float:
+        """
+        Return a quality score in [0.0, 1.0].
+        Score = resolution×0.4 + sharpness×0.4 + contrast×0.2
+        """
+        try:
+            img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+            width, height = img.size
+
+            resolution_score = self._score_resolution(width, height)
+            sharpness_score  = self._score_sharpness(img)
+            contrast_score   = self._score_contrast(img)
+
+            quality = resolution_score * 0.4 + sharpness_score * 0.4 + contrast_score * 0.2
+            return min(max(quality, 0.0), 1.0)
+        except Exception as e:
+            print(f"Image quality assessment error: {e}")
+            return 0.5
+
+    @staticmethod
+    def _score_resolution(width: int, height: int) -> float:
+        """Higher resolution → higher score."""
+        pixel_count = width * height
+        if pixel_count >= 500 * 500:
+            return 1.0
+        elif pixel_count >= 300 * 300:
+            return 0.9
+        elif pixel_count >= 200 * 200:
+            return 0.75
+        elif pixel_count >= 150 * 150:
+            return 0.6
+        elif pixel_count >= 100 * 100:
+            return 0.5
+        else:
+            return 0.3
+
+    @staticmethod
+    def _score_sharpness(img: Image.Image) -> float:
+        """Variance of Laplacian — blurry images score low."""
+        try:
+            img_array = np.array(img.convert('L'))
+            laplacian = np.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]])
+            laplacian_result = np.abs(
+                np.convolve(img_array.flatten(), laplacian.flatten(), mode='valid')
+            )
+            variance = np.var(laplacian_result)
+            if variance > 500:
+                return 1.0
+            elif variance > 300:
+                return 0.8
+            elif variance > 150:
+                return 0.6
+            elif variance > 50:
+                return 0.4
+            else:
+                return 0.3
+        except Exception:
+            return 0.6
+
+    @staticmethod
+    def _score_contrast(img: Image.Image) -> float:
+        """Standard deviation of pixel values — low contrast images score low."""
+        try:
+            stat = ImageStat.Stat(img)
+            std_dev = np.mean(stat.stddev)
+            if std_dev > 60:
+                return 1.0
+            elif std_dev > 45:
+                return 0.8
+            elif std_dev > 30:
+                return 0.6
+            elif std_dev > 15:
+                return 0.4
+            else:
+                return 0.3
+        except Exception:
+            return 0.6
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
     def _is_pure_single_color(self, img_array: np.ndarray) -> bool:
         if len(img_array.shape) != 3:
             return False
-        
+
         unique_colors = len(np.unique(img_array.reshape(-1, img_array.shape[2]), axis=0))
-        
+
         if unique_colors <= 2:
             return True
-        
+
         if unique_colors <= 5:
             flat = img_array.reshape(-1, img_array.shape[2])
             unique, counts = np.unique(flat, axis=0, return_counts=True)
             most_common_count = counts.max()
             total_pixels = img_array.shape[0] * img_array.shape[1]
-            
             if most_common_count / total_pixels > 0.99:
                 return True
-        
+
         return False
-    
-    def classify_image_content(self, image_path: Path) -> Tuple[str, float]:
-        try:
-            with open(image_path, "rb") as f:
-                import base64
-                base64_image = base64.b64encode(f.read()).decode('utf-8')
-            
-            prompt = """Classify this image from an educational document into ONE category:
-
-VALID categories (educational content):
-- "formula": Mathematical formulas, equations, mathematical expressions
-- "diagram": Charts, graphs, flowcharts, technical diagrams, geometric shapes
-- "illustration": Photos, drawings with educational value
-- "table_image": Tables as images
-- "text_image": Important text blocks as images
-
-INVALID categories (noise/decoration):
-- "decoration": ONLY pure decorative borders, patterns, ornamental elements with NO educational value
-- "header_footer": Page headers, footers, page numbers ONLY
-- "noise": Completely unclear, corrupted, or meaningless images
-
-IMPORTANT: When in doubt between valid and invalid, classify as VALID. Only mark as invalid if you are CERTAIN it has no educational value.
-
-Respond in format: CATEGORY|confidence
-Example: formula|0.95"""
-
-            response = self.client.chat.completions.create(
-                model=config.VISION_MODEL,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=50,
-                temperature=0.1
-            )
-            
-            result = response.choices[0].message.content.strip()
-            
-            if '|' in result:
-                category, confidence_str = result.split('|')
-                category = category.strip().lower()
-                confidence = float(confidence_str.strip())
-            else:
-                category = result.strip().lower()
-                confidence = 0.5
-            
-            return category, confidence
-            
-        except Exception as e:
-            return "unknown", 0.0
-    
-    def should_caption_image(
-        self, 
-        image_bytes: bytes, 
-        image_path: Optional[Path] = None
-    ) -> Tuple[bool, str, Optional[str]]:
-        passed_pre, reason = self.pre_filter(image_bytes)
-        
-        if not passed_pre:
-            return False, reason, None
-        
-        if image_path is None:
-            return True, "passed_pre_filter_only", None
-        
-        category, confidence = self.classify_image_content(image_path)
-        
-        invalid_categories = ["decoration", "header_footer", "noise"]
-        
-        if category in invalid_categories and confidence > 0.7:
-            return False, f"classified_as_{category}", category
-        
-        if category in invalid_categories and confidence < 0.7:
-            return True, "low_confidence_keep_it", category
-        
-        return True, "valid_educational_content", category
-  
-

@@ -1,99 +1,64 @@
-"""
-SlideImproving - VLM-based slide quality evaluator and auto-refiner.
-
-Workflow:
-1. Export the .md file via `slidev export` → PDF
-2. Convert PDF pages to images in memory
-3. Send each image to a VLM for scoring/feedback
-4. If average score < 7, apply LLM-based refinements and repeat (max 3 rounds)
-5. Save the best-scoring .md as the final slidev/{lecture_id}.md and export its PDF
-"""
-
-import os
+import re
+from src.utils.parse_llm_response import clear_think
 import sys
 import json
 import base64
-import shutil
 import logging
 import subprocess
-import tempfile
-from io import BytesIO
 from pathlib import Path
-from typing import Optional
 
 import fitz  # PyMuPDF
 from openai import OpenAI
+from src.utils.fuzzy_distance import fuzzy_distance
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Resolve project root so that `llm_extension` can be imported regardless of
-# the working directory from which this module is used.
-# ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+_TEXT_EXTRACT_PROMPT = """\
+Bạn là một OCR chuyên nghiệp. Hãy trích xuất TOÀN BỘ văn bản hiển thị trên slide này.
+Trả về plaintext, mỗi dòng tương ứng với một dòng trên slide.
+Không thêm giải thích, không thêm markdown formatting.
+"""
 
-# ---------------------------------------------------------------------------
-# VLM evaluation prompt
-# ---------------------------------------------------------------------------
-_EVAL_SYSTEM_PROMPT = """\
-Bạn là một designer chuyên nghiệp, chuyên đánh giá những slide thuyết trình một cách khắt khe và khó tính nhất. Bạn luôn có tiêu chuẩn về slide cao, không chấp nhận bất cứ slide nào kém chất lượng.
-Hãy phân tích ảnh slide được cung cấp và trả về JSON với đúng định dạng sau (không thêm bất cứ thứ gì khác):
+_EMPTY_SPACE_PROMPT = """\
+Bạn là một designer chuyên nghiệp. Hãy đánh giá diện tích trống trên slide này.
+Chỉ trả về JSON đúng định dạng sau (không thêm bất cứ thứ gì khác):
 {
-  "slide_num": <số thứ tự slide>,
-  "text": "<văn bản quá dài, hoặc 'không vấn đề'>",
-  "image": "<hình ảnh quá lớn/nhỏ, hoặc 'không vấn đề'>",
-  "score": <điểm chất lượng từ 1 đến 10>
-  "title_color_suggestion": "<màu sắc gợi ý cho title>",
-  "font_name_suggestion": <kích thước font gợi ý>, dựa theo Google Fonts.
+  "issue": "<LARGE_EMPTY_SPACE hoặc MEDIUM_EMPTY_SPACE hoặc OK>"
 }
+Tiêu chí:
+- LARGE_EMPTY_SPACE: slide có quá nhiều diện tích trống, ảnh quá nhỏ so với không gian slide, hoặc chữ quá ít.
+- MEDIUM_EMPTY_SPACE: slide có một phần diện tích trống đáng kể nhưng không quá nghiêm trọng.
+- OK: slide sử dụng không gian hợp lý, cân đối giữa nội dung và khoảng trống.
 """
 
-# ---------------------------------------------------------------------------
-# LLM improvement prompt
-# ---------------------------------------------------------------------------
-_IMPROVE_SYSTEM_PROMPT = """\
-Bạn là chuyên gia chỉnh sửa nội dung slide Slidev (Markdown).
-Nhiệm vụ của bạn là chỉnh sửa file Markdown Slidev dựa trên phản hồi từ VLM.
-
-Quy tắc QUAN TRỌNG:
-- Chỉ sửa những slide có feedback chỉ rõ vấn đề (text hoặc image khác "không vấn đề").
-- Với vấn đề chữ bị tràn / quá nhiều chữ: rút gọn nội dung text của slide đó.
-- Với vấn đề ảnh quá bé: tăng imageWidth của thẻ <img> hoặc thuộc tính width trong markdown. \
-Nếu chưa có imageWidth thì thêm vào, ví dụ: <img src="..." imageWidth="500" />
-- KHÔNG thay đổi cấu trúc YAML frontmatter, layout, separator (---), hoặc các slide không có feedback.
-- KHÔNG thêm slide mới hoặc xoá slide.
-- Đối với các feedback về title_color_suggestion, hãy lấy màu nào mà có thể trung hòa tất cả các ý kiến của mỗi slide. Màu của Title ở thẻ <h1 style="color:;">. Lưu ý tất cả title phải thống nhất sử dụng 1 màu duy nhất 
-- Đối với các feedback về font_name_suggestion, hãy lấy font nào mà có thể trung hòa tất cả các ý kiến của mỗi slide. Font được chỉnh sửa ở phần đầu của file markdown.
-- Trả về NỘI DUNG FILE MARKDOWN ĐẦY ĐỦ, không thêm markdown fences (```).
-"""
+TWO_IMAGE_MAX_LEFT_RIGHT_WIDTH = 20
+TWO_IMAGE_MIN_LEFT_RIGHT_WIDTH = 25
+ONE_IMAGE_MAX_LEFT_RIGHT_WIDTH = 45
+ONE_IMAGE_MIN_LEFT_RIGHT_WIDTH = 30
+TWO_IMAGE_MAX_ABOVE_BELOW_WIDTH = 70
+TWO_IMAGE_MIN_ABOVE_BELOW_WIDTH = 50
+ONE_IMAGE_MAX_ABOVE_BELOW_WIDTH = 70
+ONE_IMAGE_MIN_ABOVE_BELOW_WIDTH = 50
 
 
 class SlideImproving:
-    """
-    Evaluate and iteratively improve a Slidev markdown file using a VLM.
-
-    Parameters
-    ----------
-    md_path : str
-        Path to the source `.md` file, e.g. ``slidev/lec_abc123.md``.
-    max_iterations : int
-        Maximum improvement cycles (default 3).
-    pass_threshold : float
-        Average score threshold above which no changes are made (default 7.0).
-    """
-
     def __init__(
         self,
         md_path: str,
+        lecture_json_path: str,
+        lecture_title: str = "",
+        speaker_information: str = "",
         max_iterations: int = 3,
-        pass_threshold: float = 8.5,
+        theme: str = "frankfurt",
+        font: str = "STIX Two Text",
     ):
-        # Resolve path: try as-given first, then relative to src/generator/
+        # Resolve md_path
         _given = Path(md_path)
-        _generator_dir = Path(__file__).parent   # .../src/generator
+        _generator_dir = Path(__file__).parent
         if _given.is_absolute() and _given.exists():
             self.md_path = _given
         elif _given.resolve().exists():
@@ -107,11 +72,20 @@ class SlideImproving:
             )
 
         self.slidev_dir = self.md_path.parent
-        self.lecture_id = self.md_path.stem          # e.g. "lec_abc123"
+        self.lecture_id = self.md_path.stem
         self.max_iterations = max_iterations
-        self.pass_threshold = pass_threshold
+        self.theme = theme
+        self.font = font
 
-        # VLM client (reads config from environment via src/utils/config.py)
+        # Layout distribution path (same dir as lecture JSON)
+        _lec_json = Path(lecture_json_path).resolve()
+        self.layout_dist_path = _lec_json.parent / f"{self.lecture_id}_layout_distribution.json"
+
+        # For replaying layouts
+        self.lecture_title = lecture_title
+        self.speaker_information = speaker_information
+
+        # VLM client
         from src.utils.config import Config
         self._vlm_client = OpenAI(
             api_key=Config.VLM_API_KEY,
@@ -119,77 +93,297 @@ class SlideImproving:
         )
         self._vlm_model = Config.VLM_MODEL_NAME
 
-        # Best-score tracking
-        self._best_score: float = -1.0
-        self._best_md_tmp: Optional[Path] = None   # temp copy in slidev dir
-        self._tmp_files: list[Path] = []            # all temp files to clean up
-
-    # ------------------------------------------------------------------
-    # Public entry point
-    # ------------------------------------------------------------------
-
     def run(self) -> None:
-        """Run the full evaluation + improvement loop."""
         logger.info(f"[SlideImproving] Starting for lecture '{self.lecture_id}'")
 
-        try:
-            for iteration in range(1, self.max_iterations + 1):
-                logger.info(f"[SlideImproving] === Iteration {iteration}/{self.max_iterations} ===")
+        for iteration in range(1, self.max_iterations + 1):
+            logger.info(f"[SlideImproving] === Iteration {iteration}/{self.max_iterations} ===")
 
-                # 1. Export PDF
-                self._export_pdf()
-
-                # 2. Convert PDF to images
-                images = self._pdf_to_images()
-                if not images:
-                    logger.warning("[SlideImproving] No images extracted from PDF. Stopping.")
-                    break
-
-                # 3. Evaluate each slide
-                feedback = self._evaluate_slides(images)
-                avg_score = sum(f["score"] for f in feedback) / len(feedback)
-                logger.info(
-                    f"[SlideImproving] Average score: {avg_score:.2f} "
-                    f"(threshold: {self.pass_threshold})"
-                )
-
-                # 4. Track best version
-                if avg_score > self._best_score:
-                    self._best_score = avg_score
-                    self._save_best_copy()
-
-                # 5. Stop if quality is sufficient
-                if avg_score >= self.pass_threshold:
-                    logger.info(
-                        f"[SlideImproving] Quality threshold met "
-                        f"({avg_score:.2f} >= {self.pass_threshold}). Done."
-                    )
-                    break
-
-                # 6. If last iteration, stop improving (will restore best below)
-                if iteration == self.max_iterations:
-                    logger.info(
-                        "[SlideImproving] Max iterations reached without meeting threshold."
-                    )
-                    break
-
-                # 7. Improve the markdown
-                logger.info("[SlideImproving] Applying LLM-based improvements …")
-                self._improve_markdown(feedback)
-
-        finally:
-            # Restore best version if it was saved
-            self._restore_best_if_needed()
-            # Final export with the winning .md
+            # 1. Export PDF
             self._export_pdf()
-            # Cleanup temp files
-            self._cleanup_tmp_files()
 
+            # 2. PDF → images
+            images = self._pdf_to_images()
+            if not images:
+                logger.warning("[SlideImproving] No images extracted from PDF. Stopping.")
+                break
+
+            # 3. Read layout distribution
+            entries = self._read_layout_dist()
+
+            # 4. Evaluate and adjust
+            updated_entries, changed = self._evaluate_and_adjust(entries, images)
+
+            # 5. Write updated layout distribution
+            self._write_layout_dist(updated_entries)
+
+            # 6. Replay layouts → regenerate .md
+            self._replay_layouts(updated_entries)
+
+            if not changed:
+                logger.info("[SlideImproving] No changes needed. Done.")
+                break
+
+        # Final export
+        self._export_pdf()
         logger.info("[SlideImproving] Finished.")
 
-    # ------------------------------------------------------------------
-    # Step 1: Export PDF
-    # ------------------------------------------------------------------
+    def _evaluate_and_adjust(
+        self, entries: list[dict], images: list[bytes]
+    ) -> tuple[list[dict], bool]:
+        """Evaluate each slide and adjust image_width if needed."""
+        updated: list[dict] = []
+        changed = False
+
+        for entry in entries:
+            args = entry.get("args", {})
+            slide_num = entry["slide_num"]
+            # Skip slides without image_width
+            if "image_width" not in args:
+                updated.append(entry)
+                continue
+            two_image = "two_image" in entry.get("layout_function_name", "")
+            layout_name = entry.get("layout_function_name", "")
+            above_below = "above" in layout_name or "below" in layout_name
+            image_width = int(args.get("image_width").replace("%", ""))
+
+            # Determine min/max bounds based on layout type (4-way)
+            if two_image and above_below:
+                _max_w = TWO_IMAGE_MAX_ABOVE_BELOW_WIDTH
+                _min_w = TWO_IMAGE_MIN_ABOVE_BELOW_WIDTH
+            elif two_image:
+                _max_w = TWO_IMAGE_MAX_LEFT_RIGHT_WIDTH
+                _min_w = TWO_IMAGE_MIN_LEFT_RIGHT_WIDTH
+            elif above_below:
+                _max_w = ONE_IMAGE_MAX_ABOVE_BELOW_WIDTH
+                _min_w = ONE_IMAGE_MIN_ABOVE_BELOW_WIDTH
+            else:
+                _max_w = ONE_IMAGE_MAX_LEFT_RIGHT_WIDTH
+                _min_w = ONE_IMAGE_MIN_LEFT_RIGHT_WIDTH
+
+            # Get corresponding slide image (slide_num is 1-indexed)
+            img_idx = slide_num - 1
+            if img_idx < 0 or img_idx >= len(images):
+                logger.warning(
+                    f"[SlideImproving] Slide {slide_num}: "
+                    f"no image at index {img_idx} (total={len(images)}). Skipping."
+                )
+                updated.append(entry)
+                continue
+
+            img_bytes = images[img_idx]
+            current_width = args["image_width"]
+            delta = 0
+
+            expected = self._get_expected_content(args)
+            extracted = self._extract_text_vlm(img_bytes)
+            score = fuzzy_distance(expected, extracted)
+            logger.info(
+                f"[SlideImproving] Slide {slide_num}: "
+                f"fuzzy_score={score:.1f} (expected_len={len(expected)}, "
+                f"extracted_len={len(extracted)})"
+            )
+
+            # Shrink deltas differ by layout type
+            if two_image and not above_below:
+                shrink_large, shrink_small = 2.5, 1.25
+            else:
+                shrink_large, shrink_small = 10, 5
+
+            if score < 90:
+                if image_width - shrink_large >= _min_w:
+                    delta -= shrink_large
+                else:
+                    image_width = _min_w
+            elif score < 95:
+                if image_width - shrink_small >= _min_w:
+                    delta -= shrink_small
+                else:
+                    image_width = _min_w
+
+            if score >= 98:
+                issue = self._evaluate_empty_space(img_bytes)
+                logger.info(
+                    f"[SlideImproving] Slide {slide_num}: empty_space={issue}"
+                )
+
+                # Grow deltas differ by layout type
+                if two_image and not above_below:
+                    grow_large, grow_small = 1.25, 0.625
+                else:
+                    grow_large, grow_small = 10, 5
+
+                if issue == "LARGE_EMPTY_SPACE":
+                    if image_width + grow_large <= _max_w:
+                        delta += grow_large
+                    else:
+                        image_width = _max_w
+                elif issue == "MEDIUM_EMPTY_SPACE":
+                    if image_width + grow_small <= _max_w:
+                        delta += grow_small
+                    else:
+                        image_width = _max_w
+
+            if delta != 0:
+                new_width = self._adjust_image_width(current_width, delta)
+                entry = {**entry, "args": {**args, "image_width": new_width}}
+                changed = True
+                logger.info(
+                    f"[SlideImproving] Slide {slide_num}: "
+                    f"{current_width} → {new_width} (delta={delta:+g}%)"
+                )
+
+            updated.append(entry)
+
+        return updated, changed
+
+    @staticmethod
+    def _get_expected_content(args: dict) -> str:
+        parts: list[str] = []
+
+        for key in ("title", "sub_title_1", "sub_title_2"):
+            if key in args and args[key]:
+                parts.append(str(args[key]))
+        for key in ("content", "toc_content", "sub_content_1", "sub_content_2"):
+            val = args.get(key)
+            if isinstance(val, list):
+                parts.extend(str(v) for v in val)
+            elif val:
+                parts.append(str(val))
+        if "latex_formula_block" in args:
+            parts.append(str(args["latex_formula_block"]))
+        if "caption" in args:
+            parts.append(str(args["caption"]))
+        if "caption1" in args and "caption2" in args:
+            parts.append(str(args["caption1"]))
+            parts.append(str(args["caption2"]))
+        return " ".join(parts)
+
+    @staticmethod
+    def _adjust_image_width(current: str, delta: int) -> str:
+        """Adjust percentage width by delta. Clamp to [10%, 90%]."""
+        val = int(current.replace("%", ""))
+        val = max(10, min(90, val + delta))
+        return f"{val}%"
+
+    def _extract_text_vlm(self, img_bytes: bytes) -> str:
+        """Send slide image to VLM and extract all visible text."""
+        b64 = base64.b64encode(img_bytes).decode("utf-8")
+        try:
+            response = self._vlm_client.chat.completions.create(
+                model=self._vlm_model,
+                messages=[
+                    {"role": "system", "content": _TEXT_EXTRACT_PROMPT},
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Trích xuất toàn bộ text trên slide này.",
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{b64}",
+                                },
+                            },
+                        ],
+                    },
+                ],
+                temperature=0.1,
+            )
+            raw = clear_think(response.choices[0].message.content)
+            return raw
+        except Exception as e:
+            logger.error(f"[SlideImproving] Text extraction failed: {e}")
+            return ""
+
+    def _evaluate_empty_space(self, img_bytes: bytes) -> str:
+        """Send slide image to VLM and evaluate empty space."""
+        b64 = base64.b64encode(img_bytes).decode("utf-8")
+        try:
+            response = self._vlm_client.chat.completions.create(
+                model=self._vlm_model,
+                messages=[
+                    {"role": "system", "content": _EMPTY_SPACE_PROMPT},
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Đánh giá diện tích trống trên slide này.",
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{b64}",
+                                },
+                            },
+                        ],
+                    },
+                ],
+                temperature=0.1,
+            )
+            raw = clear_think(response.choices[0].message.content)
+            return self._parse_issue_json(raw)
+        except Exception as e:
+            logger.error(f"[SlideImproving] Empty space eval failed: {e}")
+            return "OK"
+
+    @staticmethod
+    def _parse_issue_json(raw: str) -> str:
+        """Parse {"issue": "..."} from VLM response."""
+        # Strip markdown fences
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
+        try:
+            return json.loads(raw).get("issue", "OK")
+        except json.JSONDecodeError:
+            pass
+        match = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group()).get("issue", "OK")
+            except json.JSONDecodeError:
+                pass
+        # Fallback: keyword search
+        if "LARGE_EMPTY_SPACE" in raw:
+            return "LARGE_EMPTY_SPACE"
+        if "MEDIUM_EMPTY_SPACE" in raw:
+            return "MEDIUM_EMPTY_SPACE"
+        return "OK"
+
+    def _read_layout_dist(self) -> list[dict]:
+        """Read layout distribution JSON."""
+        with open(self.layout_dist_path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def _write_layout_dist(self, entries: list[dict]) -> None:
+        """Write updated layout distribution JSON."""
+        with open(self.layout_dist_path, "w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)
+
+    def _replay_layouts(self, entries: list[dict]) -> None:
+        from src.generator.slide_layout_manager import SlideLayoutManager
+
+        mgr = SlideLayoutManager(
+            theme=self.theme,
+            font_sans=self.font,
+            font_serif=self.font,
+            font_mono=self.font,
+            title=self.lecture_title,
+            author=self.speaker_information,
+        )
+
+        doc = ""
+        for entry in entries:
+            func_name = entry["layout_function_name"]
+            args = entry["args"]
+            func = getattr(mgr, func_name)
+            doc += func(**args)
+
+        self.md_path.write_text(doc, encoding="utf-8")
+        logger.info(f"[SlideImproving] Markdown replayed → {self.md_path}")
 
     def _export_pdf(self) -> None:
         """Run `slidev export` in the slidev directory."""
@@ -200,18 +394,14 @@ class SlideImproving:
             cwd=str(self.slidev_dir),
             capture_output=True,
             text=True,
-            encoding="utf-8",     # explicit UTF-8 to avoid cp1252 issues on Windows
-            errors="replace",     # replace undecodable bytes instead of raising
-            shell=True,           # required on Windows for npm shims
+            encoding="utf-8",
+            errors="replace",
+            shell=True,
         )
         if result.returncode != 0:
             logger.error(f"[SlideImproving] slidev export failed:\n{result.stderr}")
             raise RuntimeError(f"slidev export failed: {result.stderr}")
         logger.info("[SlideImproving] Export complete.")
-
-    # ------------------------------------------------------------------
-    # Step 2: PDF → images (in memory)
-    # ------------------------------------------------------------------
 
     def _pdf_to_images(self) -> list[bytes]:
         """Convert each PDF page to a PNG bytes object."""
@@ -230,189 +420,27 @@ class SlideImproving:
         logger.info(f"[SlideImproving] Extracted {len(images)} slide image(s) from PDF.")
         return images
 
-    # ------------------------------------------------------------------
-    # Step 3: Evaluate slides via VLM
-    # ------------------------------------------------------------------
 
-    @staticmethod
-    def _parse_vlm_json(raw: str, slide_num: int) -> dict:
-        """
-        Robustly extract JSON from VLM output that may contain surrounding text,
-        markdown fences, or trailing think-tags used by some models.
-        """
-        import re
-        # 1. Strip <think>…</think> blocks (Qwen-style)
-        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        # 2. Strip markdown fences
-        if raw.startswith("```"):
-            raw = "\n".join(raw.split("\n")[1:])
-            raw = raw.rstrip("`").strip()
-        # 3. Try direct parse
-        if raw:
-            try:
-                return json.loads(raw)
-            except json.JSONDecodeError:
-                pass
-        # 4. Try extracting the first {...} block
-        match = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-        raise ValueError(f"Cannot parse VLM response for slide {slide_num}: {raw!r}")
-
-    def _evaluate_slides(self, images: list[bytes]) -> list[dict]:
-        """Send each slide image to the VLM and collect feedback."""
-        feedback: list[dict] = []
-        for idx, img_bytes in enumerate(images, start=1):
-            b64 = base64.b64encode(img_bytes).decode("utf-8")
-            try:
-                response = self._vlm_client.chat.completions.create(
-                    model=self._vlm_model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": _EVAL_SYSTEM_PROMPT,
-                        },
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": f"Đây là slide số {idx}. Hãy đánh giá.",
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/png;base64,{b64}",
-                                    },
-                                },
-                            ],
-                        },
-                    ],
-                    temperature=0.2,
-                )
-                raw = response.choices[0].message.content.strip()
-                fb = self._parse_vlm_json(raw, idx)
-                fb["slide_num"] = idx   # always set from our counter
-                feedback.append(fb)
-                logger.info(
-                    f"[SlideImproving] Slide {idx} feedback:\n"
-                    + json.dumps(fb, ensure_ascii=False, indent=2)
-                )
-            except Exception as e:
-                logger.error(
-                    f"[SlideImproving] Error evaluating slide {idx}: {e}. "
-                    f"Raw response: {locals().get('raw', '(no response)')!r}"
-                )
-                feedback.append({
-                    "slide_num": idx,
-                    "text": "không thể đánh giá",
-                    "image": "không thể đánh giá",
-                    "score": 5,
-                })
-        return feedback
-
-    # ------------------------------------------------------------------
-    # Step 4: Improve markdown via LLM
-    # ------------------------------------------------------------------
-
-    def _improve_markdown(self, feedback: list[dict]) -> None:
-        """Use ChatLLM (via llm_extension) to refine the markdown file."""
-        import llm_extension  # noqa: F401 – patches openai / langchain
-        from llm_extension.llm_langchain import ChatLLM
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        current_md = self.md_path.read_text(encoding="utf-8")
-        feedback_json = json.dumps(feedback, ensure_ascii=False, indent=2)
-
-        llm = ChatLLM(model="qwen3-30b-a3b", temperature=0.3)
-
-        messages = [
-            SystemMessage(content=_IMPROVE_SYSTEM_PROMPT),
-            HumanMessage(
-                content=(
-                    f"Đây là nội dung file Markdown hiện tại:\n\n"
-                    f"{current_md}\n\n"
-                    f"---\n\n"
-                    f"Đây là phản hồi từ VLM (JSON):\n\n"
-                    f"{feedback_json}\n\n"
-                    f"Hãy trả về file Markdown đã được cải thiện."
-                )
-            ),
-        ]
-
-        response = llm.invoke(messages)
-        improved_md = response.content.strip()
-        # Strip possible markdown fences from response
-        if improved_md.startswith("```"):
-            lines = improved_md.split("\n")
-            improved_md = "\n".join(lines[1:]).rstrip("`").strip()
-
-        self.md_path.write_text(improved_md, encoding="utf-8")
-        logger.info(f"[SlideImproving] Markdown updated at {self.md_path}")
-
-    # ------------------------------------------------------------------
-    # Best-version bookkeeping
-    # ------------------------------------------------------------------
-
-    def _save_best_copy(self) -> None:
-        """Save the current .md as a temp file (best so far)."""
-        # Remove old best copy
-        if self._best_md_tmp and self._best_md_tmp.exists():
-            self._best_md_tmp.unlink(missing_ok=True)
-
-        tmp_name = f"_best_{self.lecture_id}.md"
-        tmp_path = self.slidev_dir / tmp_name
-        shutil.copy2(self.md_path, tmp_path)
-        self._best_md_tmp = tmp_path
-        if tmp_path not in self._tmp_files:
-            self._tmp_files.append(tmp_path)
-        logger.info(f"[SlideImproving] Saved best copy → {tmp_path} (score={self._best_score:.2f})")
-
-    def _restore_best_if_needed(self) -> None:
-        """If the current .md is not the best, restore the best version."""
-        if self._best_md_tmp and self._best_md_tmp.exists():
-            shutil.copy2(self._best_md_tmp, self.md_path)
-            logger.info(
-                f"[SlideImproving] Restored best .md "
-                f"(score={self._best_score:.2f}) → {self.md_path}"
-            )
-
-    def _cleanup_tmp_files(self) -> None:
-        """Delete all temporary files created during the process."""
-        for tmp in self._tmp_files:
-            try:
-                if tmp.exists():
-                    tmp.unlink()
-                    logger.info(f"[SlideImproving] Deleted temp file: {tmp}")
-            except Exception as e:
-                logger.warning(f"[SlideImproving] Could not delete {tmp}: {e}")
-        self._tmp_files.clear()
-
-
-# ---------------------------------------------------------------------------
-# Quick CLI usage: python -m src.generator.slide_improving slidev/lec_xxx.md
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
+
     import argparse
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
     parser = argparse.ArgumentParser(
-        description=(
-            "Evaluate and improve a Slidev .md file.\n"
-            "Path can be relative to cwd or to src/generator/ — e.g. slidev/lec_xxx.md"
-        )
+        description="Evaluate and improve a Slidev .md file using layout distribution."
     )
-    parser.add_argument("md_path", help="Path to the .md slide file, e.g. slidev/lec_xxx.md")
+    parser.add_argument("md_path", help="Path to the .md slide file")
+    parser.add_argument("--lecture-json", required=True, help="Path to lecture JSON file")
+    parser.add_argument("--title", default="", help="Lecture title")
+    parser.add_argument("--speaker", default="", help="Speaker information")
     parser.add_argument("--max-iter", type=int, default=3, help="Max improvement iterations")
-    parser.add_argument("--threshold", type=float, default=8.5, help="Pass score threshold")
     args = parser.parse_args()
 
     improver = SlideImproving(
         md_path=args.md_path,
+        lecture_json_path=args.lecture_json,
+        lecture_title=args.title,
+        speaker_information=args.speaker,
         max_iterations=args.max_iter,
-        pass_threshold=args.threshold,
     )
     improver.run()

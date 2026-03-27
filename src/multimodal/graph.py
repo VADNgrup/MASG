@@ -2,7 +2,7 @@ from langgraph.graph import StateGraph, END
 from typing import Dict, Any
 import json
 from pathlib import Path
-
+from src.utils.config import Config
 from src.multimodal.state import MultimodalState
 from src.multimodal.agents.generate_query import GenerateQueryAgent
 from src.multimodal.agents.visual_aggregation import VisualAggregation
@@ -23,10 +23,10 @@ def create_multimodal_workflow() -> StateGraph:
     workflow = StateGraph(MultimodalState)
     
     # Initialize agents
-    query_agent = GenerateQueryAgent("qwen3-30b-a3b")
+    query_agent = GenerateQueryAgent(Config.LLM_MODEL_NAME)
     aggregation_agent = VisualAggregation()
     image_distribution_agent = ImageDistribution()
-    table_distribution_agent = TableChartDistribution()
+    table_distribution_agent = TableChartDistribution(Config.LLM_MODEL_NAME)
     
     def load_lecture_node(state: MultimodalState) -> Dict[str, Any]:
         """Load lecture JSON file into state"""
@@ -81,16 +81,16 @@ def create_multimodal_workflow() -> StateGraph:
         }
     
     def distribute_images_node(state: MultimodalState) -> Dict[str, Any]:
-        """Distribute images to slides using CLIP scoring"""
+        """Distribute images to slides using image-finds-slide strategy"""
         lecture_id = state["lecture_id"]
-        need_visualization = state["need_visualization"]
+        lecture_dict = state["lecture_dict"]
         aggregated_media = state["aggregated_media"]
         used_images = state.get("used_images", set())
         
         print("\nDistributing images to slides...")
         distributions = image_distribution_agent.distribute_images(
             lecture_id=lecture_id,
-            need_visualization=need_visualization,
+            lecture_dict=lecture_dict,
             aggregated_media=aggregated_media,
             used_images=used_images
         )

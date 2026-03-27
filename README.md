@@ -7,16 +7,22 @@ This repository contains ideas and an experimental pipeline for **automatic lect
 Follow the steps below to generate lectures and slides:
 
 ```bash
-# 1. Extract document context from a raw file (includes automatic chart generation)
+#1. Extract from a raw doc file or batch extract
 python -m src.extractor.extract_file --input data/raw/{file_name}.{file_type}
-
-# 2. Preprocess context and generate smart metadata
+python -m src.extractor.batch_extract_file --batch_pdf_path data/raw
+#2. Build a lecture from above doc file information
 python -m src.preprocessor.preprocessing_context --context data/context/{doc_id}.json
-#python -m src.preprocessor.preprocessing_context --context data/context/607fe87f-b0f0-48b2-9c3d-ef5ccea059e1.json
-# 3. Generate Slidev-compatible slides
-python -m src.generator.slide_generator data/lectures/{file_name}.json slidev/slides.md
+python -m src.preprocessor.batch_preprocessing_context --input-dir data/context
+#3. Multimodal Processing
+python -m src.multimodal.multimodal_processing --lecture data/lectures/{file_name}.json
+python -m src.multimodal.batch_multimodal_processing --input-dir data/lectures
+#4. Generate a lecture from above lecture information
+python -m src.generator.slide_gen --lecture data/lectures/{file_name}.json
+python -m src.generator.batch_slide_gen --input data/lectures
+# 5. PPT Eval Benchmark
+python ppt-agent-benchmark/PPTAgent/run.py ppt-agent-benchmark/PPTAgent/slide-benchmark
 
-# 4. Preview the generated slides using Slidev
+
 cd slidev
 npm install
 npm run dev
@@ -24,5 +30,5 @@ npm run dev
 
 ## Pipeline Overview
 
-![Lecture generation pipeline overview](images/Lecture-gen-2025-12-31.png)
+![Lecture generation pipeline overview](docs/images/images/Lecture-gen-2025-12-31.png)
 *Figure 1: End-to-end lecture generation pipeline from raw documents to Slidev slides.*

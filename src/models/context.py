@@ -14,6 +14,7 @@ class TableData(BaseModel):
     should_visualize: str
     chart_path: Optional[str] = None  
     chart_type: Optional[str] = None  
+    image_table_path: Optional[str] = None
 
 class ProcessingMetadata(BaseModel):
     total_images: int

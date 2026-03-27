@@ -11,6 +11,7 @@ class ImageAsset(BaseModel):
     image_id: str
     file_path: str
     caption: str
+    reference_context: Optional[str] = None
     metadata: AssetMetadata
 
 class AssetCollection(BaseModel):

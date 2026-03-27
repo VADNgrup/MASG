@@ -1,11 +1,13 @@
 import os
 import llm_extension
+from src.utils.file_utils import ensure_dir
 import re
 import logging
 from PIL import Image
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from src.utils.config import config
+from src.utils.parse_llm_response import clear_think
 from io import BytesIO
 from src.ingestion.table_filter import TableFilter
 from src.ingestion.image_filter import ImageFilter
@@ -43,22 +45,13 @@ class DocumentParser:
     def __init__(self, pdf_path: Path):
         config_dict = {
             "output_format": "markdown",
-            "use_llm": True,
-            # Ép dùng OpenAIService
-            "llm_service": "marker.services.openai.OpenAIService",
-            # Ollama config
-            "openai_base_url": config.VLM_BASE_URL,
-            "openai_api_key": config.VLM_API_KEY,
-            "openai_model": config.VLM_MODEL_NAME,
+            "use_llm": False,
         }
         parser = ConfigParser(config_dict)
 
         converter = PdfConverter(
             config=parser.generate_config_dict(),
             artifact_dict=create_model_dict(),
-            processor_list=parser.get_processors(),
-            renderer=parser.get_renderer(),
-            llm_service=parser.get_llm_service(),
         )
 
         print("🔍 Converting PDF with Ollama LLM...")
@@ -68,10 +61,10 @@ class DocumentParser:
         self.full_text, _, self.images = text_from_rendered(rendered)
         self.table_filter = TableFilter()
         
-    def parse_document(self) -> ParsedContent:
+    def parse_document(self, document_id: str = "") -> ParsedContent:
         content = ParsedContent()
         content.full_text = self.extract_texts()
-        content.tables = self.extract_tables()
+        content.tables = self.extract_tables(document_id)
         content.images = self.extract_figures()
         content.page_count = len(self.doc)
         self.doc.close()
@@ -80,19 +73,27 @@ class DocumentParser:
     def extract_texts(self) -> str:
         return self.full_text
         
-    def extract_tables(self) -> List[Dict[str, Any]]:
+    def extract_tables(self, document_id: str = "") -> List[Dict[str, Any]]:
         tables = []
         table_page_information = self.get_table_page_information()
+        
+        # Save cropped table images if document_id is provided
+        table_image_paths = {}
+        if document_id:
+            table_image_paths = self.save_table_images(table_page_information, document_id)
+        
         table_index = 0
         for table_page in table_page_information:
             table_markdown = table_page['table']
             table_caption = table_page['caption']
             should_visualize = self.table_filter.should_visualize_table(table_markdown)
+            table_id = f"table_{table_index+1:03d}"
             tables.append({
-                'table_id': f"table_{table_index+1:03d}",
+                'table_id': table_id,
                 'markdown': table_markdown,
                 'table_caption': table_caption,
-                'should_visualize': should_visualize
+                'should_visualize': should_visualize,
+                'image_table_path': table_image_paths.get(table_index),
             })
             table_index += 1
         return tables
@@ -102,6 +103,25 @@ class DocumentParser:
         image_page_information = self.get_image_page_information(self.images)
         image_index = 0
         for image_page in image_page_information:
+            image_with_number = re.search(r'\S+\s+\d+', image_page['caption'])
+            if image_with_number:
+                image_with_number = image_with_number.group() #Eg: "Table 1"
+                # Tìm tất cả các dòng trong full_text có nhắc đến image_with_number
+                # Dùng regex linh hoạt để khớp dù có khoảng trắng thừa giữa "Figure" và số
+                escaped = re.escape(image_with_number)              # e.g. "Figure\ 3"
+                flexible = escaped.replace(r'\ ', r'\s+')          # cho phép nhiều khoảng trắng
+                pattern = re.compile(flexible, re.IGNORECASE)
+
+                matched_lines = []
+                for line in self.full_text.splitlines():
+                    if pattern.search(line):
+                        stripped = line.strip()
+                        if stripped:
+                            matched_lines.append(stripped)
+
+                reference_context = "\n".join(matched_lines)
+            else:
+                reference_context = ""
             img_bytes = BytesIO()
             img = image_page['image']
             img.save(img_bytes, format='PNG')
@@ -111,6 +131,7 @@ class DocumentParser:
                 'page_number': image_page['page'],
                 'raw_name': image_page['raw_name'],
                 'relevant_caption': image_page['caption'],
+                'reference_context': reference_context,
             })
             image_index += 1
         return images
@@ -177,6 +198,39 @@ class DocumentParser:
         return image_page_information
 
     
+    def save_table_images(
+        self,
+        table_page_information: List[Dict[str, Any]],
+        document_id: str,
+    ) -> Dict[int, str]:
+        """Crop table images from PDF using bbox and save to assets directory.
+        Returns a dict mapping table_index -> relative image path.
+        """
+        from src.utils.config import config as app_config
+
+        image_dir = app_config.ASSETS_DIR / document_id / "images"
+        ensure_dir(image_dir)
+
+        table_image_paths: Dict[int, str] = {}
+        for idx, table_page in enumerate(table_page_information):
+            bbox = table_page.get('bbox')
+            if bbox is None:
+                continue
+
+            page_index = table_page['page']
+            page = self.doc.load_page(page_index)
+            clip_rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+            pix = page.get_pixmap(dpi=150, clip=clip_rect)
+
+            file_name = f"table_{idx+1:03d}.png"
+            file_path = image_dir / file_name
+            pix.save(str(file_path))
+
+            relative_path = str(file_path.relative_to(app_config.BASE_DIR))
+            table_image_paths[idx] = relative_path
+
+        return table_image_paths
+
     def get_table_page_information(self) -> List[Dict[str, Any]]:
         config_parser = ConfigParser({})
         converter = TableConverter(
@@ -190,7 +244,12 @@ class DocumentParser:
         tables_content = markdown_output.markdown.split("\n\n")
         table_page_information = []
         for i in range(len(tables)):
-            table_page = {"page": tables[i].page_id, "table": tables_content[i]}
+            bbox = tables[i].polygon.bbox if hasattr(tables[i], 'polygon') and tables[i].polygon else None
+            table_page = {
+                "page": tables[i].page_id,
+                "table": tables_content[i],
+                "bbox": bbox,
+            }
             table_page_information.append(table_page)
 
         # Đếm số bảng trên mỗi trang
@@ -279,7 +338,7 @@ class DocumentParser:
             ],
             temperature=0.2
         )
-        raw_content = response.choices[0].message.content.strip()
+        raw_content = clear_think(response.choices[0].message.content)
         match = re.search(r'\[.*\]', raw_content, re.DOTALL)
         if match:
             captions: List[str] = json.loads(match.group())

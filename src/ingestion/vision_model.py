@@ -1,4 +1,3 @@
-import llm_extension
 import base64
 import time
 from pathlib import Path
@@ -6,6 +5,7 @@ from typing import List, Tuple, Optional, Dict, Any
 from openai import OpenAI
 from tqdm import tqdm
 from src.utils.config import config
+from src.utils.parse_llm_response import clear_think
 
 class VisionCaptionGenerator:
     def __init__(self, model: str = None):
@@ -74,7 +74,7 @@ Return ONLY the caption text, without any additional formatting or explanation."
             )
             
             # Extract and return the caption
-            caption = response.choices[0].message.content.strip()
+            caption = clear_think(response.choices[0].message.content)
             return caption
             
         except Exception as e:
@@ -126,7 +126,7 @@ Return ONLY the caption text, without any additional formatting or explanation."
             )
             
             # Extract and return the caption
-            caption = response.choices[0].message.content.strip()
+            caption = clear_think(response.choices[0].message.content)
             return caption
             
         except Exception as e:

@@ -1,0 +1,12 @@
+frankfurt
+umn
+seriph
+default
+bricks
+scholarly
+dracula
+meetup
+gemini
+improving-25
+foamscience
+nord

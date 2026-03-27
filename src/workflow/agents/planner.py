@@ -7,7 +7,7 @@ from src.models.context import DocumentContext
 from src.utils.config import config
 
 class PlannerAgent:
-    def __init__(self, model: str = "gpt-5"):
+    def __init__(self, model):
         self.llm = ChatOpenAI(model=model, temperature=0.3)
         self.model = model
     
@@ -44,40 +44,45 @@ Apply all the suggestions above when generating this revised outline.
 """
         
         prompt = f"""
+# ROLE
 You are a senior lecture designer and slide-structure architect.
-Your task is to analyze the document content and produce a pedagogically sound lecture OUTLINE that can later be converted into presentation slides.
+# TASK
+Your task is to analyze the document content and produce a pedagogically sound lecture OUTLINE that can later be converted into presentation slides. 
 You are creating a {complexity_level} lecture outline. Think step-by-step:
-
-STEP 1: Analyze the document structure
-The document has {len(text_sections)} main sections based on content analysis.
-Document length: {text_length} characters.
-
+# HOW TO PROCESS INPUTS
+## STEP 1: Analyze the document structure
+The document has {len(text_sections)} main sections based on content analysis. Document length: {text_length} characters.
 FULL DOCUMENT TEXT:
 {full_text}
 SOME INFORMATION ABOUT TABLES and ASSETS:
 {tables_assets_info}
+SOME FEEDBACK FROM PREVIOUS OUTLINE TO FIX AND UPGRADE:
 {feedback_block}
-STEP 2: Create lecture outline
+## STEP 2: Create lecture outline
 Generate a hierarchical outline with EXACTLY {target_main_sections} major sections.
-
-STRICT REQUIREMENTS:
-1. Count of "# Title" lines = {target_main_sections} (NO MORE, NO LESS)
-2. Each major section = ONE core concept from the document
-3. Maximum 2 heading levels:
+# VERY STRICT REQUIREMENTS:
+1. Language: same language as the document.
+2. The length of a title is a maximum of 8 words.
+3. Count of "# Title" lines equals to {target_main_sections}, NO MORE, NO LESS.
+4. Each major section = ONE core concept from the document. No two major sections should overlap in their core concepts.
+5. Maximum 2 heading levels:
    - Use "# Title" for major sections
    - Use "## Title" for subsections  
-4. A major section may or may not have subsections. If it has subsections, it MUST have at least 2 subsections (never just 1)
-5. Do NOT combine unrelated concepts
-6. Do NOT add content not in the source document
-7. Do NOT include topic name itself in the outline
-8. Do NOT include explanations or comments
-
-VERIFY BEFORE SUBMITTING:
-- Total "# Title" = {target_main_sections}
+6. A major section may or may not have subsections. If it has subsections, it MUST have at least 2 subsections (never just 1)
+7. Do NOT combine unrelated concepts
+8. Do NOT add content not in the source document
+9. Do NOT include topic name itself in the outline
+10. ONLY return markdown outline,Do NOT include explanations or comments
+# EXAMPLE OUTPUT:
+# Title 1
+## Subtitle 1.1
+## Subtitle 1.2
+# Title 2
+## Subtitle 2.1
+## Subtitle 2.2
 
 Output ONLY the markdown outline:
 """
-        
         response = self.llm.invoke(prompt)
         outline_md = response.content if hasattr(response, 'content') else str(response)
         

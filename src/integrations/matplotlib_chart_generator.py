@@ -17,6 +17,7 @@ matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 from openai import OpenAI
 from src.utils.config import config
+from src.utils.parse_llm_response import clear_think
 
 class MatplotlibChartGenerator:
     """
@@ -27,7 +28,7 @@ class MatplotlibChartGenerator:
         """Initialize with OpenAI client"""
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
         self.model = config.OPENAI_MODEL if hasattr(config, 'OPENAI_MODEL') else "qwen3-30b-a3b-instruct-2507"
-        print("✓ Matplotlib Chart Generator initialized successfully")
+        print("Matplotlib Chart Generator initialized successfully")
     
     def markdown_to_dataframe(self, markdown: str) -> Optional[pd.DataFrame]:
         """
@@ -47,7 +48,7 @@ class MatplotlibChartGenerator:
             cleaned_lines = [line for line in lines if not re.match(r'^\s*\|[\s\-:]+\|\s*$', line)]
             
             if len(cleaned_lines) < 2:
-                print(f"  ⚠ Table has insufficient rows: {len(cleaned_lines)}")
+                print(f"Table has insufficient rows: {len(cleaned_lines)}")
                 return None
             
             # Convert to CSV-like format
@@ -64,11 +65,11 @@ class MatplotlibChartGenerator:
             # Read as DataFrame
             df = pd.read_csv(io.StringIO(csv_string))
             
-            print(f"  ✓ Converted table to DataFrame: {df.shape[0]} rows × {df.shape[1]} columns")
+            print(f"Converted table to DataFrame: {df.shape[0]} rows × {df.shape[1]} columns")
             return df
             
         except Exception as e:
-            print(f"  ✗ Failed to convert markdown to DataFrame: {e}")
+            print(f"Failed to convert markdown to DataFrame: {e}")
             return None
     
     def generate_matplotlib_code(self, table_markdown: str, table_id: str) -> Optional[str]:
@@ -116,7 +117,7 @@ Return ONLY the Python code, no explanations."""
                 max_tokens=2000
             )
             
-            code = response.choices[0].message.content.strip()
+            code = clear_think(response.choices[0].message.content)
             
             # Extract code from markdown if wrapped
             if '```python' in code:

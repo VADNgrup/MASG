@@ -36,7 +36,7 @@ def main():
     
     print("[1/6] Marker Parsing...")
     doc_parser = DocumentParser(input_path) #Text Extraction
-    parsed_content = doc_parser.parse_document()
+    parsed_content = doc_parser.parse_document(document_id)
     
     print("\n[2/6] Extracting and saving images...")
     asset_manager = AssetManager(document_id)
@@ -46,6 +46,7 @@ def main():
             image_bytes=img_data['image_bytes'],
             image_index=img_data['image_index'],
             caption=img_data['relevant_caption'],
+            reference_context=img_data['reference_context']
         )          
     all_images = asset_manager.get_all_images()
     print(f"✓ Saved {len(all_images)} valid images")
