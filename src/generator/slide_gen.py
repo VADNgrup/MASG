@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import sys
+
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -12,6 +13,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.generator.slide_pick_and_merge import SlidePickMerge
 from src.generator.slide_improving import SlideImproving
+from src.utils.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,7 @@ def run_pipeline(
     lecture_json_path: str,
     lecture_title: str | None = None,
     speaker_information: str = "",
-    max_iterations: int = 3,
+    max_iterations: int = 3
 ) -> None:
     """
     Full end-to-end pipeline:
@@ -57,11 +59,15 @@ def run_pipeline(
     inferred_title, lecture_id = _load_lecture_meta(json_path)
     title = lecture_title or inferred_title
 
-    logger.info(f"[slide_gen] Lecture  : {lecture_id}")
-    logger.info(f"[slide_gen] Title    : {title}")
-    logger.info(f"[slide_gen] Speaker  : {speaker_information or '(not set)'}")
+    print(f"\n{'='*60}")
+    print(f"Phase 4: Slide Generation")
+    print(f"{'='*60}\n")
 
-    logger.info("[slide_gen] === Step 1: Building slide layout ===")
+    print(f"[slide_gen] Lecture  : {lecture_id}")
+    print(f"[slide_gen] Title    : {title}")
+    print(f"[slide_gen] Speaker  : {speaker_information or '(not set)'}")
+
+    print("[slide_gen] === Step 1: Building slide layout ===")
     if not title:
         title = json.load(json_path)["lecture_title"]
     picker = SlidePickMerge(
@@ -74,10 +80,8 @@ def run_pipeline(
     selected_font = picker.font
 
     slidev_dir = _PROJECT_ROOT / "src" / "generator" / "slidev"
-    md_path = slidev_dir / f"{lecture_id}.md"
-    logger.info(f"[slide_gen] Markdown written to: {md_path}")
 
-    logger.info("[slide_gen] === Step 2: Evaluating and improving slides ===")
+    print("[slide_gen] === Step 2: Evaluating and improving slides ===")
     improver = SlideImproving(
         md_path=str(md_path),
         lecture_json_path=str(json_path),
@@ -89,7 +93,10 @@ def run_pipeline(
     )
     improver.run()
 
-    logger.info(f"[slide_gen] Pipeline complete for lecture '{lecture_id}'.")
+    md_path = slidev_dir / f"{lecture_id}.md"
+    print(f"\n{'='*60}")
+    print(f"End Phase 4: Generated Slide in {md_path}")
+    print(f"{'='*60}\n")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -127,13 +134,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Speaker / author information shown on greeting and goodbye slides.",
     )
     parser.add_argument(
-        "--max-iter",
-        type=int,
-        default=3,
-        metavar="N",
-        help="Maximum VLM improvement iterations (default: 3).",
-    )
-    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -155,5 +155,5 @@ if __name__ == "__main__":
         lecture_json_path=args.lecture,
         lecture_title=args.title,
         speaker_information=args.speaker,
-        max_iterations=args.max_iter,
+        max_iterations=Config.SLIDE_ITERATION_NUMBER
     )

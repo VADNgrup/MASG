@@ -8,7 +8,7 @@ import numpy as np
 from pathlib import Path
 from PIL import Image
 from io import BytesIO
-from openai import OpenAI
+
 from src.utils.config import config
 from src.utils.semantic_match import SemanticMatcher
 from src.ingestion.image_filter import ImageFilter
@@ -36,9 +36,11 @@ class ImageDistribution:
         self.llm = ChatOpenAI(model=config.LLM_MODEL_NAME, temperature=0.3, max_tokens=4000)
 
         # VLM client (kept for potential future use)
-        self.vlm_client = OpenAI(
+        self.vlm_client = ChatOpenAI(
+            model=config.VLM_MODEL_NAME,
+            temperature=0.3,
             base_url=config.VLM_BASE_URL,
-            api_key=config.VLM_API_KEY
+            api_key=config.VLM_API_KEY,
         )
         self.vlm_model = config.VLM_MODEL_NAME
 

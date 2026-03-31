@@ -145,56 +145,6 @@ def create_multimodal_workflow() -> StateGraph:
     workflow.add_edge("distribute_tables", END)
     
     return workflow.compile()
-
-
-# Main function for testing
-def main():
-    """Test the multimodal workflow"""
-    print("=" * 60)
-    print("Testing Multimodal Workflow")
-    print("=" * 60)
     
-    # Create workflow
-    workflow = create_multimodal_workflow()
-    
-    # Run workflow with initial state
-    initial_state = {
-        "lecture_id": "lec_6895e38a",
-        "used_images": set(),
-        "used_tables": set()
-    }
-    
-    print(f"\nStarting workflow for lecture: {initial_state['lecture_id']}\n")
-    
-    try:
-        # Execute workflow
-        result = workflow.invoke(initial_state)
-        
-        # Display final results
-        print("\n" + "=" * 60)
-        print("Workflow completed successfully!")
-        print("=" * 60)
-        
-        print(f"\nFinal State Summary:")
-        print(f"  Lecture ID: {result['lecture_id']}")
-        print(f"  Total Slides: {result['lecture_dict']['metadata']['total_slides']}")
-        print(f"  Visualization Queries: {len(result['need_visualization'])}")
-        print(f"  Tables: {result['aggregated_media']['total_tables']}")
-        print(f"  Images: {result['aggregated_media']['total_images']}")
-        print(f"  Distributed Images: {len(result.get('image_distributions', []))}")
-        print(f"  Distributed Tables: {len(result.get('table_distributions', []))}")
-        
-        # Show sample visualization queries
-        if result['need_visualization']:
-            print(f"\nSample Visualization Queries:")
-            for item in result['need_visualization'][:5]:
-                print(f"  - Slide {item['slide_number']}: {item['query']}")
-        
-    except Exception as e:
-        print(f"\nError: {e}")
-        import traceback
-        traceback.print_exc()
-
-
 if __name__ == "__main__":
     main()

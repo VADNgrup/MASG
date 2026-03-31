@@ -372,37 +372,28 @@ $$
 
 ---
 
+<h1 style="color: #2c3e50;">XIn cahfo</h1>
 
-
-<div style="
-    --image-width: 40%;
-    display: flex; flex-direction: row; height: 100%;">
-
-  <div style="width: var(--image-width); display: flex; flex-direction: column; gap: 0.5rem;">
-      <div>
-        <img src="/assets/slide_12_q1_serper_3.png" style="width: 100%; max-height: 33%; display: block; object-fit: contain;" />
-      </div>
-      <div>
-        <img src="/assets/slide_12_q1_serper_3.png" style="width: 100%; max-height: 33%; display: block; object-fit: contain;" />
-      </div>
-      <div>
-        <img src="/assets/slide_12_q1_serper_3.png" style="width: 100%; max-height: 33%; display: block; object-fit: contain;" />
-      </div>
+<div style="width: 90%; margin: auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; container-type: inline-size;">
+  <div style="display: flex; flex-direction: column;">
+    <img src="/assets/slide_12_q1_serper_3.png" style="width: 100%; max-width: 100%; max-height: 260px; display: block; object-fit: contain;" />
+    <p style="text-align:center; font-size: 2.5cqw; line-height: 1.2; margin: 0.1rem 0 0 0;"><b>Caption 1</b></p>
   </div>
-  <div style="flex: 1; padding-left: 1rem;">
-    <h1 style="color: #2c3e50;">XIn cahfo</h1>
-<div style="overflow: auto;">
-  <ul>
-        <li>ImageNet contains over 15 million labeled high-resolution images across 22,000 categories.</li>
-        <li>ILSVRC uses a subset of 1.2 million training images across 1000 distinct object classes.</li>
-        <li>Images are down-sampled to a fixed 256 × 256 resolution with mean subtraction applied.</li>
-        <li>The central 256 × 256 patch is cropped from the rescaled rectangular input images.</li>
-        <li>Performance is measured using top-1 and top-5 error rates on the test set.</li>
-  </ul>
-</div>
+  <div style="display: flex; flex-direction: column;">
+    <img src="/assets/slide_12_q1_serper_3.png" style="width: 100%; max-width: 100%; max-height: 260px; display: block; object-fit: contain;" />
+    <p style="text-align:center; font-size: 2.5cqw; line-height: 1.2; margin: 0.1rem 0 0 0;"><b>Caption 2</b></p>
+  </div>
+  <div style="display: flex; flex-direction: column;">
+    <img src="/assets/slide_12_q1_serper_3.png" style="width: 100%; max-width: 100%; max-height: 260px; display: block; object-fit: contain;" />
+    <p style="text-align:center; font-size: 2.5cqw; line-height: 1.2; margin: 0.1rem 0 0 0;"><b>Caption 3</b></p>
   </div>
 </div>
----
+
+- ImageNet contains over 15 million labeled high-resolution images across 22,000 categories.
+- ILSVRC uses a subset of 1.2 million training images across 1000 distinct object classes.
+- Images are down-sampled to a fixed 256 × 256 resolution with mean subtraction applied.
+- The central 256 × 256 patch is cropped from the rescaled rectangular input images.
+- Performance is measured using top-1 and top-5 error rates on the test set.
 ---
 layout: cover
 ---

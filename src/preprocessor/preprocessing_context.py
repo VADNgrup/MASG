@@ -8,17 +8,12 @@ from src.models.context import DocumentContext
 from src.utils.config import config
 from dataclasses import asdict
 
-async def main():
-    parser = argparse.ArgumentParser(description="Phase 2: LangGraph Workflow")
-    parser.add_argument("--context", required=True, help="Path to Phase 1 context JSON")
-    parser.add_argument("--output", default=None, help="Output lecture JSON path")
-    args = parser.parse_args()
-    
-    context_data = load_json(args.context)
+async def preprocess_context(context, output = None):
+    context_data = load_json(context)
     context = DocumentContext(**context_data)
     
     print(f"\n{'='*60}")
-    print(f"✓ Phase 2: Lecture Generation Workflow")
+    print(f"Phase 2: Lecture Generation Workflow")
     print(f"{'='*60}\n")
     print(f"Source: {context.source_file}")
     print(f"Pages: {context.text_content.page_count}")
@@ -37,18 +32,13 @@ async def main():
         "current_section_idx": 0,
         "current_iteration": 0,
         "reviewer_feedback": None,
-        # Best-effort tracking (lower score = fewer critical issues = better)
         "best_slides": None,
         "best_slides_score": float("inf"),
         "best_slides_feedback": None,
-        # Plan specer output
         "slide_specs": None,
-        # Planner backtrack
         "planner_backtrack_used": False,
         "coverage_feedback": None,
     }
-    
-    print("✓ Executing workflow...\n")
     
     result = await workflow.ainvoke(initial_state)
     
@@ -77,14 +67,20 @@ async def main():
         "lecture_title": result["lecture_title"],
         "slides": [asdict(s) for s in final_slides]
     }
-    
-    output_path = Path(args.output) if args.output else config.LECTURES_DIR / f"{lecture_output['lecture_id']}.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    save_json(lecture_output, output_path)
+
+    # Creat a lecture_id folder to save relevant lecture files: data/lectures/{lecture_id}/...
+
+    # data/lectures/{lecture_id}
+    output_save_path = Path(output) if output else config.LECTURES_DIR / f"{lecture_output['lecture_id']}"
+    output_save_path.mkdir(parents=True, exist_ok=True)
+
+    # Save lecture json file
+    lecture_json_path = output_save_path / f"{lecture_output['lecture_id']}.json"
+    save_json(lecture_output, lecture_json_path)
     
     # Save outline markdown (from best plan)
     outline_md = final_plan.get("outline", "")
-    outline_path = output_path.parent / f"{lecture_output['lecture_id']}_outline.md"
+    outline_path = output_save_path / f"{lecture_output['lecture_id']}_outline.md"
     outline_path.write_text(outline_md, encoding='utf-8')
     
     # Save plan spec JSON
@@ -97,7 +93,7 @@ async def main():
                 d["slide_type"] = d["slide_type"].value
             return d
         specs_data = [_serialize_spec(s) for s in final_specs]
-        specs_path = output_path.parent / f"{lecture_output['lecture_id']}_plan_spec.json"
+        specs_path = output_save_path / f"{lecture_output['lecture_id']}_plan_spec.json"
         save_json(specs_data, specs_path)
     else:
         specs_path = None
@@ -109,16 +105,27 @@ async def main():
     print(f"\n{'='*60}")
     print(f"Lecture Generated Successfully")
     print(f"{'='*60}\n")
-    print(f"Output:                  {output_path}")
+    print(f"Output:                  {output_lecture_json}")
     print(f"Outline:                 {outline_path}")
     print(f"Plan Spec:               {specs_path}")
     print(f"Slides:                  {lecture_output['metadata']['total_slides']}")
     print(f"Quality Score:           {quality_score:.1f}% slides passed")
     print(f"Best slides critical issues: {slides_critical_str}")
     print(f"Writer iterations:       {lecture_output['metadata']['iterations']}")
-
-
-
+    print(f"\n{'='*60}")
+    print(f"End Phase 2: Generated Lecture")
+    print(f"\n{'='*60}")
+    
+    return lecture_json_path
+    
+async def main():
+    parser = argparse.ArgumentParser(description="Phase 2: LangGraph Workflow")
+    parser.add_argument("--context", required=True, help="Path to Phase 1 context JSON")
+    parser.add_argument("--output", default=None, help="Output lecture JSON path")
+    args = parser.parse_args()
+    context, output = args.context, args.output
+    await preprocess_context(context, output)
+    
 if __name__ == "__main__":
     asyncio.run(main())
 

@@ -3,29 +3,28 @@
 This repository contains ideas and an experimental pipeline for **automatic lecture generation**, from raw documents to Slidev-based presentation slides.
 
 ## Usage
-
 Follow the steps below to generate lectures and slides:
 
 ```bash
+# Convert all documents in data/raw to slides (speaker information is Optional)
+python -m main --speaker_information "Your Information"
+
+# For full pipeline with a single document (document_path is REQUIRED, lecture_title and speaker_information are Optional)
+python -m main --document_path data/raw/{file_name}.{file_type} --lecture_title "Your customized Title" --speaker_information "Your Information"
+
+# For debug
 #1. Extract from a raw doc file or batch extract
 python -m src.extractor.extract_file --input data/raw/{file_name}.{file_type}
-python -m src.extractor.batch_extract_file --batch_pdf_path data/raw
 #2. Build a lecture from above doc file information
 python -m src.preprocessor.preprocessing_context --context data/context/{doc_id}.json
-python -m src.preprocessor.batch_preprocessing_context --input-dir data/context
 #3. Multimodal Processing
 python -m src.multimodal.multimodal_processing --lecture data/lectures/{file_name}.json
-python -m src.multimodal.batch_multimodal_processing --input-dir data/lectures
 #4. Generate a lecture from above lecture information
-python -m src.generator.slide_gen --lecture data/lectures/{file_name}.json
-python -m src.generator.batch_slide_gen --input data/lectures
-# 5. PPT Eval Benchmark
+python -m src.generator.slide_gen --lecture data/lectures/{file_name}.json --title "{Your customized Title}" --speaker "{Your Information}"
+
+# PPT Eval Benchmark
 python ppt-agent-benchmark/PPTAgent/run.py ppt-agent-benchmark/PPTAgent/slide-benchmark
 
-
-cd slidev
-npm install
-npm run dev
 ```
 
 ## Pipeline Overview

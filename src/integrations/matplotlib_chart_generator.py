@@ -125,11 +125,11 @@ Return ONLY the Python code, no explanations."""
             elif '```' in code:
                 code = code.split('```')[1].split('```')[0].strip()
             
-            print(f"  ✓ Generated matplotlib code ({len(code)} chars)")
+            print(f"[OK] Generated matplotlib code ({len(code)} chars)")
             return code
             
         except Exception as e:
-            print(f"  ✗ Failed to generate matplotlib code: {e}")
+            print(f"[ERROR] Failed to generate matplotlib code: {e}")
             return None
     
     def execute_matplotlib_code(
@@ -167,14 +167,14 @@ Return ONLY the Python code, no explanations."""
             exec(code, exec_globals)
             
             if output_path.exists():
-                print(f"  ✓ Chart saved: {output_path}")
+                print(f"[OK] Chart saved: {output_path}")
                 return True
             else:
-                print(f"  ✗ Chart file not created")
+                print(f"[ERROR] Chart file not created")
                 return False
                 
         except Exception as e:
-            print(f"  ✗ Failed to execute matplotlib code: {e}")
+            print(f"[ERROR] Failed to execute matplotlib code: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -205,7 +205,7 @@ Return ONLY the Python code, no explanations."""
             output_dir.mkdir(parents=True, exist_ok=True)
             
             # Step 1: Generate matplotlib code using LLM
-            print(f"  → Generating matplotlib code...")
+            print(f"Generating matplotlib code...")
             code = self.generate_matplotlib_code(table_markdown, table_id)
             
             if not code:
@@ -215,7 +215,7 @@ Return ONLY the Python code, no explanations."""
             chart_filename = f"{table_id}_chart.png"
             chart_path = output_dir / chart_filename
             
-            print(f"  → Executing code to generate chart...")
+            print(f"Executing code to generate chart...")
             success = self.execute_matplotlib_code(code, table_markdown, chart_path)
             
             if not success:
@@ -238,7 +238,7 @@ Return ONLY the Python code, no explanations."""
             }
             
         except Exception as e:
-            print(f"  ✗ Chart generation failed for {table_id}: {e}")
+            print(f"[ERROR] Chart generation failed for {table_id}: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -297,7 +297,7 @@ Return ONLY the Python code, no explanations."""
             updated_tables.append(table_copy)
         
         print(f"\n{'='*60}")
-        print(f"✓ Generated {generated_count}/{len([t for t in tables if t.get('should_visualize') == 'Yes'])} charts")
+        print(f"[OK] Generated {generated_count}/{len([t for t in tables if t.get('should_visualize') == 'Yes'])} charts")
         print(f"{'='*60}\n")
         
         return updated_tables

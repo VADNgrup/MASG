@@ -1,24 +1,16 @@
-import llm_extension 
-
 import io
 from pathlib import Path
 from typing import Tuple, Optional
 from PIL import Image, ImageStat
 import numpy as np
-from openai import OpenAI
 
 from src.utils.config import config
 
 class ImageFilter:
-    # Minimum quality score (0–1) to accept an image
     QUALITY_THRESHOLD = 0.5
 
     def __init__(self):
-        self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+        pass
 
     def should_use_image(self, image_bytes: bytes) -> Tuple[bool, str]:
         """
@@ -37,10 +29,6 @@ class ImageFilter:
             return False, f"low_quality (score={quality:.2f})"
 
         return True, f"accepted (score={quality:.2f})"
-
-    # ------------------------------------------------------------------
-    # Pre-filter: fast structural checks
-    # ------------------------------------------------------------------
 
     def pre_filter(self, image_bytes: bytes) -> Tuple[bool, str]:
         try:
@@ -64,10 +52,6 @@ class ImageFilter:
             return True, "passed_pre_filter"
         except Exception:
             return True, "error_assume_valid"
-
-    # ------------------------------------------------------------------
-    # Quality assessment (merged from ImageQualityAssessor)
-    # ------------------------------------------------------------------
 
     def assess_quality(self, image_bytes: bytes) -> float:
         """
@@ -146,10 +130,6 @@ class ImageFilter:
                 return 0.3
         except Exception:
             return 0.6
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
 
     def _is_pure_single_color(self, img_array: np.ndarray) -> bool:
         if len(img_array.shape) != 3:
