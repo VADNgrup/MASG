@@ -79,12 +79,7 @@ def create_workflow() -> StateGraph:
 
         plan = planner.create_outline(state["document_context"], feedback=feedback_str)
 
-        title_response = planner.llm.invoke(
-            f"Based on the following lecture outline, generate a concise and descriptive lecture title (max 10 words, no quotes).\n\n"
-            f"Outline:\n{plan['outline']}\n\n"
-            f"Return ONLY the title, nothing else."
-        )
-        lecture_title = title_response.content.strip().strip('"').strip("'")
+        lecture_title = planner.generate_title(plan["outline"])
         print(f"\nGenerated lecture title: {lecture_title}\n")
 
         return {

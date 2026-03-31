@@ -82,6 +82,8 @@ def run_pipeline(
     slidev_dir = _PROJECT_ROOT / "src" / "generator" / "slidev"
 
     print("[slide_gen] === Step 2: Evaluating and improving slides ===")
+
+    md_path = slidev_dir / f"{lecture_id}.md"
     improver = SlideImproving(
         md_path=str(md_path),
         lecture_json_path=str(json_path),
@@ -93,7 +95,6 @@ def run_pipeline(
     )
     improver.run()
 
-    md_path = slidev_dir / f"{lecture_id}.md"
     print(f"\n{'='*60}")
     print(f"End Phase 4: Generated Slide in {md_path}")
     print(f"{'='*60}\n")

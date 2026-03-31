@@ -145,7 +145,7 @@ class SlideImproving:
             two_image = "two_image" in entry.get("layout_function_name", "")
             layout_name = entry.get("layout_function_name", "")
             above_below = "above" in layout_name or "below" in layout_name
-            image_width = int(args.get("image_width").replace("%", ""))
+            image_width = float(args.get("image_width").replace("%", ""))
 
             # Determine min/max bounds based on layout type (4-way)
             if two_image and above_below:
@@ -260,11 +260,11 @@ class SlideImproving:
         return " ".join(parts)
 
     @staticmethod
-    def _adjust_image_width(current: str, delta: int) -> str:
+    def _adjust_image_width(current: str, delta: float) -> str:
         """Adjust percentage width by delta. Clamp to [10%, 90%]."""
-        val = int(current.replace("%", ""))
-        val = max(10, min(90, val + delta))
-        return f"{val}%"
+        val = float(current.replace("%", ""))
+        val = max(10.0, min(90.0, val + delta))
+        return f"{val:g}%"
 
     def _extract_text_vlm(self, img_bytes: bytes) -> str:
         """Send slide image to VLM and extract all visible text."""

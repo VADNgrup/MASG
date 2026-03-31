@@ -1,12 +1,10 @@
-import llm_extension
-from langchain_openai import ChatOpenAI
+from src.utils.llm import chat
 from typing import Dict, Any, List, Optional
 import json
 import re
 from src.utils.parse_llm_response import parse_json_response
 from src.models.context import DocumentContext
 from src.models.slide import Slide, Table, SlideType
-from src.utils.config import config
 
 
 class PlanSpecerAgent:
@@ -19,8 +17,10 @@ class PlanSpecerAgent:
     MAX_FULL_TEXT_LENGTH = 10_000
 
     def __init__(self, model: str):
-        self.llm = ChatOpenAI(model=model, temperature=0.3, max_tokens=8000)
         self.model = model
+
+    def _chat(self, messages: list) -> str:
+        return chat(self.model, messages, temperature=0.3, max_tokens=8000)
 
     @staticmethod
     def outline_md_to_number(outline_md: str) -> str:
@@ -36,7 +36,7 @@ class PlanSpecerAgent:
             ### Survey Design       -> 2.1.1 Survey Design
         """
         lines = outline_md.splitlines()
-        counters: List[int] = []  # stack of counters per depth level
+        counters: List[int] = []
         result_lines: List[str] = []
 
         for line in lines:
@@ -48,21 +48,16 @@ class PlanSpecerAgent:
 
             hashes = match.group(1)
             title = match.group(2)
-            depth = len(hashes)  # 1 for #, 2 for ##, etc.
+            depth = len(hashes)
 
-            # Adjust counter stack to current depth
             if depth > len(counters):
-                # Going deeper – push new counter(s)
                 while len(counters) < depth:
                     counters.append(0)
             else:
-                # Same level or going up – trim deeper levels
                 counters = counters[:depth]
 
             counters[-1] += 1
-
             number_str = ".".join(str(c) for c in counters)
-            # Major heading (depth 1) gets a trailing dot: "1. Title"
             if depth == 1:
                 result_lines.append(f"{number_str}. {title}")
             else:
@@ -71,33 +66,19 @@ class PlanSpecerAgent:
         return "\n".join(result_lines)
 
     def _split_outline_by_major_headings(self, numbered_outline: str) -> List[str]:
-        """
-        Split a numbered outline into chunks, each starting with a major
-        heading (e.g. "1. Title", "2. Title") and including all sub-headings
-        (e.g. "1.1 Subtitle", "1.1.1 Sub-subtitle") until the next major heading.
-
-        Args:
-            numbered_outline: Outline already converted by outline_md_to_number.
-
-        Returns:
-            List of strings, each a major-section chunk.
-        """
         lines = numbered_outline.splitlines()
         chunks: List[str] = []
         current_chunk_lines: List[str] = []
 
         for line in lines:
             stripped = line.strip()
-            # Detect a major heading: starts with "<number>. " (no dots in the number part)
             if re.match(r'^\d+\.\s+', stripped):
-                # Save previous chunk if any
                 if current_chunk_lines:
                     chunks.append("\n".join(current_chunk_lines))
                 current_chunk_lines = [stripped]
             elif stripped:
                 current_chunk_lines.append(stripped)
 
-        # Don't forget the last chunk
         if current_chunk_lines:
             chunks.append("\n".join(current_chunk_lines))
 
@@ -105,9 +86,7 @@ class PlanSpecerAgent:
 
     def _truncate_full_text(self, context: DocumentContext) -> str:
         full_text = context.text_content.markdown
-        if len(full_text) > self.MAX_FULL_TEXT_LENGTH:
-            return full_text[: self.MAX_FULL_TEXT_LENGTH]
-        return full_text
+        return full_text[:self.MAX_FULL_TEXT_LENGTH] if len(full_text) > self.MAX_FULL_TEXT_LENGTH else full_text
 
     def _build_prompt(self, section_chunk: str, full_text: str, context: DocumentContext) -> str:
         schema_example = (
@@ -166,7 +145,7 @@ Each heading in the outline (including major `#` and sub `##` or sub of sub `###
     "slide_type": "have_table",
     "goal": "Goal A, Goal B",
     "table": {{
-        "table_markdown": "| Col1 | Col2 |\n|------|------|\n| Val1 | Val2 |",
+        "table_markdown": "| Col1 | Col2 |\\n|------|------|\\n| Val1 | Val2 |",
         "table_caption": "Caption A"
     }},
     "latex_block_formula": null
@@ -177,7 +156,7 @@ Each heading in the outline (including major `#` and sub `##` or sub of sub `###
     "slide_type": "have_formula",
     "goal": "Goal A, Goal B",
     "table": null
-    "latex_block_formula": "\\frac{{a}}{{b}}"
+    "latex_block_formula": "\\\\frac{{a}}{{b}}"
 }}
 ## Comparison:
 {{
@@ -200,20 +179,18 @@ Return ONLY a valid JSON array. Each element must follow this schema:
 [{schema_example}]
 """
 
-    def _parse_json_response(self, response_content: str) -> List[Dict]:
-        return parse_json_response(response_content, self.llm.invoke)
+    def _parse_json_response(self, content: str) -> List[Dict]:
+        invoke_fn = lambda msgs: type('R', (), {'content': self._chat(msgs)})()
+        return parse_json_response(content, invoke_fn)
 
     @staticmethod
     def _dict_to_slide(d: Dict[str, Any]) -> Slide:
-        """Convert a raw dict from LLM JSON to a Slide dataclass instance."""
-        # Parse slide_type enum
         slide_type_str = d.get("slide_type", "content")
         try:
             slide_type = SlideType(slide_type_str)
         except ValueError:
             slide_type = SlideType.CONTENT
 
-        # Parse table if present
         table_data = d.get("table")
         table = None
         if table_data and isinstance(table_data, dict):
@@ -230,19 +207,8 @@ Return ONLY a valid JSON array. Each element must follow this schema:
             latex_block_formula=d.get("latex_block_formula"),
         )
 
-
-
     def specify(self, outline_md: str, context: DocumentContext) -> List[Slide]:
-        """
-        Convert the outline into a flat list of Slide specs.
-
-        Args:
-            outline_md: Markdown outline string with # and ## headers.
-            context: DocumentContext containing source material.
-
-        Returns:
-            Flat list of Slide dataclass instances.
-        """
+        """Convert the outline into a flat list of Slide specs."""
         full_text = self._truncate_full_text(context)
         numbered_outline = self.outline_md_to_number(outline_md)
         chunks = self._split_outline_by_major_headings(numbered_outline)
@@ -252,14 +218,9 @@ Return ONLY a valid JSON array. Each element must follow this schema:
         for i, chunk in enumerate(chunks):
             print(f"Specifying section {i + 1}/{len(chunks)}...")
             prompt = self._build_prompt(chunk, full_text, context)
-
-            response = self.llm.invoke([
-                {"role": "user", "content": prompt}
-            ])
-
-            raw_specs = self._parse_json_response(response.content)
-            slides = [self._dict_to_slide(d) for d in raw_specs]
-            all_specs.extend(slides)
+            content = self._chat([{"role": "user", "content": prompt}])
+            raw_specs = self._parse_json_response(content)
+            all_specs.extend(self._dict_to_slide(d) for d in raw_specs)
 
         for idx, slide in enumerate(all_specs, start=1):
             slide.slide_number = idx

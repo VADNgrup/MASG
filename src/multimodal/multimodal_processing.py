@@ -6,21 +6,30 @@ from datetime import datetime
 
 from src.multimodal.graph import create_multimodal_workflow
 from src.utils.file_utils import save_json
+from src.utils.config import Config
 
 
-def _extract_lecture_id(lecture_path: Path, lecture_dict: dict) -> str:
-    return lecture_dict.get("lecture_id") or lecture_path.stem
 
-def multimodal_processing(lecture_path, output_path):
+def multimodal_processing(lecture_path, output_path = None):
+    print(f"\n{'='*60}")
+    print(f"Phase 3: Multimodal Processing")
+    print(f"{'='*60}\n")
     # Load lecture JSON to extract lecture_id
     with open(lecture_path, "r", encoding="utf-8") as f:
         lecture_dict = json.load(f)
 
-    lecture_id = _extract_lecture_id(lecture_path, lecture_dict)
+    lecture_id = lecture_dict.get("lecture_id")
+    multimodal_path = Path(Config.LECTURES_DIR / lecture_id / f"{lecture_id}_multimodal.json")
+    image_distribution_path = Path(Config.LECTURES_DIR / lecture_id / f"{lecture_id}_image_distribution.json")
+    table_distribution_path = Path(Config.LECTURES_DIR / lecture_id / f"{lecture_id}_table_distribution.json")
 
-    print(f"\n{'='*60}")
-    print(f"Phase 3: Multimodal Processing")
-    print(f"{'='*60}\n")
+    if Path(multimodal_path).exists() and Path(image_distribution_path).exists() and Path(table_distribution_path).exists():
+        print(f"Lecture has id {lecture_id}_multimodal already exists in lecture directory")
+        print(f"\n{'='*60}")
+        print(f"End Phase 3: Multimodal Processing")
+        print(f"\n{'='*60}")
+        return 
+
     print(f"Lecture ID : {lecture_id}")
     print(f"Lecture    : {lecture_path}")
     print(f"Slides     : {lecture_dict.get('metadata', {}).get('total_slides', 'N/A')}\n")
@@ -78,6 +87,8 @@ def multimodal_processing(lecture_path, output_path):
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     save_json(lecture_dict, output_path)
+    save_json(image_distributions, image_distribution_path)
+    save_json(table_distributions, table_distribution_path)
 
     print(f"\n{'='*60}")
     print(f"Multimodal Processing Completed")

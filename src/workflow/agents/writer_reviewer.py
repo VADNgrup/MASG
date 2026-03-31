@@ -1,5 +1,4 @@
-import llm_extension
-from langchain_openai import ChatOpenAI
+from src.utils.llm import chat, achat
 from typing import List, Dict, Any
 import json
 from src.models.context import DocumentContext
@@ -8,8 +7,7 @@ from src.models.feedback import Issue, CriterionResult, SlideReview, WriterRevie
 
 
 class ReviewerAgent:
-    def __init__(self, model):
-        self.llm = ChatOpenAI(model=model, temperature=0.2)
+    def __init__(self, model: str):
         self.model = model
 
     async def evaluate(
@@ -19,14 +17,12 @@ class ReviewerAgent:
         lecture_plan: Dict[str, Any],
     ) -> WriterReview:
 
-        # Each criterion evaluator returns a list of SlideReview (one per affected slide)
         faith_reviews  = await self._evaluate_faithfulness(slides, context)
         ped_reviews    = await self._evaluate_pedagogical_flow(slides, lecture_plan)
         cov_reviews    = await self._evaluate_coverage(slides, lecture_plan, context)
         viewer_reviews = await self._evaluate_viewer(slides, context)
         obs_reviews    = await self._evaluate_observer(slides, lecture_plan)
 
-        # Merge per-criterion SlideReviews into one SlideReview per slide index
         merged: Dict[int, SlideReview] = {}
         for idx, slide in enumerate(slides, 1):
             merged[idx] = SlideReview(
@@ -42,19 +38,17 @@ class ReviewerAgent:
             ("viewer",           viewer_reviews),
             ("observer",         obs_reviews),
         ]:
-            # Build a lookup: slide_index -> CriterionResult from this criterion's reviews
             for sr in reviews:
                 if sr.slide_index in merged:
                     merged[sr.slide_index].criteria[criterion_name] = sr.criteria.get(criterion_name, CriterionResult(criterion=criterion_name))
 
-            # Slides not mentioned by the reviewer passed that criterion cleanly
             for slide_idx in merged:
                 if criterion_name not in merged[slide_idx].criteria:
                     merged[slide_idx].criteria[criterion_name] = CriterionResult(criterion=criterion_name, issues=[])
 
         return WriterReview(slide_reviews=list(merged.values()))
 
-    # Faithfullness
+    # Faithfulness
     async def _evaluate_faithfulness(
         self,
         slides: List[SlideContent],
@@ -93,8 +87,8 @@ Return ONLY valid JSON:
 }}
 Use severity "critical" for factual errors, "minor" for style/phrasing issues."""
 
-        response = await self.llm.ainvoke(prompt)
-        return self._parse_slide_reviews("faithfulness", response.content, slides)
+        content = await achat(self.model, [{"role": "user", "content": prompt}], temperature=0.2)
+        return self._parse_slide_reviews("faithfulness", content, slides)
 
     # Pedagogical Flow
     async def _evaluate_pedagogical_flow(
@@ -139,10 +133,10 @@ Return ONLY valid JSON listing only slides WITH issues:
   ]
 }}"""
 
-        response = await self.llm.ainvoke(prompt)
-        return self._parse_slide_reviews("pedagogical_flow", response.content, slides)
+        content = await achat(self.model, [{"role": "user", "content": prompt}], temperature=0.2)
+        return self._parse_slide_reviews("pedagogical_flow", content, slides)
 
-    #Coverage
+    # Coverage
     async def _evaluate_coverage(
         self,
         slides: List[SlideContent],
@@ -187,8 +181,8 @@ Return ONLY valid JSON listing only slides WITH issues:
   ]
 }}"""
 
-        response = await self.llm.ainvoke(prompt)
-        return self._parse_slide_reviews("coverage", response.content, slides)
+        content = await achat(self.model, [{"role": "user", "content": prompt}], temperature=0.2)
+        return self._parse_slide_reviews("coverage", content, slides)
 
     # Viewer (Student)
     async def _evaluate_viewer(
@@ -232,8 +226,8 @@ Return ONLY valid JSON listing only slides WITH issues:
   ]
 }}"""
 
-        response = await self.llm.ainvoke(prompt)
-        return self._parse_slide_reviews("viewer", response.content, slides)
+        content = await achat(self.model, [{"role": "user", "content": prompt}], temperature=0.2)
+        return self._parse_slide_reviews("viewer", content, slides)
 
     # Observer (Presentation quality)
     async def _evaluate_observer(
@@ -278,8 +272,8 @@ Return ONLY valid JSON listing only slides WITH issues:
   ]
 }}"""
 
-        response = await self.llm.ainvoke(prompt)
-        return self._parse_slide_reviews("observer", response.content, slides)
+        content = await achat(self.model, [{"role": "user", "content": prompt}], temperature=0.2)
+        return self._parse_slide_reviews("observer", content, slides)
 
     def _parse_slide_reviews(
         self,
@@ -299,7 +293,7 @@ Return ONLY valid JSON listing only slides WITH issues:
             try:
                 data = json.loads(clean.strip())
             except Exception:
-                return []  
+                return []
 
         valid_indices = set(range(1, len(slides) + 1))
         result: List[SlideReview] = []

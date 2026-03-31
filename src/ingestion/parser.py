@@ -54,7 +54,6 @@ class DocumentParser:
             artifact_dict=create_model_dict(),
         )
 
-        print("🔍 Converting PDF with Ollama LLM...")
         self.pdf_path = pdf_path
         self.doc = fitz.open(self.pdf_path)
         rendered = converter(self.pdf_path)
@@ -86,7 +85,7 @@ class DocumentParser:
         for table_page in table_page_information:
             table_markdown = table_page['table']
             table_caption = table_page['caption']
-            should_visualize = self.table_filter.should_visualize_table(table_markdown)
+            should_visualize = self.table_filter.should_visualize_table(table_markdown, table_caption)
             table_id = f"table_{table_index+1:03d}"
             tables.append({
                 'table_id': table_id,

@@ -29,10 +29,13 @@ build/
 output/*
 
 
-api_dspy_key.ipynb
+api_dspy_test.ipynb
 api-test.py
 src/layout_generator/
 test
 ppt-agent-benchmark/
 slidegenbench-benchmark/
+
+src/generator/slidev/*.md
+src/generator/slidev/*.pdf
 

@@ -1,27 +1,22 @@
-import llm_extension
-from langchain_openai import ChatOpenAI
+from src.utils.llm import chat
 from typing import Dict, Any, List
-import json
 import re
 from src.models.context import DocumentContext
-from src.utils.config import config
+
 
 class PlannerAgent:
-    def __init__(self, model):
-        self.llm = ChatOpenAI(model=model, temperature=0.3)
+    def __init__(self, model: str):
         self.model = model
-    
+
     def _split_into_logical_sections(self, text: str) -> List[str]:
         sections = re.split(r'\n#\s+', text)
         return [s.strip() for s in sections if len(s.strip()) > 50]
-    
+
     def create_outline(self, context: DocumentContext, feedback: str = None) -> Dict[str, Any]:
         full_text = context.text_content.markdown
-        
         text_sections = self._split_into_logical_sections(full_text)
-        
         text_length = len(full_text)
-        
+
         if text_length < 3000:
             target_main_sections = "2"
             complexity_level = "concise"
@@ -33,7 +28,7 @@ class PlannerAgent:
             complexity_level = "comprehensive"
 
         tables_assets_info = f"# Avaliable Table \n {context.tables}\n # Avaliable Image \n {context.assets.images}"
-        
+
         feedback_block = ""
         if feedback:
             feedback_block = f"""
@@ -42,7 +37,7 @@ class PlannerAgent:
 
 Apply all the suggestions above when generating this revised outline.
 """
-        
+
         prompt = f"""
 # ROLE
 You are a senior lecture designer and slide-structure architect.
@@ -83,10 +78,14 @@ Generate a hierarchical outline with EXACTLY {target_main_sections} major sectio
 
 Output ONLY the markdown outline:
 """
-        response = self.llm.invoke(prompt)
-        outline_md = response.content if hasattr(response, 'content') else str(response)
-        
-        return {
-            "outline": outline_md
-        }
+        outline_md = chat(self.model, [{"role": "user", "content": prompt}], temperature=0.3)
+        return {"outline": outline_md}
 
+    def generate_title(self, outline_md: str) -> str:
+        """Generate a lecture title based on the outline."""
+        prompt = (
+            f"Based on the following lecture outline, generate a concise and descriptive lecture title (max 10 words, no quotes).\n\n"
+            f"Outline:\n{outline_md}\n\n"
+            f"Return ONLY the title, nothing else."
+        )
+        return chat(self.model, [{"role": "user", "content": prompt}], temperature=0.3).strip().strip('"').strip("'")

@@ -1,6 +1,4 @@
-import llm_extension
-
-from langchain_openai import ChatOpenAI
+from src.utils.llm import chat
 from typing import Dict, Optional, List
 import json
 import re
@@ -9,21 +7,19 @@ from dataclasses import asdict
 from collections import OrderedDict
 from src.models.context import DocumentContext
 from src.models.slide import SlideContent, Slide
-from src.utils.config import config
+
 
 class WriterAgent:
-    def __init__(self, model):
-        self.llm = ChatOpenAI(model=model, temperature=0.4, max_tokens=16000)
+    def __init__(self, model: str):
         self.model = model
-    
+
+    def _chat(self, messages: list, temperature: float = 0.4, max_tokens: int = None) -> str:
+        return chat(self.model, messages, temperature=temperature, max_tokens=max_tokens)
+
     def _extract_relevant_text(self, context: DocumentContext) -> str:
         full_text = context.text_content.markdown
-        
-        if len(full_text) <= 150000:
-            return full_text
-        else:
-            return full_text[:150000]
-    
+        return full_text if len(full_text) <= 150000 else full_text[:150000]
+
     def slide_type_example(self, slide_type: str) -> str:
         content = """
 {{
@@ -51,7 +47,7 @@ class WriterAgent:
             "comparison": comparison,
         }
         return mapping.get(slide_type, content)
-    
+
     def build_system_prompt(self, slide_type: str) -> str:
         example_slide = self.slide_type_example(slide_type)
         return f"""# ROLE 
@@ -96,36 +92,36 @@ Return ONLY valid JSON:
 """
 
     def draft_a_slide(
-        self, 
+        self,
         slide_spec: Slide,
         context: DocumentContext,
         parent_relevant_context: Optional[str] = None,
-        feedback: Optional[str] = None
+        feedback: Optional[str] = None,
     ) -> SlideContent:
         text_excerpt = self._extract_relevant_text(context)
-        
-        # Get slide_type as string
         slide_type_str = slide_spec.slide_type.value if hasattr(slide_spec.slide_type, 'value') else str(slide_spec.slide_type)
-        
         system_prompt = self.build_system_prompt(slide_type_str)
-        
-        # Serialize spec to JSON string for the prompt
+
         spec_dict = asdict(slide_spec)
         if hasattr(spec_dict.get("slide_type"), "value"):
             spec_dict["slide_type"] = spec_dict["slide_type"].value
         spec_json = json.dumps(spec_dict, ensure_ascii=False, indent=2)
-        
+
         user_prompt = f"""
 Full source material excerpt: {text_excerpt}
 Parent slide content: {parent_relevant_context}
 Some feedback for improvement: {feedback}
 Slide description: {spec_json}
 """
-        response = self.llm.invoke([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ])
-        data = self._parse_json_response(response.content)
+        content = self._chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+            max_tokens=16000,
+        )
+        data = self._parse_json_response(content)
         return SlideContent(slide=slide_spec, content=data.get('content', []))
 
     def draft_slide_from_outline(
@@ -135,13 +131,10 @@ Slide description: {spec_json}
         slide_specs: List[Slide],
         feedback: Optional[str] = None,
     ) -> List[SlideContent]:
-    
-        # Convert markdown outline to numbered markdown outline
         _, outline_numbered_md = self.outline_md_to_number(outline_md)
         slides_content = []
 
         for spec in slide_specs:
-            # Use spec's slide_title to find relevant context from outline
             section = self._find_section_by_title(spec.slide_title, outline_numbered_md)
             parent_relevant_context = self.get_relevant_context(section, outline_numbered_md, slides_content)
             slides_content.append(
@@ -167,78 +160,41 @@ Slide description: {spec_json}
         return slide_title
 
     def get_relevant_context(self, section_key: str, outline_numbered_md: str, slides_content: List[SlideContent]) -> str:
-        """
-        Extract section titles that appear before the given section_key,
-        stopping when reaching a level-1 section.
-        
-        Args:
-            section_key: The target section key (e.g., "1.1.2. subsubsection 2 name")
-            outline_numbered_md: Numbered markdown outline string (without '#' symbols)
-            slides_content: List of SlideContent objects created so far
-            
-        Returns:
-            String containing relevant section titles (NOT full content) for context
-            
-        Example:
-            If section_key = "1.1.2. subsubsection 2 name", returns:
-            "Previous sections: 1. Section 1 name, 1.1. subsection 1 name, 1.1.1. subsubsection 1 name"
-            
-            If section_key = "2. Section 2 name", returns: ""
-        """
         lines = [line.rstrip() for line in outline_numbered_md.splitlines() if line.strip()]
-        # Pattern to match numbered sections like "1. Title" or "1.1.2. Title"
         pattern = re.compile(r'^([\d.]+)\s+(.*)$')
-        
+
         all_sections = []
         current_level1 = None
         sections_after_level1 = []
-        
+
         for line in lines:
             match = pattern.match(line)
             if not match:
                 continue
-            
-            # Count dots to determine level: "1." = 1 dot = level 1, "1.1." = 2 dots = level 2
             numbering = match.group(1)
             level = numbering.count('.')
-            section_name = line.strip()  # Use the full line as section name
-            
-            # Check if this is our target section
+            section_name = line.strip()
+
             if section_name == section_key:
-                # Found the target, combine level-1 section with all sections after it
-                if current_level1:
-                    all_sections = [current_level1] + sections_after_level1
-                else:
-                    all_sections = sections_after_level1
+                all_sections = ([current_level1] + sections_after_level1) if current_level1 else sections_after_level1
                 break
-            
-            # Track sections
+
             if level == 1:
-                # New level-1 section found, reset tracking
                 current_level1 = section_name
                 sections_after_level1 = []
             else:
-                # This is a subsection, add it to the list
                 sections_after_level1.append(section_name)
-        
-        relevant_sections = all_sections
-        
-        if len(relevant_sections) == 0: 
+
+        if not all_sections:
             return ""
-        else:
-            # Return ONLY section titles, not full content
-            # This prevents LLM from copying parent slide content
-            return "Previous sections covered: " + ", ".join(relevant_sections)
-    
-    @classmethod    
+        return "Previous sections covered: " + ", ".join(all_sections)
+
+    @classmethod
     def outline_md_to_number(cls, outline_md: str) -> tuple[dict, str]:
         lines = [line.rstrip() for line in outline_md.splitlines() if line.strip()]
         pattern = re.compile(r'^(#+)\s+(.*)$')
 
-        # Stack holds tuples: (level, dict_ref, index_path)
-        # index_path = [1, 2, 1]  -> "1.2.1."
         stack = []
-
         root = OrderedDict()
         counters = []
         numbered_lines = []
@@ -251,7 +207,6 @@ Slide description: {spec_json}
             level = len(match.group(1))
             title = match.group(2).strip()
 
-            # Adjust counters depth
             while len(counters) < level:
                 counters.append(0)
             while len(counters) > level:
@@ -262,11 +217,8 @@ Slide description: {spec_json}
 
             number = ".".join(str(c) for c in counters) + "."
             key = f"{number} {title}"
-            
-            # Build numbered markdown line (without # prefix)
             numbered_lines.append(f"{number} {title}")
 
-            # Pop stack until parent level
             while stack and stack[-1][0] >= level:
                 stack.pop()
 
@@ -278,12 +230,11 @@ Slide description: {spec_json}
                 if parent_dict == -1:
                     parent_dict = OrderedDict()
                     stack[-1][1][stack[-1][2]] = parent_dict
-
                 parent_dict[key] = -1
                 stack.append((level, parent_dict, key))
-        
-        numbered_md = "\n".join(numbered_lines)
-        return root, numbered_md
 
-    def _parse_json_response(self, response_content: str) -> Dict:
-        return parse_json_response(response_content, self.llm.invoke, expect_list=False)
+        return root, "\n".join(numbered_lines)
+
+    def _parse_json_response(self, content: str) -> Dict:
+        invoke_fn = lambda msgs: type('R', (), {'content': self._chat(msgs)})()
+        return parse_json_response(content, invoke_fn, expect_list=False)

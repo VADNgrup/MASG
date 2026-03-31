@@ -5,16 +5,24 @@ from datetime import datetime
 from src.workflow.graph import create_workflow
 from src.utils.file_utils import load_json, save_json
 from src.models.context import DocumentContext
-from src.utils.config import config
+from src.utils.config import config, Config
 from dataclasses import asdict
+import os
 
 async def preprocess_context(context, output = None):
-    context_data = load_json(context)
-    context = DocumentContext(**context_data)
-    
     print(f"\n{'='*60}")
     print(f"Phase 2: Lecture Generation Workflow")
     print(f"{'='*60}\n")
+    context_data = load_json(context)
+    context = DocumentContext(**context_data)
+    lecture_path = Path(Config.LECTURES_DIR / f"{context.document_id}" / f"{context.document_id}.json")
+    if Path(lecture_path).exists():
+        print(f"Lecture has id {context.document_id} already exists in lecture directory")
+        print(f"\n{'='*60}")
+        print(f"End Phase 2: Generated Lecture")
+        print(f"\n{'='*60}")
+        return lecture_path
+
     print(f"Source: {context.source_file}")
     print(f"Pages: {context.text_content.page_count}")
     print(f"Images: {context.metadata.total_images}")
@@ -56,7 +64,7 @@ async def preprocess_context(context, output = None):
         quality_score = 0.0
 
     lecture_output = {
-        "lecture_id": f"lec_{context.document_id[:8]}",
+        "lecture_id": context.document_id,
         "metadata": {
             "source_document_id": context.document_id,
             "generated_at": datetime.now().isoformat(),
@@ -105,7 +113,7 @@ async def preprocess_context(context, output = None):
     print(f"\n{'='*60}")
     print(f"Lecture Generated Successfully")
     print(f"{'='*60}\n")
-    print(f"Output:                  {output_lecture_json}")
+    print(f"Output:                  {output_save_path}")
     print(f"Outline:                 {outline_path}")
     print(f"Plan Spec:               {specs_path}")
     print(f"Slides:                  {lecture_output['metadata']['total_slides']}")

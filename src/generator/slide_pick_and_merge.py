@@ -35,7 +35,7 @@ class SlidePickMerge:
 
         stem = self.lecture_json_path.stem  
         parent = self.lecture_json_path.parent
-        self.image_dist_path  = parent / f"{stem}_image_distributions.json"
+        self.image_dist_path  = parent / f"{stem}_image_distribution.json"
         self.table_dist_path  = parent / f"{stem}_table_distribution.json"
         self.outline_path     = parent / f"{stem}_outline.md"
 

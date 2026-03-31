@@ -5,10 +5,12 @@ from src.generator.slide_gen import run_pipeline as slide_gen
 from src.utils.config import Config
 
 import os
+import argparse
+import asyncio
 
 def gen_slide(document_path, lecture_title, speaker_information):
     parsed_context_path = extract_file(document_path)
-    lecture_path = preprocess_context(parsed_context_path)
+    lecture_path = asyncio.run(preprocess_context(parsed_context_path))
     multimodal_processing(lecture_path)
     slide_gen(lecture_path, lecture_title, speaker_information)
 

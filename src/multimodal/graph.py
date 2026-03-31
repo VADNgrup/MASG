@@ -31,7 +31,7 @@ def create_multimodal_workflow() -> StateGraph:
     def load_lecture_node(state: MultimodalState) -> Dict[str, Any]:
         """Load lecture JSON file into state"""
         lecture_id = state["lecture_id"]
-        lecture_path = Path(f"data/lectures/{lecture_id}.json")
+        lecture_path = Path(f"data/lectures/{lecture_id}/{lecture_id}.json")
         
         if not lecture_path.exists():
             raise FileNotFoundError(f"Lecture file not found: {lecture_path}")

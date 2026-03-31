@@ -6,7 +6,7 @@ import logging
 import os
 from pathlib import Path
 from tqdm import tqdm
-from src.utils.config import config
+from src.utils.config import config, Config
 from src.ingestion.parser import DocumentParser
 from src.ingestion.asset_manager import AssetManager
 from src.ingestion.vision_model import VisionCaptionGenerator
@@ -19,12 +19,18 @@ def extract_file(input_path):
     config.validate()
     processing_start = time.time()
     # Document ID = Document Name
-
     document_id = Path(input_path).stem
     print(f"\n{'='*60}")
     print(f"Phase 1: Document Extraction for {document_id}")
     print(f"{'='*60}\n")
-
+    parsed_context_path = Path(Config.CONTEXT_DIR / f"{document_id}.json")
+    if parsed_context_path.exists():
+        print(f"Document {document_id} already exists in raw directory")
+        print(f"\n{'='*60}")
+        print(f"End Phase 1: Document Extraction for {document_id}")
+        print(f"{'='*60}\n")
+        return parsed_context_path
+        
     print("[1/6] Marker Parsing...")
     doc_parser = DocumentParser(input_path) #Text Extraction
     parsed_content = doc_parser.parse_document(document_id)
