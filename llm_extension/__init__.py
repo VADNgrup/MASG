@@ -129,7 +129,7 @@ def apply_patches(verbose: bool = True):
 # Auto-apply patches when module is imported
 if __name__ != "__main__":
     logger.info("=" * 60)
-    logger.info("🔧 LLM Extension Initializing...")
+    logger.info("General LLM Wrapper Initializing")
     logger.info("=" * 60)
     apply_patches(verbose=llm_config.VERBOSE)
 

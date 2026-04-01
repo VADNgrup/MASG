@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import shutil
 import sys
 
+import fitz  # PyMuPDF
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -45,10 +47,10 @@ def run_pipeline(
     Full end-to-end pipeline:
       1. Build initial Slidev markdown from the lecture JSON.
       2. Evaluate and iteratively improve via VLM / LLM.
-      --lecture   PATH    (bắt buộc) Đường dẫn tới file JSON
-      --title     STR     Override tên bài giảng (mặc định: lấy từ JSON hoặc lecture_id)
-      --speaker   STR     Thông tin người thuyết trình
-      --max-iter  N       Số vòng cải thiện tối đa (mặc định: 3)
+      --lecture   PATH    Json lecture PATH
+      --title     STR     Override lecture title (default: from JSON or lecture_id)
+      --speaker   STR     Speaker information
+      --max-iter  N       Max iteration number (default: 3)
       --log-level LEVEL   DEBUG / INFO / WARNING / ERROR
 
     """
@@ -67,37 +69,104 @@ def run_pipeline(
     print(f"[slide_gen] Title    : {title}")
     print(f"[slide_gen] Speaker  : {speaker_information or '(not set)'}")
 
-    print("[slide_gen] === Step 1: Building slide layout ===")
-    if not title:
-        title = json.load(json_path)["lecture_title"]
-    picker = SlidePickMerge(
-        lecture_json_path=str(json_path),
-        lecture_title=title,
-        speaker_information=speaker_information,
-    )
-    picker.build()
-    selected_theme = picker.theme
-    selected_font = picker.font
-
     slidev_dir = _PROJECT_ROOT / "src" / "generator" / "slidev"
-
-    print("[slide_gen] === Step 2: Evaluating and improving slides ===")
-
+    pdf_path = slidev_dir / f"{lecture_id}-export.pdf"
     md_path = slidev_dir / f"{lecture_id}.md"
-    improver = SlideImproving(
-        md_path=str(md_path),
-        lecture_json_path=str(json_path),
-        lecture_title=title,
-        speaker_information=speaker_information,
-        max_iterations=max_iterations,
-        theme=selected_theme,
-        font=selected_font,
-    )
-    improver.run()
 
-    print(f"\n{'='*60}")
-    print(f"End Phase 4: Generated Slide in {md_path}")
-    print(f"{'='*60}\n")
+    if pdf_path.exists():
+        print(f"[slide_gen] PDF already exists, skipping build & improve: {pdf_path}")
+        print(f"\n{'='*60}")
+        print(f"End Phase 4: Generated Slide in {md_path}")
+        print(f"{'='*60}\n")
+    else:
+        print("[slide_gen] === Step 1: Building slide layout ===")
+        if not title:
+            title = json.load(json_path)["lecture_title"]
+        picker = SlidePickMerge(
+            lecture_json_path=str(json_path),
+            lecture_title=title,
+            speaker_information=speaker_information,
+        )
+        picker.build()
+        selected_theme = picker.theme
+        selected_font = picker.font
+
+        print("[slide_gen] === Step 2: Evaluating and improving slides ===")
+
+        improver = SlideImproving(
+            md_path=str(md_path),
+            lecture_json_path=str(json_path),
+            lecture_title=title,
+            speaker_information=speaker_information,
+            max_iterations=max_iterations,
+            theme=selected_theme,
+            font=selected_font,
+        )
+        improver.run()
+
+        print(f"\n{'='*60}")
+        print(f"End Phase 4: Generated Slide in {md_path}")
+        print(f"{'='*60}\n")
+
+    # Package output: PDF + JSON + slide images
+    _package_output(
+        lecture_id=lecture_id,
+        slidev_dir=slidev_dir,
+        lecture_json_path=json_path,
+    )
+
+
+def _package_output(
+    lecture_id: str,
+    slidev_dir: Path,
+    lecture_json_path: Path,
+) -> None:
+    """
+    After the final PDF export:
+      1. Create  output/{lecture_id}/{model_name}/
+      2. Move/copy  {lecture_id}-export.pdf  and  {lecture_id}.json  there.
+      3. Create  output/{lecture_id}/{model_name}/slide_images/
+         and render every PDF page to  slide_0001.jpg, slide_0002.jpg, …
+    If the destination directory already exists:
+      - clear slide_images/ only
+      - overwrite the PDF and JSON files
+    """
+    from src.utils.config import Config
+
+    model_name = (Config.LLM_MODEL_NAME or "unknown_model").replace("/", "_")
+
+    out_dir = _PROJECT_ROOT / "output" / lecture_id / model_name
+    images_dir = out_dir / "slide_images"
+
+    # prepare directories
+    if images_dir.exists():
+        shutil.rmtree(images_dir)
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    # copy PDF
+    pdf_src = slidev_dir / f"{lecture_id}-export.pdf"
+    if not pdf_src.exists():
+        raise FileNotFoundError(f"[package_output] PDF not found: {pdf_src}")
+    pdf_dst = out_dir / f"{lecture_id}-export.pdf"
+    shutil.copy2(pdf_src, pdf_dst)
+    print(f"[package_output] PDF copied → {pdf_dst}")
+
+    # copy JSON
+    json_dst = out_dir / lecture_json_path.name
+    shutil.copy2(lecture_json_path, json_dst)
+    print(f"[package_output] JSON copied → {json_dst}")
+
+    # render PDF pages to JPEG images
+    doc = fitz.open(str(pdf_dst))
+    page_count = len(doc)
+    for page_num in range(page_count):
+        page = doc[page_num]
+        mat = fitz.Matrix(2, 2)  # 2× scale for quality
+        pix = page.get_pixmap(matrix=mat)
+        img_name = f"slide_{page_num + 1:04d}.jpg"
+        pix.save(str(images_dir / img_name))
+    doc.close()
+    print(f"[package_output] {page_count} slide image(s) saved → {images_dir}")
 
 
 def _build_parser() -> argparse.ArgumentParser:
