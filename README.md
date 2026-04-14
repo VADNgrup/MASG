@@ -6,6 +6,10 @@ This repository contains ideas and an experimental pipeline for **automatic lect
 Follow the steps below to generate lectures and slides:
 
 ```bash
+# Myenv Activate
+cd D:\python
+.\myenv\Scripts\activate
+cd .\LecSlideGen
 # Convert all documents in data/raw to slides (speaker information is Optional)
 python -m main --speaker_information "Your Information"
 
@@ -23,8 +27,8 @@ python -m src.multimodal.multimodal_processing --lecture data/lectures/{file_nam
 python -m src.generator.slide_gen --lecture data/lectures/{file_name}.json --title "{Your customized Title}" --speaker "{Your Information}"
 
 # PPT Eval Benchmark
-python ppt-agent-benchmark/PPTAgent/run.py ppt-agent-benchmark/PPTAgent/slide-benchmark
-
+python -m src.evaluation.eval --model Qwen_Qwen3.5-9B
+python -m src.evaluation.eval --model gpt-4.1-mini
 ```
 
 ## Pipeline Overview

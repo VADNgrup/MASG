@@ -1,6 +1,5 @@
 import argparse
 import json
-import shutil
 from pathlib import Path
 from datetime import datetime
 
@@ -14,7 +13,6 @@ def multimodal_processing(lecture_path, output_path = None):
     print(f"\n{'='*60}")
     print(f"Phase 3: Multimodal Processing")
     print(f"{'='*60}\n")
-    # Load lecture JSON to extract lecture_id
     with open(lecture_path, "r", encoding="utf-8") as f:
         lecture_dict = json.load(f)
 
@@ -49,7 +47,6 @@ def multimodal_processing(lecture_path, output_path = None):
     image_distributions  = result.get("image_distributions", [])
     table_distributions  = result.get("table_distributions", [])
 
-    # Build lookup: slide_number → assets
     image_by_slide: dict = {}
     for dist in image_distributions:
         sn = dist.get("slide_number")
@@ -70,7 +67,6 @@ def multimodal_processing(lecture_path, output_path = None):
         if sn in table_by_slide:
             slide["table"] = table_by_slide[sn]
 
-    # Add multimodal metadata
     lecture_dict["multimodal"] = {
         "processed_at": datetime.now().isoformat(),
         "total_image_distributions": len(image_distributions),
@@ -81,7 +77,6 @@ def multimodal_processing(lecture_path, output_path = None):
         },
     }
 
-    # Determine output path
     if not output_path:
         output_path = lecture_path.parent / f"{lecture_id}_multimodal.json"
 
@@ -101,7 +96,6 @@ def multimodal_processing(lecture_path, output_path = None):
     print(f"\n{'='*60}")
     print(f"End Phase 3: Multimodal Processing")
     print(f"{'='*60}\n")
-
 
 def main():
     parser = argparse.ArgumentParser(

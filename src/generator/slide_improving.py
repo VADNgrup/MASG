@@ -1,14 +1,16 @@
-import re
-from src.utils.parse_llm_response import clear_think
+import os
 import sys
 import json
-import base64
 import logging
 import subprocess
 from pathlib import Path
 
 import fitz  # PyMuPDF
-from openai import OpenAI
+import numpy as np
+from PIL import Image
+from sklearn.cluster import KMeans
+
+from src.utils.config import Config
 from src.utils.fuzzy_distance import fuzzy_distance
 
 logger = logging.getLogger(__name__)
@@ -17,42 +19,33 @@ _PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-_TEXT_EXTRACT_PROMPT = """\
-Bạn là một OCR chuyên nghiệp. Hãy trích xuất TOÀN BỘ văn bản hiển thị trên slide này.
-Trả về plaintext, mỗi dòng tương ứng với một dòng trên slide.
-Không thêm giải thích, không thêm markdown formatting.
-"""
-
-_EMPTY_SPACE_PROMPT = """\
-Bạn là một designer chuyên nghiệp. Hãy đánh giá diện tích trống trên slide này.
-Chỉ trả về JSON đúng định dạng sau (không thêm bất cứ thứ gì khác):
-{
-  "issue": "<LARGE_EMPTY_SPACE hoặc MEDIUM_EMPTY_SPACE hoặc OK>"
-}
-Tiêu chí:
-- LARGE_EMPTY_SPACE: slide có quá nhiều diện tích trống, ảnh quá nhỏ so với không gian slide, hoặc chữ quá ít.
-- MEDIUM_EMPTY_SPACE: slide có một phần diện tích trống đáng kể nhưng không quá nghiêm trọng.
-- OK: slide sử dụng không gian hợp lý, cân đối giữa nội dung và khoảng trống.
-"""
-
-TWO_IMAGE_MAX_LEFT_RIGHT_WIDTH = 20
-TWO_IMAGE_MIN_LEFT_RIGHT_WIDTH = 25
-ONE_IMAGE_MAX_LEFT_RIGHT_WIDTH = 45
-ONE_IMAGE_MIN_LEFT_RIGHT_WIDTH = 30
-TWO_IMAGE_MAX_ABOVE_BELOW_WIDTH = 70
-TWO_IMAGE_MIN_ABOVE_BELOW_WIDTH = 50
-ONE_IMAGE_MAX_ABOVE_BELOW_WIDTH = 70
-ONE_IMAGE_MIN_ABOVE_BELOW_WIDTH = 50
 
 
 class SlideImproving:
+    """
+    Per-slide image_width optimizer.
+
+    For every slide that has an image the optimizer searches for the
+    value of ``w`` (image_width in %) that simultaneously satisfies:
+
+        f(w) = 1 - fuzzy_score(w) / 100  →  minimise (text must fit)
+        g(w) = bg_pixels(w) / total_pixels →  minimise (reduce empty space)
+
+    with the hard constraint  f(w) == 0  (all expected text is readable).
+
+    No VLM is used anywhere in this class:
+    - text is extracted with PyMuPDF
+    - background colour is detected once via KMeans on the last slide
+    """
+
+    SLIDE_IMPROVING_MAX_ITERATION = Config.SLIDE_IMPROVING_MAX_ITERATION   # max gradient steps per slide
+
     def __init__(
         self,
         md_path: str,
         lecture_json_path: str,
         lecture_title: str = "",
         speaker_information: str = "",
-        max_iterations: int = 3,
         theme: str = "frankfurt",
         font: str = "STIX Two Text",
     ):
@@ -73,174 +66,297 @@ class SlideImproving:
 
         self.slidev_dir = self.md_path.parent
         self.lecture_id = self.md_path.stem
-        self.max_iterations = max_iterations
         self.theme = theme
         self.font = font
 
-        # Layout distribution path (same dir as lecture JSON)
         _lec_json = Path(lecture_json_path).resolve()
         self.layout_dist_path = _lec_json.parent / f"{self.lecture_id}_layout_distribution.json"
 
-        # For replaying layouts
         self.lecture_title = lecture_title
         self.speaker_information = speaker_information
 
-        # VLM client
-        from src.utils.config import Config
-        self._vlm_client = OpenAI(
-            api_key=Config.VLM_API_KEY,
-            base_url=Config.VLM_BASE_URL,
-        )
-        self._vlm_model = Config.VLM_MODEL_NAME
+        # Step size for w adjustments (from config)
+        self._step = float(Config.SLIDE_IMAGE_WIDTH_STEP)
+
+        # Cached global values (computed once across all slides)
+        self._bg_color: np.ndarray | None = None      # dominant background RGB
 
     def run(self) -> None:
         logger.info(f"[SlideImproving] Starting for lecture '{self.lecture_id}'")
 
-        for iteration in range(1, self.max_iterations + 1):
-            logger.info(f"[SlideImproving] === Iteration {iteration}/{self.max_iterations} ===")
+        entries = self._read_layout_dist()
 
-            # 1. Export PDF
-            self._export_pdf()
+        # Find all slides that carry an image_width parameter
+        image_slides = [e for e in entries if "image_width" in e.get("args", {})]
 
-            # 2. PDF → images
-            images = self._pdf_to_images()
-            if not images:
-                logger.warning("[SlideImproving] No images extracted from PDF. Stopping.")
-                break
+        if not image_slides:
+            logger.info("[SlideImproving] No image slides found — nothing to optimise.")
+        else:
+            # ── Initialise shared constants from the LAST image slide ──────
+            last_entry = image_slides[-1]
+            self._init_global_constants(last_entry)
 
-            # 3. Read layout distribution
-            entries = self._read_layout_dist()
+            # ── Optimise each image slide independently ────────────────────
+            for entry in image_slides:
+                slide_num = entry["slide_num"]
+                logger.info(f"[SlideImproving] Optimising slide {slide_num} …")
+                new_entry = self._optimise_slide(entry, entries)
+                # Replace entry in-place
+                idx = next(i for i, e in enumerate(entries) if e["slide_num"] == slide_num)
+                entries[idx] = new_entry
 
-            # 4. Evaluate and adjust
-            updated_entries, changed = self._evaluate_and_adjust(entries, images)
+            # Write updated layout distribution
+            self._write_layout_dist(entries)
 
-            # 5. Write updated layout distribution
-            self._write_layout_dist(updated_entries)
+            # Regenerate the full .md from updated entries
+            self._replay_layouts(entries)
 
-            # 6. Replay layouts → regenerate .md
-            self._replay_layouts(updated_entries)
-
-            if not changed:
-                logger.info("[SlideImproving] No changes needed. Done.")
-                break
-
-        # Final export
-        self._export_pdf()
+        # Final full export
+        self._export_pdf_full()
         logger.info("[SlideImproving] Finished.")
 
-    def _evaluate_and_adjust(
-        self, entries: list[dict], images: list[bytes]
-    ) -> tuple[list[dict], bool]:
-        """Evaluate each slide and adjust image_width if needed."""
-        updated: list[dict] = []
-        changed = False
+    def _init_global_constants(self, reference_entry: dict) -> None:
+        """
+        Export the reference (last image) slide, then:
+          1. Measure slide dimensions → self._slide_total_pixels
+          2. Detect dominant background colour via KMeans → self._bg_color
+        """
+        slide_num = reference_entry["slide_num"]
+        logger.info(
+            f"[SlideImproving] Initialising global constants from slide {slide_num} …"
+        )
+        self._export_pdf_single(slide_num)
+        pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
 
-        for entry in entries:
-            args = entry.get("args", {})
-            slide_num = entry["slide_num"]
-            # Skip slides without image_width
-            if "image_width" not in args:
-                updated.append(entry)
-                continue
-            two_image = "two_image" in entry.get("layout_function_name", "")
-            layout_name = entry.get("layout_function_name", "")
-            above_below = "above" in layout_name or "below" in layout_name
-            image_width = float(args.get("image_width").replace("%", ""))
+        doc = fitz.open(str(pdf_path))
+        page = doc[0]
+        mat = fitz.Matrix(2, 2)
+        pix = page.get_pixmap(matrix=mat)
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        doc.close()
 
-            # Determine min/max bounds based on layout type (4-way)
-            if two_image and above_below:
-                _max_w = TWO_IMAGE_MAX_ABOVE_BELOW_WIDTH
-                _min_w = TWO_IMAGE_MIN_ABOVE_BELOW_WIDTH
-            elif two_image:
-                _max_w = TWO_IMAGE_MAX_LEFT_RIGHT_WIDTH
-                _min_w = TWO_IMAGE_MIN_LEFT_RIGHT_WIDTH
-            elif above_below:
-                _max_w = ONE_IMAGE_MAX_ABOVE_BELOW_WIDTH
-                _min_w = ONE_IMAGE_MIN_ABOVE_BELOW_WIDTH
-            else:
-                _max_w = ONE_IMAGE_MAX_LEFT_RIGHT_WIDTH
-                _min_w = ONE_IMAGE_MIN_LEFT_RIGHT_WIDTH
+        arr = np.array(img)
+        H, W = arr.shape[:2]
 
-            # Get corresponding slide image (slide_num is 1-indexed)
-            img_idx = slide_num - 1
-            if img_idx < 0 or img_idx >= len(images):
-                logger.warning(
-                    f"[SlideImproving] Slide {slide_num}: "
-                    f"no image at index {img_idx} (total={len(images)}). Skipping."
-                )
-                updated.append(entry)
-                continue
+        # KMeans on a random sample of pixels (fast, one-off)
+        pixels = arr.reshape(-1, 3).astype(float)
+        sample_idx = np.random.choice(len(pixels), min(5000, len(pixels)), replace=False)
+        sample = pixels[sample_idx]
+        km = KMeans(n_clusters=3, n_init=3, random_state=42)
+        km.fit(sample)
+        labels, counts = np.unique(km.labels_, return_counts=True)
+        bg_label = labels[np.argmax(counts)]
+        self._bg_color = km.cluster_centers_[bg_label]
 
-            img_bytes = images[img_idx]
-            current_width = args["image_width"]
-            delta = 0
+        logger.info(
+            f"[SlideImproving] slide size={W}×{H} px  "
+            f"bg_color=({self._bg_color[0]:.0f},{self._bg_color[1]:.0f},{self._bg_color[2]:.0f})"
+        )
 
-            expected = self._get_expected_content(args)
-            extracted = self._extract_text_vlm(img_bytes)
-            score = fuzzy_distance(expected, extracted)
+    def _optimise_slide(self, entry: dict, all_entries: list[dict]) -> dict:
+        """
+        Two-phase optimization for a single slide's image_width (w):
+
+        Phase 1 — Satisfy the hard constraint f(w) = 0:
+            If f > 0 (text is being clipped), shrink w by _step repeatedly
+            until f reaches 0 or the lower bound (w>0) is hit.
+
+        Phase 2 — Minimize empty space g(w):
+            Starting from the w found in Phase 1 (where f=0), grow w by
+            _step repeatedly. Accept only when f stays 0 AND g improves.
+            Stop as soon as either condition fails.
+
+        Both phases share the iteration budget SLIDE_IMPROVING_MAX_ITERATION.
+        """
+        args = entry["args"]
+        slide_num = entry["slide_num"]
+
+        w = float(args["image_width"].replace("%", ""))
+        expected = self._get_expected_content(args)
+
+        f_cur, g_cur = self._evaluate(entry, all_entries, slide_num, w, expected)
+        logger.info(
+            f"[SlideImproving] Slide {slide_num}: initial w={w:g}%  "
+            f"f={f_cur:.4f}  g={g_cur:.4f}"
+        )
+
+        # ── Phase 1: shrink w until f == 0 ───────────────────────────────
+        if f_cur > 0:
             logger.info(
-                f"[SlideImproving] Slide {slide_num}: "
-                f"fuzzy_score={score:.1f} (expected_len={len(expected)}, "
-                f"extracted_len={len(extracted)})"
+                f"[SlideImproving] Slide {slide_num}: Phase 1 — shrinking to fit text "
+                f"(f={f_cur:.4f})"
+            )
+            for it in range(1, self.SLIDE_IMPROVING_MAX_ITERATION + 1):
+                cand_w = w - self._step
+                if cand_w <= 0:
+                    logger.info(
+                        f"[SlideImproving] Slide {slide_num}: Phase 1 iter {it} — "
+                        f"hit lower bound, stopping."
+                    )
+                    break
+
+                c_f, c_g = self._evaluate(entry, all_entries, slide_num, cand_w, expected)
+                logger.info(
+                    f"[SlideImproving] Slide {slide_num}: Phase 1 iter {it}  "
+                    f"w={w:g}% -> {cand_w:g}%  f={c_f:.4f}  g={c_g:.4f}"
+                )
+                w, f_cur, g_cur = cand_w, c_f, c_g
+
+                if f_cur == 0.0:
+                    logger.info(
+                        f"[SlideImproving] Slide {slide_num}: Phase 1 — "
+                        f"f=0 reached at w={w:g}%"
+                    )
+                    break
+
+            if f_cur > 0:
+                logger.info(
+                    f"[SlideImproving] Slide {slide_num}: Phase 1 — "
+                    f"could not reach f=0, keeping w={w:g}% (f={f_cur:.4f})"
+                )
+                new_args = {**args, "image_width": f"{w:g}%"}
+                return {**entry, "args": new_args}
+
+        # ── Phase 2: grow w to minimize g while f stays 0 ────────────────
+        # Second-min safety margin: only step back to prev_w when the loop
+        # stopped because f > 0 at the candidate (text was visually clipped).
+        # In all other cases (g plateau, upper bound, exhausted iterations),
+        # the accepted w already has the minimum g and is safe — use it directly.
+        logger.info(
+            f"[SlideImproving] Slide {slide_num}: Phase 2 — growing to fill space "
+            f"(g={g_cur:.4f})"
+        )
+        prev_w, prev_f, prev_g = w, f_cur, g_cur   # fallback if f is violated
+        stop_reason = "none"
+
+        for it in range(1, self.SLIDE_IMPROVING_MAX_ITERATION + 1):
+            cand_w = w + self._step
+            if cand_w >= 100:
+                logger.info(
+                    f"[SlideImproving] Slide {slide_num}: Phase 2 iter {it} — "
+                    f"hit upper bound, stopping."
+                )
+                stop_reason = "upper_bound"
+                break
+
+            c_f, c_g = self._evaluate(entry, all_entries, slide_num, cand_w, expected)
+            logger.info(
+                f"[SlideImproving] Slide {slide_num}: Phase 2 iter {it}  "
+                f"w={w:g}% -> {cand_w:g}%  f={c_f:.4f}  g={c_g:.4f}"
             )
 
-            # Shrink deltas differ by layout type
-            if two_image and not above_below:
-                shrink_large, shrink_small = 2.5, 1.25
-            else:
-                shrink_large, shrink_small = 10, 5
-
-            if score < 90:
-                if image_width - shrink_large >= _min_w:
-                    delta -= shrink_large
-                else:
-                    image_width = _min_w
-            elif score < 95:
-                if image_width - shrink_small >= _min_w:
-                    delta -= shrink_small
-                else:
-                    image_width = _min_w
-
-            if score >= 98:
-                issue = self._evaluate_empty_space(img_bytes)
+            if c_f > 0:
                 logger.info(
-                    f"[SlideImproving] Slide {slide_num}: empty_space={issue}"
+                    f"[SlideImproving] Slide {slide_num}: Phase 2 iter {it} — "
+                    f"f became {c_f:.4f} > 0, stopping."
                 )
+                stop_reason = "f_violated"
+                break
 
-                # Grow deltas differ by layout type
-                if two_image and not above_below:
-                    grow_large, grow_small = 1.25, 0.625
-                else:
-                    grow_large, grow_small = 10, 5
-
-                if issue == "LARGE_EMPTY_SPACE":
-                    if image_width + grow_large <= _max_w:
-                        delta += grow_large
-                    else:
-                        image_width = _max_w
-                elif issue == "MEDIUM_EMPTY_SPACE":
-                    if image_width + grow_small <= _max_w:
-                        delta += grow_small
-                    else:
-                        image_width = _max_w
-
-            if delta != 0:
-                new_width = self._adjust_image_width(current_width, delta)
-                entry = {**entry, "args": {**args, "image_width": new_width}}
-                changed = True
+            if c_g >= g_cur:
                 logger.info(
-                    f"[SlideImproving] Slide {slide_num}: "
-                    f"{current_width} → {new_width} (delta={delta:+g}%)"
+                    f"[SlideImproving] Slide {slide_num}: Phase 2 iter {it} — "
+                    f"g did not improve ({c_g:.4f} >= {g_cur:.4f}), stopping."
                 )
+                stop_reason = "g_plateau"
+                break
 
-            updated.append(entry)
+            # Accept step: save current as second-minimum before advancing
+            prev_w, prev_f, prev_g = w, f_cur, g_cur
+            w, f_cur, g_cur = cand_w, c_f, c_g
 
-        return updated, changed
+        # Only apply second-min (step back) when f was violated at the candidate.
+        # prev_w < w in that case → safe margin without wasting space.
+        # In all other cases, w already has the best (minimum) g — use it.
+        if stop_reason == "f_violated" and prev_w < w:
+            logger.info(
+                f"[SlideImproving] Slide {slide_num}: f violated at w={w:g}% — "
+                f"stepping back to second-min w={prev_w:g}% (g={prev_g:.4f}) for safety"
+            )
+            final_w = prev_w
+        else:
+            logger.info(
+                f"[SlideImproving] Slide {slide_num}: stop_reason='{stop_reason}' — "
+                f"using best w={w:g}% (g={g_cur:.4f})"
+            )
+            final_w = w
+
+        new_args = {**args, "image_width": f"{final_w:g}%"}
+        return {**entry, "args": new_args}
+
+    def _evaluate(
+        self,
+        entry: dict,
+        all_entries: list[dict],
+        slide_num: int,
+        w: float,
+        expected: str,
+    ) -> tuple[float, float]:
+        """
+        Render the slide with image_width=w%, then compute f(w) and g(w).
+
+        Returns:
+            (f, g)  both in [0, 1]
+        """
+        # Temporarily set w in the entry and regenerate .md
+        tmp_args = {**entry["args"], "image_width": f"{w:g}%"}
+        tmp_entry = {**entry, "args": tmp_args}
+        tmp_entries = [tmp_entry if e["slide_num"] == slide_num else e for e in all_entries]
+        self._replay_layouts(tmp_entries)
+
+        # Export only this slide (overwrites {lecture_id}-export.pdf)
+        self._export_pdf_single(slide_num)
+
+        # Extract text with PyMuPDF
+        extracted = self._extract_text_pymupdf()
+        fuzzy_score = fuzzy_distance(expected, extracted)
+        f = 1.0 - fuzzy_score / 100.0
+
+        # Compute g: fraction of bg-coloured pixels in the rendered slide
+        g = self._compute_bg_ratio()
+
+        return f, g
+
+    def _extract_text_pymupdf(self) -> str:
+        """Extract all visible text from the single-page exported PDF using PyMuPDF."""
+        pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
+        try:
+            doc = fitz.open(str(pdf_path))
+            text = doc[0].get_text("text")
+            doc.close()
+            return text.strip()
+        except Exception as e:
+            logger.error(f"[SlideImproving] PyMuPDF text extraction failed: {e}")
+            return ""
+
+    def _compute_bg_ratio(self) -> float:
+        """
+        Fraction of pixels whose RGB distance to self._bg_color is < 25.
+        Returns a value in [0, 1].
+        """
+        pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
+        try:
+            doc = fitz.open(str(pdf_path))
+            page = doc[0]
+            mat = fitz.Matrix(2, 2)
+            pix = page.get_pixmap(matrix=mat)
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            doc.close()
+        except Exception as e:
+            logger.error(f"[SlideImproving] PDF→image failed for bg_ratio: {e}")
+            return 0.0
+
+        arr = np.array(img).astype(float)
+        dist = np.linalg.norm(arr - self._bg_color, axis=2)
+        bg_mask = dist < 25          # pixel is "background"
+        ratio = float(np.mean(bg_mask))
+        return ratio
+
+
 
     @staticmethod
     def _get_expected_content(args: dict) -> str:
         parts: list[str] = []
-
         for key in ("title", "sub_title_1", "sub_title_2"):
             if key in args and args[key]:
                 parts.append(str(args[key]))
@@ -259,107 +375,11 @@ class SlideImproving:
             parts.append(str(args["caption2"]))
         return " ".join(parts)
 
-    @staticmethod
-    def _adjust_image_width(current: str, delta: float) -> str:
-        """Adjust percentage width by delta. Clamp to [10%, 90%]."""
-        val = float(current.replace("%", ""))
-        val = max(10.0, min(90.0, val + delta))
-        return f"{val:g}%"
-
-    def _extract_text_vlm(self, img_bytes: bytes) -> str:
-        """Send slide image to VLM and extract all visible text."""
-        b64 = base64.b64encode(img_bytes).decode("utf-8")
-        try:
-            response = self._vlm_client.chat.completions.create(
-                model=self._vlm_model,
-                messages=[
-                    {"role": "system", "content": _TEXT_EXTRACT_PROMPT},
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Trích xuất toàn bộ text trên slide này.",
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{b64}",
-                                },
-                            },
-                        ],
-                    },
-                ],
-                temperature=0.1,
-            )
-            raw = clear_think(response.choices[0].message.content)
-            return raw
-        except Exception as e:
-            logger.error(f"[SlideImproving] Text extraction failed: {e}")
-            return ""
-
-    def _evaluate_empty_space(self, img_bytes: bytes) -> str:
-        """Send slide image to VLM and evaluate empty space."""
-        b64 = base64.b64encode(img_bytes).decode("utf-8")
-        try:
-            response = self._vlm_client.chat.completions.create(
-                model=self._vlm_model,
-                messages=[
-                    {"role": "system", "content": _EMPTY_SPACE_PROMPT},
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Đánh giá diện tích trống trên slide này.",
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{b64}",
-                                },
-                            },
-                        ],
-                    },
-                ],
-                temperature=0.1,
-            )
-            raw = clear_think(response.choices[0].message.content)
-            return self._parse_issue_json(raw)
-        except Exception as e:
-            logger.error(f"[SlideImproving] Empty space eval failed: {e}")
-            return "OK"
-
-    @staticmethod
-    def _parse_issue_json(raw: str) -> str:
-        """Parse {"issue": "..."} from VLM response."""
-        # Strip markdown fences
-        if raw.startswith("```"):
-            raw = "\n".join(raw.split("\n")[1:]).rstrip("`").strip()
-        try:
-            return json.loads(raw).get("issue", "OK")
-        except json.JSONDecodeError:
-            pass
-        match = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group()).get("issue", "OK")
-            except json.JSONDecodeError:
-                pass
-        # Fallback: keyword search
-        if "LARGE_EMPTY_SPACE" in raw:
-            return "LARGE_EMPTY_SPACE"
-        if "MEDIUM_EMPTY_SPACE" in raw:
-            return "MEDIUM_EMPTY_SPACE"
-        return "OK"
-
     def _read_layout_dist(self) -> list[dict]:
-        """Read layout distribution JSON."""
         with open(self.layout_dist_path, encoding="utf-8") as f:
             return json.load(f)
 
     def _write_layout_dist(self, entries: list[dict]) -> None:
-        """Write updated layout distribution JSON."""
         with open(self.layout_dist_path, "w", encoding="utf-8") as f:
             json.dump(entries, f, ensure_ascii=False, indent=2)
 
@@ -374,7 +394,6 @@ class SlideImproving:
             title=self.lecture_title,
             author=self.speaker_information,
         )
-
         doc = ""
         for entry in entries:
             func_name = entry["layout_function_name"]
@@ -383,12 +402,20 @@ class SlideImproving:
             doc += func(**args)
 
         self.md_path.write_text(doc, encoding="utf-8")
-        logger.info(f"[SlideImproving] Markdown replayed → {self.md_path}")
 
-    def _export_pdf(self) -> None:
-        """Run `slidev export` in the slidev directory."""
-        cmd = f'slidev export "{self.lecture_id}.md"'
-        logger.info(f"[SlideImproving] Running: npm exec -c '{cmd}' in {self.slidev_dir}")
+    def _export_pdf_single(self, slide_num: int) -> None:
+        """
+        Export a single slide (1-indexed) to {lecture_id}-export.pdf.
+        Uses --range {slide_num} --per-slide so only that page is written.
+        The file is overwritten on every call.
+        """
+        cmd = (
+            f'slidev export "{self.lecture_id}.md" '
+            f"--range {slide_num} --per-slide"
+        )
+        logger.info(f"[SlideImproving] Exporting slide {slide_num}: {cmd}")
+        _env = os.environ.copy()
+        _env["NODE_OPTIONS"] = "--max-old-space-size=4096"
         result = subprocess.run(
             ["npm", "exec", "-c", cmd],
             cwd=str(self.slidev_dir),
@@ -397,43 +424,45 @@ class SlideImproving:
             encoding="utf-8",
             errors="replace",
             shell=True,
+            env=_env,
         )
         if result.returncode != 0:
-            logger.error(f"[SlideImproving] slidev export failed:\n{result.stderr}")
+            logger.error(f"[SlideImproving] slidev export (single) failed:\n{result.stderr}")
             raise RuntimeError(f"slidev export failed: {result.stderr}")
-        logger.info("[SlideImproving] Export complete.")
 
-    def _pdf_to_images(self) -> list[bytes]:
-        """Convert each PDF page to a PNG bytes object."""
-        pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
-        if not pdf_path.exists():
-            raise FileNotFoundError(f"Exported PDF not found: {pdf_path}")
-
-        doc = fitz.open(str(pdf_path))
-        images: list[bytes] = []
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            mat = fitz.Matrix(2, 2)   # 2× scale for better resolution
-            pix = page.get_pixmap(matrix=mat)
-            images.append(pix.tobytes("png"))
-        doc.close()
-        logger.info(f"[SlideImproving] Extracted {len(images)} slide image(s) from PDF.")
-        return images
+    def _export_pdf_full(self) -> None:
+        """Export the complete slide deck to {lecture_id}-export.pdf."""
+        cmd = f'slidev export "{self.lecture_id}.md"'
+        logger.info(f"[SlideImproving] Full export: {cmd}")
+        _env = os.environ.copy()
+        _env["NODE_OPTIONS"] = "--max-old-space-size=4096"
+        result = subprocess.run(
+            ["npm", "exec", "-c", cmd],
+            cwd=str(self.slidev_dir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            shell=True,
+            env=_env,
+        )
+        if result.returncode != 0:
+            logger.error(f"[SlideImproving] slidev export (full) failed:\n{result.stderr}")
+            raise RuntimeError(f"slidev export failed: {result.stderr}")
+        logger.info("[SlideImproving] Full export complete.")
 
 
 if __name__ == "__main__":
-
     import argparse
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
     parser = argparse.ArgumentParser(
-        description="Evaluate and improve a Slidev .md file using layout distribution."
+        description="Optimise image_width per slide using PyMuPDF + bg-ratio objective."
     )
     parser.add_argument("md_path", help="Path to the .md slide file")
     parser.add_argument("--lecture-json", required=True, help="Path to lecture JSON file")
     parser.add_argument("--title", default="", help="Lecture title")
     parser.add_argument("--speaker", default="", help="Speaker information")
-    parser.add_argument("--max-iter", type=int, default=3, help="Max improvement iterations")
     args = parser.parse_args()
 
     improver = SlideImproving(
@@ -441,6 +470,5 @@ if __name__ == "__main__":
         lecture_json_path=args.lecture_json,
         lecture_title=args.title,
         speaker_information=args.speaker,
-        max_iterations=args.max_iter,
     )
     improver.run()

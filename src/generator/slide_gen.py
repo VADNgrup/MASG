@@ -41,16 +41,14 @@ def run_pipeline(
     lecture_json_path: str,
     lecture_title: str | None = None,
     speaker_information: str = "",
-    max_iterations: int = 3
 ) -> None:
     """
     Full end-to-end pipeline:
       1. Build initial Slidev markdown from the lecture JSON.
-      2. Evaluate and iteratively improve via VLM / LLM.
+      2. Evaluate and iteratively improve via per-slide optimization.
       --lecture   PATH    Json lecture PATH
       --title     STR     Override lecture title (default: from JSON or lecture_id)
       --speaker   STR     Speaker information
-      --max-iter  N       Max iteration number (default: 3)
       --log-level LEVEL   DEBUG / INFO / WARNING / ERROR
 
     """
@@ -67,7 +65,7 @@ def run_pipeline(
 
     print(f"[slide_gen] Lecture  : {lecture_id}")
     print(f"[slide_gen] Title    : {title}")
-    print(f"[slide_gen] Speaker  : {speaker_information or '(not set)'}")
+    print(f"[slide_gen] Speaker  : {speaker_information or 'Slide Generation System'}")
 
     slidev_dir = _PROJECT_ROOT / "src" / "generator" / "slidev"
     pdf_path = slidev_dir / f"{lecture_id}-export.pdf"
@@ -98,7 +96,6 @@ def run_pipeline(
             lecture_json_path=str(json_path),
             lecture_title=title,
             speaker_information=speaker_information,
-            max_iterations=max_iterations,
             theme=selected_theme,
             font=selected_font,
         )
@@ -155,6 +152,15 @@ def _package_output(
     json_dst = out_dir / lecture_json_path.name
     shutil.copy2(lecture_json_path, json_dst)
     print(f"[package_output] JSON copied → {json_dst}")
+
+    # copy table_distribution and image_distribution (optional siblings)
+    for suffix in ("_table_distribution", "_image_distribution"):
+        sibling = lecture_json_path.parent / f"{lecture_id}{suffix}.json"
+        if sibling.exists():
+            shutil.copy2(sibling, out_dir / sibling.name)
+            print(f"[package_output] JSON copied → {out_dir / sibling.name}")
+        else:
+            print(f"[package_output] (skipped, not found) {sibling.name}")
 
     # render PDF pages to JPEG images
     doc = fitz.open(str(pdf_dst))
@@ -225,5 +231,4 @@ if __name__ == "__main__":
         lecture_json_path=args.lecture,
         lecture_title=args.title,
         speaker_information=args.speaker,
-        max_iterations=Config.SLIDE_ITERATION_NUMBER
     )

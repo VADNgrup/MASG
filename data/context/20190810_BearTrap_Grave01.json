@@ -1,0 +1,86 @@
+{
+  "document_id": "20190810_BearTrap_Grave01",
+  "source_file": "20190810_BearTrap_Grave01.pdf",
+  "processed_at": "2026-04-02T14:37:14.151757Z",
+  "text_content": {
+    "markdown": "# **20190810\\_BearTrap\\_Grave01**\n\n**Processing Report 27 Oktober 2021**\n\n![](_page_0_Picture_2.jpeg)\n\n# **Survey Data**\n\n![](_page_1_Figure_1.jpeg)\n\nFig. 1. Camera locations and image overlap.\n\nNumber of images: 641 Camera stations: 639\n\nTie points: 607,327\n\nProjections: 1,751,346\n\nReprojection error: 0.358 pix\n\n| Camera<br>Model     | Resolution        | Focal<br>Length | Pixel<br>Size     | Precalibrated |\n|---------------------|-------------------|-----------------|-------------------|---------------|\n| ILCE-6000<br>(16mm) | 6000<br>x<br>4000 | 16<br>mm        | 4<br>x<br>4<br>μm | No            |\n\nTable 1. Cameras.\n\n# **Camera Calibration**\n\n![](_page_2_Figure_1.jpeg)\n\nFig. 2. Image residuals for ILCE-6000 (16mm).\n\n## **ILCE-6000 (16mm)**\n\n641 images\n\n| Type<br>Frame | Resolution<br>6000<br>x<br>4000 | Focal<br>Length<br>16<br>mm | Pixel<br>Size<br>4<br>x<br>4<br>μm |\n|---------------|---------------------------------|-----------------------------|------------------------------------|\n|               |                                 |                             |                                    |\n| F:            | 4083.8                          |                             |                                    |\n| Cx:           | -63.3208                        | B1:                         | -0.111849                          |\n| Cy:           | -29.5147                        | B2:                         | -0.405142                          |\n| K1:           | -0.00558067                     | P1:                         | -0.000856224                       |\n| K2:           | -0.00368711                     | P2:                         | 0.000202483                        |\n| K3:           | 0.0153141                       | P3:                         | 0                                  |\n| K4:           | -0.00966728                     | P4:                         | 0                                  |\n\n# **Digital Elevation Model**\n\n![](_page_3_Figure_1.jpeg)\n\nFig. 3. Reconstructed digital elevation model.\n\n# **Processing Parameters**\n\n| General                                 |                          |  |\n|-----------------------------------------|--------------------------|--|\n| Cameras                                 | 641                      |  |\n| Aligned cameras                         | 639                      |  |\n| Coordinate system                       | Local Coordinates (m)    |  |\n| Rotation angles                         | Yaw, Pitch, Roll         |  |\n| Point Cloud                             |                          |  |\n| Points                                  | 607,327 of 3,003,225     |  |\n| RMS<br>reprojection error               | 0.119995 (0.358147 pix)  |  |\n| Max reprojection error                  | 0.264431 (3.15182 pix)   |  |\n| Mean key point size                     | 2.89242 pix              |  |\n| Point colors                            | 3 bands, uint8           |  |\n| Key points                              | No                       |  |\n| Average tie point multiplicity          | 5.21063                  |  |\n| Alignment parameters                    |                          |  |\n| Accuracy                                | High                     |  |\n| Generic preselection                    | Yes                      |  |\n| Key point limit                         | 60,000                   |  |\n| Tie point limit                         | 0                        |  |\n| Filter points by mask                   | Yes                      |  |\n| Mask tie points                         | No                       |  |\n| Adaptive camera model fitting           | No                       |  |\n| Matching time                           | 1 hours 26 minutes       |  |\n| Alignment time                          | 24 minutes 38 seconds    |  |\n| Optimization<br>parameters              |                          |  |\n| Parameters                              | f, cx, cy, k1-k3, p1, p2 |  |\n| Adaptive camera model fitting           | Yes                      |  |\n| Optimization time                       | 12 seconds               |  |\n| File size                               | 261.36 MB                |  |\n| Depth<br>Maps                           |                          |  |\n| Count                                   | 638                      |  |\n| Depth<br>maps generation<br>parameters  |                          |  |\n| Quality                                 | High                     |  |\n| Filtering mode                          | Mild                     |  |\n| Processing time                         | 5 hours 1 minutes        |  |\n| Memory usage                            | 10.12 GB                 |  |\n| Software version                        | 1.7.1.11797              |  |\n| File size                               | 5.06 GB                  |  |\n| Dense Point Cloud                       |                          |  |\n| Points                                  | 86,872,038               |  |\n| Point colors                            | 3 bands, uint8           |  |\n| Depth<br>maps generation<br>parameters  |                          |  |\n| Quality                                 | High                     |  |\n| Filtering mode                          | Mild                     |  |\n| Processing time                         | 5 hours 1 minutes        |  |\n| Memory usage                            | 10.12 GB                 |  |\n| Dense cloud<br>generation<br>parameters |                          |  |\n| Processing time                         | 3 hours 30 minutes       |  |\n| Memory usage                            | 26.69 GB                 |  |\n| Software version                        | 1.7.1.11797              |  |\n| File size                               | 2.54 GB                  |  |\n\n**Model**\n\nFaces 25,634,607 Vertices 12,825,488 Vertex colors 3 bands, uint8\n\nTexture 4,096 x 4,096, 4 bands, uint8\n\n**Depth maps generation parameters**\n\nQuality High Filtering mode Mild\n\nProcessing time 5 hours 1 minutes\n\nMemory usage 10.12 GB\n\n**Reconstruction parameters**\n\nSurface type Arbitrary Source data Depth maps Interpolation Enabled Strict volumetric masks No\n\nProcessing time 1 hours 31 minutes\n\nMemory usage 11.90 GB\n\n**Texturing parameters**\n\nMapping mode Generic Blending mode Mosaic Texture size 4,096 Enable hole filling Yes Enable ghosting filter Yes\n\nUV mapping time 6 minutes 15 seconds\n\nUV mapping memory usage 5.64 GB\n\nBlending time 1 hours 3 minutes\n\nBlending memory usage 9.19 GB Software version 1.7.1.11797 File size 1.09 GB\n\n**System**\n\nSoftware name Agisoft Metashape Professional\n\nSoftware version 1.7.1 build 11797 OS Linux 64 bit RAM 125.62 GB\n\nCPU Intel(R) Core(TM) i7-9800X CPU @ 3.80GHz\n\nGPU(s) Quadro P1000",
+    "page_count": 6
+  },
+  "tables": [
+    {
+      "table_id": "table_001",
+      "markdown": "| Camera<br>Model     | Resolution        | Focal<br>Length | Pixel<br>Size     | Precalibrated |\n|---------------------|-------------------|-----------------|-------------------|---------------|\n| ILCE-6000<br>(16mm) | 6000<br>x<br>4000 | 16<br>mm        | 4<br>x<br>4<br>μm | No            |",
+      "table_caption": "Table 1. Cameras.",
+      "should_visualize": "No",
+      "chart_path": null,
+      "chart_type": null,
+      "image_table_path": "data/assets/20190810_BearTrap_Grave01/images/table_001.png"
+    },
+    {
+      "table_id": "table_002",
+      "markdown": "| Type<br>Frame | Resolution<br>6000<br>x<br>4000 | Focal<br>Length<br>16<br>mm | Pixel<br>Size<br>4<br>x<br>4<br>μm |\n|---------------|---------------------------------|-----------------------------|------------------------------------|\n|               |                                 |                             |                                    |\n| F:            | 4083.8                          |                             |                                    |\n| Cx:           | -63.3208                        | B1:                         | -0.111849                          |\n| Cy:           | -29.5147                        | B2:                         | -0.405142                          |\n| K1:           | -0.00558067                     | P1:                         | -0.000856224                       |\n| K2:           | -0.00368711                     | P2:                         | 0.000202483                        |\n| K3:           | 0.0153141                       | P3:                         | 0                                  |\n| K4:           | -0.00966728                     | P4:                         | 0                                  |",
+      "table_caption": "Table: |---------------------|-------------------|-----------------|-------------------|---------------|\n| ...",
+      "should_visualize": "No",
+      "chart_path": null,
+      "chart_type": null,
+      "image_table_path": "data/assets/20190810_BearTrap_Grave01/images/table_002.png"
+    }
+  ],
+  "assets": {
+    "images": [
+      {
+        "image_id": "img_00",
+        "file_path": "data/assets/20190810_BearTrap_Grave01/images/img_00.png",
+        "caption": "20190810_BearTrap_Grave01\nProcessing Report\n27 Oktober 2021",
+        "reference_context": null,
+        "metadata": {
+          "width": 900,
+          "height": 1119,
+          "format": "png",
+          "file_size_kb": 1684.54
+        }
+      },
+      {
+        "image_id": "img_01",
+        "file_path": "data/assets/20190810_BearTrap_Grave01/images/img_01.png",
+        "caption": "Fig. 1. Camera locations and image overlap.",
+        "reference_context": null,
+        "metadata": {
+          "width": 1190,
+          "height": 1023,
+          "format": "png",
+          "file_size_kb": 121.05
+        }
+      },
+      {
+        "image_id": "img_02",
+        "file_path": "data/assets/20190810_BearTrap_Grave01/images/img_02.png",
+        "caption": "Fig. 2. Image residuals for ILCE-6000 (16mm).",
+        "reference_context": null,
+        "metadata": {
+          "width": 855,
+          "height": 644,
+          "format": "png",
+          "file_size_kb": 363.84
+        }
+      },
+      {
+        "image_id": "img_03",
+        "file_path": "data/assets/20190810_BearTrap_Grave01/images/img_03.png",
+        "caption": "Fig. 3. Reconstructed digital elevation model.",
+        "reference_context": null,
+        "metadata": {
+          "width": 666,
+          "height": 818,
+          "format": "png",
+          "file_size_kb": 405.61
+        }
+      }
+    ]
+  },
+  "metadata": {
+    "total_images": 4,
+    "total_tables": 2,
+    "processing_time_seconds": 34.35
+  }
+}

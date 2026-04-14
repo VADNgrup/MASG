@@ -10,12 +10,10 @@ class SlideType(Enum):
     COMPARISON = "comparison"
     TWO_SUB_CONTENTS = "two_sub_contents"
 
-
 @dataclass
 class Table:
     table_markdown: str
     table_caption: str
-
 
 @dataclass
 class Slide:
@@ -26,12 +24,11 @@ class Slide:
     table: Optional[Table] = None
     latex_block_formula: Optional[str] = None
 
-
 @dataclass
 class SlideContent:
     slide: Slide
     content: Union[
-        str,                    # For Comparison (Table Markdown)
-        List[str],              # For Only Content, Have Table, Have Formula
-        Dict[str, List[str]],   # For Two Sub Content
+        str,                    
+        List[str],              
+        Dict[str, List[str]],   
     ] = field(default_factory=list)

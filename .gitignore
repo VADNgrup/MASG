@@ -8,14 +8,8 @@ venv/
 ENV/
 .venv
 .env
-data/raw/*
-data/assets/*
-data/context/*
 data/lectures/*
 data/optimization/*
-!data/raw/.gitkeep
-!data/assets/.gitkeep
-!data/context/.gitkeep
 !data/lectures/.gitkeep
 !data/optimization/.gitkeep
 .pytest_cache/
@@ -34,9 +28,8 @@ api_dspy_test.ipynb
 api-test.py
 src/layout_generator/
 test
-ppt-agent-benchmark/
-slidegenbench-benchmark/
 
 src/generator/slidev/*.md
 src/generator/slidev/*.pdf
+token_count.ipynb
 

@@ -4,7 +4,18 @@ from typing import List
 from src.utils.config import Config
 
 class Severity(str, Enum):
+    """Three-tier severity scale for LLM-as-Judge feedback.
+
+    CRITICAL — factual errors, hallucinations, or entirely missing required
+               sections. Triggers a slide rewrite.
+    MAJOR    — significant structural or comprehension issues: wrong depth,
+               undefined key terms, density violations that impede learning.
+               Shown to the writer but does not trigger a rewrite on its own.
+    MINOR    — style, phrasing, or minor presentation suggestions.
+               Informational only; never triggers a rewrite.
+    """
     CRITICAL = "critical"
+    MAJOR    = "major"
     MINOR    = "minor"
 
 @dataclass
@@ -17,7 +28,15 @@ class Issue:
 
     @property
     def is_convincing(self) -> bool:
-        return self.severity == Severity.CRITICAL and self.confidence_score >= Config.CONFIDENCE_FEEDBACK_THRESHOLD
+        """True when the LLM Judge is confident enough in this issue to surface it
+        to the writer.  Each severity level requires a higher confidence bar."""
+        if self.severity == Severity.CRITICAL:
+            return self.confidence_score >= Config.CRITICAL_CONFIDENCE_THRESHOLD
+        if self.severity == Severity.MAJOR:
+            return self.confidence_score >= Config.MAJOR_CONFIDENCE_THRESHOLD
+        if self.severity == Severity.MINOR:
+            return self.confidence_score >= Config.MINOR_CONFIDENCE_THRESHOLD
+        return False
 
 @dataclass
 class CriterionResult:
@@ -41,9 +60,20 @@ class SlideReview:
 
     @property
     def convincing_critical_issues(self) -> List[Issue]:
+        """CRITICAL issues that pass the confidence threshold — used to decide
+        whether the slide needs a rewrite."""
         issues = []
         for cr in self.criteria.values():
             issues.extend(cr.convincing_critical_issues)
+        return issues
+
+    @property
+    def convincing_issues(self) -> List[Issue]:
+        """All issues (CRITICAL + MAJOR + MINOR) that pass their respective
+        confidence thresholds — the full set surfaced to the writer."""
+        issues = []
+        for cr in self.criteria.values():
+            issues.extend([i for i in cr.issues if i.is_convincing])
         return issues
 
     @property
@@ -68,6 +98,20 @@ class WriterReview:
     @property
     def convincing_critical_count(self) -> int:
         return sum(len(s.convincing_critical_issues) for s in self.slide_reviews)
+
+    @property
+    def convincing_major_count(self) -> int:
+        return sum(
+            len([i for i in s.convincing_issues if i.severity == Severity.MAJOR])
+            for s in self.slide_reviews
+        )
+
+    @property
+    def convincing_minor_count(self) -> int:
+        return sum(
+            len([i for i in s.convincing_issues if i.severity == Severity.MINOR])
+            for s in self.slide_reviews
+        )
 
     @property
     def minor_count(self) -> int:

@@ -6,7 +6,6 @@ from src.utils.fuzzy_distance import fuzzy_distance
 
 class TableChartDistribution:
     def __init__(self, model: str = "gpt-5"):
-        # Model param kept for backward compatibility but no longer used
         pass
 
     def distribute_tables(
@@ -36,7 +35,6 @@ class TableChartDistribution:
         """
         distributions = []
 
-        # Context tables from aggregated media
         context_tables = aggregated_media.get('tables', [])
         slides = lecture_dict.get('slides', [])
 
@@ -52,7 +50,6 @@ class TableChartDistribution:
             slide_type = slide.get('slide_type', '')
             slide_number = slide.get('slide_number', 0)
 
-            # Only process slides with table type
             if slide_type != 'have_table':
                 continue
 
@@ -68,7 +65,6 @@ class TableChartDistribution:
 
             print(f"\n  Slide {slide_number} ({slide.get('slide_title', '')}):")
 
-            # Fuzzy match against all context tables
             best_score = -1
             best_ctx_table = None
             best_ctx_id = None
@@ -76,7 +72,6 @@ class TableChartDistribution:
             for ctx_idx, ctx_table in enumerate(context_tables):
                 ctx_id = ctx_table.get('table_id', f'table_{ctx_idx}')
 
-                # Skip already used tables
                 if ctx_id in used_tables:
                     continue
 
@@ -109,7 +104,6 @@ class TableChartDistribution:
             else:
                 print(f"No matching context table found")
 
-        # Save results
         output_path = Path(f"data/lectures/{lecture_id}_table_distribution.json")
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(distributions, f, indent=2, ensure_ascii=False)

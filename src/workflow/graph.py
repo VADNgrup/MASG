@@ -18,30 +18,25 @@ def _print_writer_review(label: str, review: WriterReview) -> None:
     print(f"  {label}:  {total - len(failed)}/{total} slides passed")
     for sr in review.slide_reviews:
         status = "✓" if sr.passed else "✗"
-        n_crit = len(sr.convincing_critical_issues)
-        n_min  = len(sr.minor_issues)
+        n_crit  = len(sr.convincing_critical_issues)
+        n_major = len([i for i in sr.convincing_issues if i.severity.value == "major"])
+        n_min   = len(sr.minor_issues)
         print(f"    {status} Slide {sr.slide_index:>2}: '{sr.slide_title[:35]}'  "
-              f"critical={n_crit}  minor={n_min}")
+              f"critical={n_crit}  major={n_major}  minor={n_min}")
     print(f"  {'─'*50}")
     print(f"  Decision: {'ACCEPT' if review.passed else 'RETRY'}  "
-          f"(critical issues: {review.convincing_critical_count}  minor: {review.minor_count})")
+          f"(critical={review.convincing_critical_count}  "
+          f"major={review.convincing_major_count}  "
+          f"minor={review.convincing_minor_count})")
     print(f"  {'─'*50}\n")
 
-
-def _count_coverage_critical_issues(review: WriterReview) -> int:
-    count = 0
-    for sr in review.slide_reviews:
-        cov = sr.criteria.get("coverage")
-        if cov:
-            count += len(cov.convincing_critical_issues)
-    return count
 
 
 def _extract_coverage_feedback(review: WriterReview) -> str:
     issue_list = []
     suggestion_list = []
     for sr in review.slide_reviews:
-        cov = sr.criteria.get("coverage")
+        cov = sr.criteria.get("coverage_and_clarity")
         if not cov:
             continue
         for issue in cov.convincing_critical_issues:
@@ -66,7 +61,6 @@ def create_workflow() -> StateGraph:
 
 
     def planner_node(state: WorkflowState) -> Dict[str, Any]:
-        # Use coverage feedback from writer backtrack if available
         feedback_str = state.get("coverage_feedback")
         if feedback_str:
             print(f"\n{'='*60}")
@@ -121,7 +115,6 @@ def create_workflow() -> StateGraph:
         write_iter = state.get("current_iteration", 0)
         _print_writer_review(f"Writer Reviewer (iteration {write_iter})", review)
 
-        # Keep the best slides (fewest convincing critical issues)
         current_best_score = state.get("best_slides_score", float("inf"))
         n_critical = review.convincing_critical_count
 
@@ -141,23 +134,31 @@ def create_workflow() -> StateGraph:
         if not review:
             return "end"
 
-        # If all slides passed → done
         if review.passed:
             return "end"
 
         current_iter = state.get("current_iteration", 0)
-
-        # Still have retries left → refine
         if current_iter < Config.FEEDBACK_INTERATION_NUMBER:
             return "retry"
 
-        # Out of retries (iteration >= 3): check coverage for backtrack
-        coverage_critical = _count_coverage_critical_issues(review)
+        n_critical = review.convincing_critical_count
+        n_major    = review.convincing_major_count
+        n_minor    = review.convincing_minor_count
         backtrack_used = state.get("planner_backtrack_used", False)
 
-        if coverage_critical >= 5 and not backtrack_used:
-            print(f"\nCoverage has {coverage_critical} critical issues after 3 iterations.")
-            print(f"Backtracking to planner (1-time only)...\n")
+        if (
+            not backtrack_used
+            and n_critical > Config.BACK_PLANNER_CRITICAL_NUM
+            and n_major    > Config.BACK_PLANNER_MAJOR_NUM
+            and n_minor    > Config.BACK_PLANNER_MINOR_NUM
+        ):
+            print(
+                f"\nBacktrack threshold reached after {current_iter} iterations: "
+                f"critical={n_critical} (>{Config.BACK_PLANNER_CRITICAL_NUM})  "
+                f"major={n_major} (>{Config.BACK_PLANNER_MAJOR_NUM})  "
+                f"minor={n_minor} (>{Config.BACK_PLANNER_MINOR_NUM})"
+            )
+            print("Backtracking to planner (1-time only)...\n")
             return "backtrack_planner"
 
         return "end"

@@ -7,21 +7,23 @@ from src.utils.file_utils import load_json, save_json
 from src.models.context import DocumentContext
 from src.utils.config import config, Config
 from dataclasses import asdict
-import os
 
 async def preprocess_context(context, output = None):
     print(f"\n{'='*60}")
     print(f"Phase 2: Lecture Generation Workflow")
     print(f"{'='*60}\n")
     context_data = load_json(context)
+    if len(context_data["text_content"]["markdown"]) < 512 or len(context_data["text_content"]["markdown"]) > 32768:
+        print("[SKIP] Lecture is too short or too long")
+        return None, False
     context = DocumentContext(**context_data)
     lecture_path = Path(Config.LECTURES_DIR / f"{context.document_id}" / f"{context.document_id}.json")
     if Path(lecture_path).exists():
-        print(f"Lecture has id {context.document_id} already exists in lecture directory")
+        print(f"[SKIP] Lecture has id {context.document_id} already exists in lecture directory")
         print(f"\n{'='*60}")
         print(f"End Phase 2: Generated Lecture")
         print(f"\n{'='*60}")
-        return lecture_path
+        return lecture_path, True
 
     print(f"Source: {context.source_file}")
     print(f"Pages: {context.text_content.page_count}")
@@ -50,12 +52,10 @@ async def preprocess_context(context, output = None):
     
     result = await workflow.ainvoke(initial_state)
     
-    # finalize_plan and finalize_slides nodes already restore the best versions into state
     final_slides   = result["slides"]
     final_plan     = result["lecture_plan"]
     final_feedback = result.get("reviewer_feedback")
 
-    # Quality score: fraction of slides that passed (0.0–100.0)
     if final_feedback:
         total  = len(final_feedback.slide_reviews)
         passed = total - len(final_feedback.failed_slides)
@@ -76,27 +76,20 @@ async def preprocess_context(context, output = None):
         "slides": [asdict(s) for s in final_slides]
     }
 
-    # Creat a lecture_id folder to save relevant lecture files: data/lectures/{lecture_id}/...
-
-    # data/lectures/{lecture_id}
     output_save_path = Path(output) if output else config.LECTURES_DIR / f"{lecture_output['lecture_id']}"
     output_save_path.mkdir(parents=True, exist_ok=True)
 
-    # Save lecture json file
     lecture_json_path = output_save_path / f"{lecture_output['lecture_id']}.json"
     save_json(lecture_output, lecture_json_path)
     
-    # Save outline markdown (from best plan)
     outline_md = final_plan.get("outline", "")
     outline_path = output_save_path / f"{lecture_output['lecture_id']}_outline.md"
     outline_path.write_text(outline_md, encoding='utf-8')
     
-    # Save plan spec JSON
     final_specs = result.get("slide_specs")
     if final_specs:
         def _serialize_spec(s):
             d = asdict(s)
-            # Convert SlideType enum to its string value
             if hasattr(d.get("slide_type"), "value"):
                 d["slide_type"] = d["slide_type"].value
             return d
@@ -106,7 +99,6 @@ async def preprocess_context(context, output = None):
     else:
         specs_path = None
     
-    # best_slides_score stores # of critical issues (lower = better)
     slides_critical = result.get("best_slides_score", float("inf"))
     slides_critical_str = str(int(slides_critical)) if slides_critical != float("inf") else "n/a"
 
@@ -124,7 +116,7 @@ async def preprocess_context(context, output = None):
     print(f"End Phase 2: Generated Lecture")
     print(f"\n{'='*60}")
     
-    return lecture_json_path
+    return lecture_json_path, True
     
 async def main():
     parser = argparse.ArgumentParser(description="Phase 2: LangGraph Workflow")

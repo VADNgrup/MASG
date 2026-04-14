@@ -1,23 +1,13 @@
-"""
-LLM-Powered Matplotlib Chart Generator
-
-Uses LLM to analyze tables and generate matplotlib code for visualization.
-More flexible and reliable than LIDA approach.
-"""
-
-import llm_extension
-
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import pandas as pd
 import io
 import re
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
+matplotlib.use('Agg')  
 import matplotlib.pyplot as plt
-from openai import OpenAI
 from src.utils.config import config
-from src.utils.parse_llm_response import clear_think
+from src.utils.llm import chat
 
 class MatplotlibChartGenerator:
     """
@@ -25,9 +15,8 @@ class MatplotlibChartGenerator:
     """
     
     def __init__(self):
-        """Initialize with OpenAI client"""
-        self.client = OpenAI(api_key=config.OPENAI_API_KEY)
-        self.model = config.OPENAI_MODEL if hasattr(config, 'OPENAI_MODEL') else "qwen3-30b-a3b-instruct-2507"
+        """Initialize chart generator"""
+        self.model = config.LLM_MODEL_NAME
         print("Matplotlib Chart Generator initialized successfully")
     
     def markdown_to_dataframe(self, markdown: str) -> Optional[pd.DataFrame]:
@@ -41,28 +30,22 @@ class MatplotlibChartGenerator:
             pandas DataFrame or None if conversion fails
         """
         try:
-            # Clean markdown table
             lines = markdown.strip().split('\n')
             
-            # Remove separator line (e.g., |---|---|)
             cleaned_lines = [line for line in lines if not re.match(r'^\s*\|[\s\-:]+\|\s*$', line)]
             
             if len(cleaned_lines) < 2:
                 print(f"Table has insufficient rows: {len(cleaned_lines)}")
                 return None
             
-            # Convert to CSV-like format
             csv_lines = []
             for line in cleaned_lines:
-                # Remove leading/trailing pipes and whitespace
                 line = line.strip().strip('|')
-                # Split by pipe and clean each cell
                 cells = [cell.strip() for cell in line.split('|')]
                 csv_lines.append(','.join(cells))
             
             csv_string = '\n'.join(csv_lines)
             
-            # Read as DataFrame
             df = pd.read_csv(io.StringIO(csv_string))
             
             print(f"Converted table to DataFrame: {df.shape[0]} rows × {df.shape[1]} columns")
@@ -107,7 +90,7 @@ IMPORTANT:
 
 Return ONLY the Python code, no explanations."""
 
-            response = self.client.chat.completions.create(
+            code = chat(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": "You are an expert data visualization engineer. Generate clean, executable matplotlib code."},
@@ -117,9 +100,6 @@ Return ONLY the Python code, no explanations."""
                 max_tokens=2000
             )
             
-            code = clear_think(response.choices[0].message.content)
-            
-            # Extract code from markdown if wrapped
             if '```python' in code:
                 code = code.split('```python')[1].split('```')[0].strip()
             elif '```' in code:
@@ -150,7 +130,6 @@ Return ONLY the Python code, no explanations."""
             True if successful, False otherwise
         """
         try:
-            # Prepare execution environment
             exec_globals = {
                 'plt': plt,
                 'pd': pd,
@@ -159,11 +138,9 @@ Return ONLY the Python code, no explanations."""
                 '__builtins__': __builtins__,
             }
             
-            # Also import numpy in case it's needed
             import numpy as np
             exec_globals['np'] = np
             
-            # Execute the code
             exec(code, exec_globals)
             
             if output_path.exists():
@@ -201,17 +178,14 @@ Return ONLY the Python code, no explanations."""
         try:
             print(f"\n  [Chart Generation] {table_id}")
             
-            # Create output directory
             output_dir.mkdir(parents=True, exist_ok=True)
             
-            # Step 1: Generate matplotlib code using LLM
             print(f"Generating matplotlib code...")
             code = self.generate_matplotlib_code(table_markdown, table_id)
             
             if not code:
                 return None
             
-            # Step 2: Execute code to create chart
             chart_filename = f"{table_id}_chart.png"
             chart_path = output_dir / chart_filename
             
@@ -221,8 +195,7 @@ Return ONLY the Python code, no explanations."""
             if not success:
                 return None
             
-            # Determine chart type from code (simple heuristic)
-            chart_type = "bar"  # default
+            chart_type = "bar"  
             if "plot(" in code or "line" in code.lower():
                 chart_type = "line"
             elif "scatter" in code.lower():
@@ -274,7 +247,6 @@ Return ONLY the Python code, no explanations."""
         for table in tables:
             table_copy = table.copy()
             
-            # Only generate for tables marked for visualization
             if table.get('should_visualize', 'No') == 'Yes':
                 print(f"\n[{table['table_id']}] Generating chart...")
                 
@@ -288,9 +260,9 @@ Return ONLY the Python code, no explanations."""
                     table_copy['chart_path'] = result['chart_path']
                     table_copy['chart_type'] = result['chart_type']
                     generated_count += 1
-                    print(f"  ✓ Success: {result['chart_type']} chart")
+                    print(f"Success: {result['chart_type']} chart")
                 else:
-                    print(f"  ✗ Failed to generate chart")
+                    print(f"Failed to generate chart")
             else:
                 print(f"\n[{table['table_id']}] Skipped (should_visualize=No)")
             

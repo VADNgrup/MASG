@@ -1,0 +1,31 @@
+{
+  "document_id": "Ch01_Introduction",
+  "source_file": "Ch01_Introduction.pdf",
+  "processed_at": "2026-04-02T14:47:31.077597Z",
+  "text_content": {
+    "markdown": "# Introduction\n\n![](_page_0_Picture_1.jpeg)\n\nResearchers engage with research data in many different ways. We want to understand how researchers use and share data, and learn what good research data management (RDM) means to them. To explore the real world of research data, we hear first-hand accounts from our Data Champions who lead the way to Open Research at [Delft University of Technology \\(TU Delft\\)](https://www.tudelft.nl/en/).\n\n## **What is a 'Data Champion'?**\n\nInspired by the [University of Cambridge Data Champion](https://www.data.cam.ac.uk/intro-data-champions) programme, TU Delft launched their [Data](https://www.tudelft.nl/en/library/current-topics/research-data-management/r/data-stewardship/data-champions/)  [Champion programme](https://www.tudelft.nl/en/library/current-topics/research-data-management/r/data-stewardship/data-champions/) in September 2018 as a cost effective way to provide disciplinary-specific RDM support for all eight university faculties. There are currently 47 Data Champions volunteering their time, effort and expertise at TU Delft and the numbers are continuously increasing.\n\n![](_page_1_Picture_3.jpeg)\n\n#### **Why is this book important?**\n\nFunding bodies, political organisations and research institutions worldwide emphasise the value and importance of good RDM as a prerequisite for Open Science, but the practice is slow to change. Researchers may be reluctant to change their current data management practice if they feel that making their research open will add to their already burdensome academic workload. They may also feel vulnerable to being 'scooped' on prospective projects if they share their hard-earned results with others, or they may be simply unaware of the benefits of Open Science. What's more, researchers may not feel incentivised to change their practice since Open Science isn't clearly recognised by the traditional academic reward system.\n\nSuch barriers to realising good RDM and Open Science are further exacerbated by the fact that discussions are typically limited to librarians, data professionals and a handful of researchers who are already passionate about good data stewardship. Therefore, we believe that engaging researchers, as the main data producers and reusers, is critical to engender a culture change towards good RDM across an entire research institution.\n\nIndeed, this book demonstrates that a culture change begins with individual researchers. By presenting real-world, first-hand accounts from researchers of different career stages and diverse scientific\n\ndisciplines, we show that fostering an open, collaborative and multidisciplinary research environment offers benefit for all. From using electronic lab notebooks to study the rheology of foam, to reusing geospatial data to build 3D city models, each article demonstrates that data intersects with research in a multitude of ways and that common foundations of research integrity unites all researchers. Our Data Champions take leaps forward to advance open science by adopting good RDM and FAIR data practice. We believe that expressing gratitude to individuals who 'go the extra mile' and supporting them in their mission to champion Open Science will not only sustain motivation and productivity amongst the existing cohort of Data Champions but will incentivise others to join our vibrant community. If you're inspired by the work of our Data Champions and want to learn how to build your own community-based model within your institution, read our toolkit, 'How to build a community of Data Champions: Six steps to success' which can be found at the back of this book.\n\n### **What is this book about?**\n\nThis book presents a selection of articles to showcase the work TU Delft's Data Champions. Our primary objective was to reward and recognise their exemplary efforts by sharing their success stories as written articles to increase their visibility and raise their professional profile. Each article has been written to inspire and inform the wider research community and to help drive a culture change towards Open Science.\n\nFrom June to August 2019, one-to-one interviews were conducted with 11 Data Champions to learn: about their research; their motivations for becoming Data Champions; how they effectively engage with researchers; and, their future goals and aspirations. Following each interview, an article was written and published on TU Delft's [Open Working blog](https://openworking.wordpress.com/data-champions/) under a dedicated tab titled ['Data Champions'](https://openworking.wordpress.com/data-champions/).\n\n## **Citation**\n\nThis Introduction is a selection from the following publication:\n\nClare, Connie. (2019). The Real World of Research Data [Book]. Zenodo. http://doi.org/10.5281/ zenodo.3584373.\n\n![](_page_3_Picture_0.jpeg)",
+    "page_count": 4
+  },
+  "tables": [],
+  "assets": {
+    "images": [
+      {
+        "image_id": "img_00",
+        "file_path": "data/assets/Ch01_Introduction/images/img_00.png",
+        "caption": "Introduction",
+        "reference_context": null,
+        "metadata": {
+          "width": 877,
+          "height": 1068,
+          "format": "png",
+          "file_size_kb": 269.25
+        }
+      }
+    ]
+  },
+  "metadata": {
+    "total_images": 1,
+    "total_tables": 0,
+    "processing_time_seconds": 23.32
+  }
+}

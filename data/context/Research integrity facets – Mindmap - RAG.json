@@ -1,0 +1,31 @@
+{
+  "document_id": "Research integrity facets – Mindmap - RAG",
+  "source_file": "Research integrity facets – Mindmap - RAG.pdf",
+  "processed_at": "2026-04-02T15:08:22.722161Z",
+  "text_content": {
+    "markdown": "![](_page_0_Figure_0.jpeg)",
+    "page_count": 1
+  },
+  "tables": [],
+  "assets": {
+    "images": [
+      {
+        "image_id": "img_00",
+        "file_path": "data/assets/Research integrity facets – Mindmap - RAG/images/img_00.png",
+        "caption": "Image related to: ![](_page_0_Figure_0.jpeg)...",
+        "reference_context": null,
+        "metadata": {
+          "width": 2048,
+          "height": 1079,
+          "format": "png",
+          "file_size_kb": 613.76
+        }
+      }
+    ]
+  },
+  "metadata": {
+    "total_images": 1,
+    "total_tables": 0,
+    "processing_time_seconds": 28.52
+  }
+}

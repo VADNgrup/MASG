@@ -1,5 +1,3 @@
-import llm_extension
-from langchain_openai import ChatOpenAI
 from typing import List, Dict, Optional, Any
 import json
 from pathlib import Path
@@ -21,24 +19,19 @@ class VisualAggregation:
                 "images": [...]
             }
         """
-        # Extract source document ID from metadata
         metadata = lecture_dict.get('metadata', {})
         source_document_id = metadata.get('source_document_id')
         
         if not source_document_id:
             raise ValueError("No source_document_id found in lecture metadata")
         
-        # Load the context file
         context_data = self._load_context_file(source_document_id)
         
-        # Extract tables (at top level)
         tables = context_data.get('tables', [])
         
-        # Extract images (from assets.images)
         assets = context_data.get('assets', {})
         images = assets.get('images', [])
         
-        # Organize and return
         result = {
             "tables": tables,
             "images": images,
@@ -59,13 +52,11 @@ class VisualAggregation:
         Returns:
             Dictionary containing context data with tables and images
         """
-        # Construct the context file path
         context_path = Path("data/context") / f"{source_document_id}.json"
         
         if not context_path.exists():
             raise FileNotFoundError(f"Context file not found: {context_path}")
         
-        # Load and return the context data
         with open(context_path, 'r', encoding='utf-8') as f:
             context_data = json.load(f)
         
@@ -81,11 +72,9 @@ class VisualAggregation:
         Returns:
             Dictionary containing tables and images
         """
-        # Load the lecture file
         with open(lecture_json_path, 'r', encoding='utf-8') as f:
             lecture_dict = json.load(f)
         
-        # Aggregate media
         return self.aggregate_media_from_lecture(lecture_dict)
     
     def save_aggregated_media(
@@ -105,18 +94,13 @@ class VisualAggregation:
         """
         aggregated = self.aggregate_media_from_lecture(lecture_dict)
         
-        # Determine output path
         if output_path is None:
             output_dir = Path("data/media")
             output_dir.mkdir(parents=True, exist_ok=True)
             source_id = aggregated['source_document_id']
             output_path = output_dir / f"{source_id}_media.json"
         
-        # Save to file
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(aggregated, f, indent=2, ensure_ascii=False)
         
         return str(output_path)
-
-if __name__ == "__main__":
-    main()

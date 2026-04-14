@@ -11,6 +11,8 @@ from PIL import Image
 from typing import Dict, List, Optional
 from src.generator.slide_layout_manager import SlideLayoutManager
 from src.generator.theme_selection import select_theme
+from src.utils.llm import chat
+from src.utils.config import Config
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]  
 _SLIDEV_DIR   = _PROJECT_ROOT / "src" / "generator" / "slidev"
@@ -115,7 +117,8 @@ class SlidePickMerge:
         })
 
     def _parse_outline(self) -> List[str]:
-        counters: List[int] = []
+        """Return only major sections (single `#` headings) for the outline slide."""
+        counter = 0
         results: List[str] = []
 
         with open(self.outline_path, encoding="utf-8") as f:
@@ -129,17 +132,12 @@ class SlidePickMerge:
                     continue
 
                 depth = len(m.group(1))
-                text  = m.group(2).strip()
+                if depth != 1:          # skip sub-headings (##, ###, …)
+                    continue
 
-                if depth > len(counters):
-                    while len(counters) < depth:
-                        counters.append(0)
-                else:
-                    counters = counters[:depth]
-
-                counters[depth - 1] += 1
-                prefix = ".".join(str(c) for c in counters) + "."
-                results.append(f"{prefix} {text}")
+                text = m.group(2).strip()
+                counter += 1
+                results.append(f"{counter}. {text}")
 
         return results
 
@@ -365,8 +363,9 @@ class SlidePickMerge:
 
         # 2. Config frontmatter + greeting title slide
         self._slide_counter = 1
-        doc = self._mgr.config_and_greeting_slide()
-        self._log_layout(self._slide_counter, "config_and_greeting_slide", {})
+        short_title = self._summarise_title(self.lecture_title)
+        doc = self._mgr.config_and_greeting_slide(short_title=short_title)
+        self._log_layout(self._slide_counter, "config_and_greeting_slide", {"short_title": short_title})
 
         # 3. Table of Contents
         toc_items = self._parse_outline()
@@ -393,3 +392,28 @@ class SlidePickMerge:
             json.dump(self._layout_log, f, ensure_ascii=False, indent=2)
 
         return doc
+
+    def _summarise_title(self, title: str) -> str:
+        prompt = (
+            "Summarise the following lecture title into AT MOST 6 words "
+            "that capture its core topic. The result must be concise, clear, "
+            "and suitable as a presentation cover heading. Don't include any special charaters like ':', '-', '!', '?', etc. "
+            "Return ONLY the summarised title, nothing else.\n\n"
+            f"Title: {title}\n\nSummarised title:"
+        )
+        try:
+            result = chat(
+                model=Config.LLM_MODEL_NAME,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=20,
+            )
+            short = result.strip().strip('"').strip("'")
+            words = short.split()
+            if len(words) > 6:
+                short = " ".join(words[:6]) + "..."
+            return short
+        except Exception as e:
+            logging.warning(f"[SlidePickMerge] LLM title summarisation failed: {e}")
+            words = title.split()
+            return " ".join(words[:6]) + ("..." if len(words) > 6 else "")

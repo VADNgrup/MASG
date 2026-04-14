@@ -45,6 +45,16 @@ def parse_json_response(
                 return result
             return [result]
         return result
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        result = json.loads(content, strict=False)
+        if expect_list:
+            if isinstance(result, list):
+                return result
+            return [result]
+        return result
     except json.JSONDecodeError as e:
         if retry_count >= 2:
             if expect_list:
@@ -73,7 +83,6 @@ Return ONLY the fixed valid JSON, no explanations:"""
 
     response = llm_invoke_fn([{"role": "user", "content": fix_prompt}])
 
-    # Support both: raw-string return and object-with-.content return
     if isinstance(response, str):
         return response.strip()
     return response.content.strip()

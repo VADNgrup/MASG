@@ -27,15 +27,26 @@ class SlideLayoutManager:
     def _slide_sep(self) -> str:
         return "---"
 
-    def config_and_greeting_slide(self) -> str:
+    def config_and_greeting_slide(self, short_title: Optional[str] = None) -> str:
         """
         Lines 1-13 of test_1.md: frontmatter + greeting title.
+
+        Args:
+            short_title: An optional abbreviated title (≤6 words) used in the
+                         YAML ``title`` field.  The full ``self.title`` is still
+                         used for the greeting ``# …`` heading on the cover slide.
+                         Falls back to the full title when *None*.
         """
+        # Quote values that may contain colons or other YAML special characters
+        safe_title  = (self.title  or "").replace('"', '\\"')
+        safe_author = (self.author or "").replace('"', '\\"')
+        # Use the short title (if provided) only for the YAML frontmatter field
+        safe_short  = (short_title or "").replace('"', '\\"')
         lines = [
             "---",
             f"theme: {self.theme}",
-            f"title: {self.title}",
-            f"author: {self.author}",
+            f'title: "{safe_short}"',
+            f'author: "{safe_author}"',
             "katex: true",
             "fonts:",
             f"  sans: {self.font_sans}",
@@ -43,7 +54,7 @@ class SlideLayoutManager:
             f"  mono: {self.font_mono}",
             "---",
             "",
-            f"# {self.title}",
+            f"# {safe_title}",
             "---",
         ]
         return "\n".join(lines)

@@ -1,0 +1,256 @@
+# LecSlideGen — Tổng Quan Pipeline
+
+Hệ thống tự động sinh slide bài giảng từ tài liệu PDF/DOCX, gồm **4 Phase chính** chạy tuần tự, mỗi Phase xử lý một tầng trừu tượng riêng biệt.
+
+---
+
+## Kiến Trúc Tổng Thể
+
+```mermaid
+flowchart TD
+    INPUT["📄 PDF / DOCX\n(data/raw/)"]
+
+    subgraph P1["Phase 1 — Document Extraction"]
+        direction TB
+        P1A["DocumentParser\nMarker → Markdown, hình, bảng"]
+        P1B["AssetManager\nLưu ảnh vào data/assets/{doc_id}/"]
+        P1C["VisionCaptionGenerator\nSinh caption cho ảnh"]
+        P1D["ContextWindowBuilder\nGom → DocumentContext JSON"]
+        P1E["generate_charts\nSinh biểu đồ từ bảng"]
+        P1A --> P1B --> P1C --> P1D --> P1E
+    end
+
+    subgraph P2["Phase 2 — LangGraph Lecture Workflow"]
+        direction TB
+        P2A["🤖 Planner\ncreate_outline + generate_title"]
+        P2B["🤖 PlanSpecer\noutline → slide specs JSON"]
+        P2C["🤖 Writer\ndraft_slide_from_outline"]
+        P2D["🤖 Reviewer (async)\n3 criteria song song"]
+        P2E{should_continue?}
+        P2F["🤖 WriterRefiner\nrefine failed slides"]
+        P2G["backtrack_to_planner\nCoverage feedback"]
+        P2H["finalize_slides\nKhôi phục best slides"]
+        P2A --> P2B --> P2C --> P2D --> P2E
+        P2E -- "retry (iter<3)" --> P2F --> P2D
+        P2E -- "backtrack\n(coverage≥5 issues)" --> P2G --> P2A
+        P2E -- "end" --> P2H
+    end
+
+    subgraph P3["Phase 3 — Multimodal Processing"]
+        direction TB
+        P3A["load_lecture"]
+        P3B["generate_queries\n(LLM → visualization queries)"]
+        P3C["aggregate_media\n(gom ảnh + bảng)"]
+        P3D["distribute_images\n(image-finds-slide)"]
+        P3E["distribute_tables\n(LLM scoring)"]
+        P3A --> P3B --> P3C
+        P3C --> P3D
+        P3C --> P3E
+    end
+
+    subgraph P4["Phase 4 — Slide Generation"]
+        direction TB
+        P4A["SlidePickMerge\nChọn layout + sinh Slidev .md"]
+        P4B["SlideImproving\nVLM loop điều chỉnh image_width"]
+        P4C["slidev export → PDF"]
+        P4D["_package_output\nPDF + JSON + slide_images/"]
+        P4A --> P4B --> P4C --> P4D
+    end
+
+    INPUT --> P1 --> P2 --> P3 --> P4
+    P4 --> OUTPUT["📦 output/{lecture_id}/{model}/\n└─ PDF, JSON, slide_images/"]
+```
+
+---
+
+## Phase 1 — Document Extraction
+**File:** `src/extractor/extract_file.py`  
+**Đầu vào:** File PDF/DOCX  
+**Đầu ra:** `data/context/{doc_id}.json` (`DocumentContext`)
+
+### Các bước xử lý:
+| Bước | Module | Mô tả |
+|------|--------|--------|
+| 1/6 | `DocumentParser` | Dùng Marker parse PDF → Markdown, trích ảnh, bảng |
+| 2/6 | `AssetManager` | Lưu ảnh có bytes hợp lệ vào `data/assets/{doc_id}/images/` |
+| 3/6 | *(collect)* | Thu thập bảng dạng Markdown → `TableData[]` |
+| 4/6 | `ContextWindowBuilder` | Gộp tất cả thành một `DocumentContext` duy nhất |
+| 5/6 | *(save)* | Serialize → `data/context/{doc_id}.json` |
+| 6/6 | `generate_charts` | LLM quyết định bảng nào có thể vẽ → sinh PNG chart |
+
+> **Idempotent:** Nếu `{doc_id}.json` đã tồn tại → bỏ qua, trả về path ngay.
+
+---
+
+## Phase 2 — LangGraph Lecture Workflow
+**File:** `src/workflow/graph.py`, `src/preprocessor/preprocessing_context.py`  
+**Framework:** LangGraph `StateGraph`  
+**Đầu vào:** `DocumentContext`  
+**Đầu ra:** `data/lectures/{doc_id}/{doc_id}.json` + `_outline.md` + `_plan_spec.json`
+
+### State (`WorkflowState`):
+```python
+{
+    document_context, lecture_plan, lecture_title,
+    slides, current_section_idx, current_iteration,
+    reviewer_feedback, best_slides, best_slides_score,
+    slide_specs, planner_backtrack_used, coverage_feedback
+}
+```
+
+### Các Node trong Graph:
+
+#### 🤖 Planner (`PlannerAgent`)
+- Phân tích độ dài văn bản → chọn complexity level (concise / detailed / comprehensive)
+- Sinh outline Markdown phân cấp (`#` major, `##` sub)
+- Sinh lecture title từ outline
+- **Nếu có coverage_feedback** (từ backtrack): tích hợp vào prompt để cải thiện
+
+#### 🤖 PlanSpecer (`PlanSpecerAgent`)
+- Chuyển outline thành danh sách `Slide` specs phẳng (1 spec/heading)
+- Phân loại `slide_type`: `content | have_table | have_formula | comparison | two_sub_contents`
+- Retry tối đa 3 lần nếu JSON invalid hoặc thiếu heading
+
+#### 🤖 Writer (`WriterAgent`)
+- Nhận outline + slide_specs + DocumentContext
+- Sinh nội dung chi tiết cho từng slide → `List[SlideContent]`
+
+#### 🤖 Reviewer (`ReviewerAgent`) — **Async, 3 criteria song song**
+
+| Criterion | Mô tả | Severity |
+|-----------|--------|----------|
+| `faithfulness` | So sánh nội dung slide với tài liệu gốc, phát hiện hallucination | critical / minor |
+| `coverage_and_clarity` | Kiểm tra đủ coverage theo outline và rõ ràng với sinh viên | critical / minor |
+| `presentation_quality` | Format: ≤5 bullets, ≤15 words/bullet, tiêu đề rõ ràng, flow | critical / minor |
+
+#### Điều kiện tiếp theo (`should_continue`):
+```
+passed → end (finalize)
+iter < 3 → retry (WriterRefiner)
+coverage_critical ≥ 5 AND backtrack chưa dùng → backtrack_to_planner
+else → end
+```
+
+> **Best-tracking:** Mỗi iteration, nếu số `critical issues` thấp hơn best hiện tại → cập nhật `best_slides`. Kết thúc luôn restore `best_slides`.
+
+---
+
+## Phase 3 — Multimodal Processing
+**File:** `src/multimodal/graph.py`, `src/multimodal/multimodal_processing.py`  
+**Framework:** LangGraph `StateGraph` (đồng bộ)  
+**Đầu vào:** `{doc_id}.json` (lecture)  
+**Đầu ra:** `{doc_id}_multimodal.json`, `_image_distribution.json`, `_table_distribution.json`
+
+### Flow:
+```
+load_lecture → generate_queries → aggregate_media → [distribute_images ∥ distribute_tables]
+```
+
+| Node | Agent | Mô tả |
+|------|-------|--------|
+| `load_lecture` | — | Load lecture JSON vào state |
+| `generate_queries` | `GenerateQueryAgent` | LLM sinh visualization queries cho mỗi slide |
+| `aggregate_media` | `VisualAggregation` | Gom tất cả ảnh + bảng từ DocumentContext |
+| `distribute_images` | `ImageDistribution` | Chiến lược: image-finds-slide (cosine similarity hoặc caption matching) |
+| `distribute_tables` | `TableChartDistribution` | LLM scoring: bảng nào phù hợp slide nào |
+
+> Hai nhánh `distribute_images` và `distribute_tables` chạy **song song**.
+
+---
+
+## Phase 4 — Slide Generation
+**File:** `src/generator/slide_gen.py`  
+**Đầu vào:** `{doc_id}_multimodal.json`  
+**Đầu ra:** PDF + slide images tại `output/{lecture_id}/{model_name}/`
+
+### Step 1: `SlidePickMerge.build()` — Tạo Slidev Markdown
+1. Xóa `slidev/public/assets/` và copy ảnh/charts từ `data/assets/` vào
+2. Sinh config frontmatter + greeting slide
+3. Sinh Table of Contents từ outline
+4. Với mỗi slide → chọn layout phù hợp:
+
+| slide_type | Layout được chọn |
+|-----------|-----------------|
+| `comparison` | `comparison_layout` |
+| `two_sub_contents` | `two_contents_in_a_slide_layout` |
+| `have_formula` | `formula_top_layout` hoặc `formula_below_layout` (random) |
+| `have_table` + chart | image layout (pick_image_layout theo aspect ratio) |
+| có ảnh phân phối | image layout (1 hoặc 2 ảnh, theo aspect ratio + random) |
+| mặc định | `only_content` hoặc `two_cols_content_layout` (nếu dài) |
+
+5. Sinh goodbye slide
+6. Ghi `{lecture_id}.md` + `_layout_distribution.json`
+
+### Step 2: `SlideImproving.run()` — VLM Loop Cải Thiện
+Lặp tối đa `max_iterations` (mặc định 3):
+
+```
+Export PDF  →  PDF→images  →  Evaluate each slide  →  Adjust image_width  →  Replay layouts  →  Repeat
+```
+
+**Evaluation logic per slide (chỉ slides có `image_width`):**
+1. **OCR check (VLM):** Extract text từ slide image → `fuzzy_score` vs expected content
+   - `score < 90` → shrink image (text bị che)
+   - `90 ≤ score < 95` → shrink nhỏ hơn
+   - `score ≥ 98` → check empty space
+2. **Empty space check (VLM):** `LARGE_EMPTY_SPACE` → grow, `MEDIUM_EMPTY_SPACE` → grow nhỏ hơn
+3. **Settled set:** Slide không cần điều chỉnh → bỏ qua các vòng sau (tối ưu)
+4. Nếu không có thay đổi nào → dừng sớm
+
+### Step 3: Package Output
+- Copy PDF → `output/{lecture_id}/{model_name}/{lecture_id}-export.pdf`
+- Copy JSON → cùng thư mục
+- Render từng trang PDF → `slide_images/slide_XXXX.jpg`
+
+---
+
+## Cấu Trúc Thư Mục Dữ Liệu
+
+```
+data/
+├── raw/              # Input PDFs
+├── context/          # Phase 1 output: {doc_id}.json (DocumentContext)
+├── assets/
+│   └── {doc_id}/
+│       ├── images/   # Ảnh trích từ tài liệu
+│       └── charts/   # Biểu đồ sinh từ bảng
+└── lectures/
+    └── {lecture_id}/
+        ├── {lecture_id}.json              # Phase 2: lecture + slides
+        ├── {lecture_id}_outline.md        # Phase 2: outline
+        ├── {lecture_id}_plan_spec.json    # Phase 2: slide specs
+        ├── {lecture_id}_multimodal.json   # Phase 3: with media
+        ├── {lecture_id}_image_distribution.json
+        ├── {lecture_id}_table_distribution.json
+        └── {lecture_id}_layout_distribution.json  # Phase 4
+
+output/
+└── {lecture_id}/
+    └── {model_name}/
+        ├── {lecture_id}-export.pdf
+        ├── {lecture_id}.json
+        └── slide_images/
+            ├── slide_0001.jpg
+            └── ...
+```
+
+---
+
+## Các LLM/VLM Được Sử Dụng
+
+| Vai trò | Config key | Dùng ở |
+|---------|-----------|--------|
+| LLM chính | `LLM_MODEL_NAME` | Phase 2 (tất cả agents), Phase 3 (query + table distribution) |
+| VLM (vision) | `VLM_MODEL_NAME` | Phase 4 (OCR + empty space evaluation) |
+
+> Cấu hình qua `.env` → `src/utils/config.py`
+
+---
+
+## Cơ Chế Idempotency
+
+Mỗi phase kiểm tra output đã tồn tại chưa trước khi chạy:
+- **Phase 1:** `data/context/{doc_id}.json` tồn tại → skip
+- **Phase 2:** `data/lectures/{doc_id}/{doc_id}.json` tồn tại → skip  
+- **Phase 3:** `_multimodal.json` + `_image_distribution.json` + `_table_distribution.json` tồn tại → skip
+- **Phase 4:** `{lecture_id}-export.pdf` tồn tại → skip build & improve

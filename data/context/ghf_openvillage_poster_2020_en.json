@@ -1,0 +1,103 @@
+{
+  "document_id": "ghf_openvillage_poster_2020_en",
+  "source_file": "ghf_openvillage_poster_2020_en.pdf",
+  "processed_at": "2026-04-02T15:00:04.653903Z",
+  "text_content": {
+    "markdown": "# HEALTH TECHNOLOGY AS COMMONS: TRUSTABLE, AFFORDABLE, ADAPTABLE\n\nGeneva Health Forum 2020 · Open Village · www.openvillage.ch\n\n6 in 10 humans still have no access to care, or do not adhere to it, despite rising investments. 1-3 Alcohol-based hand rub<sup>4</sup> and WikiMed<sup>5</sup> illustrate how creating freely reproducible equipment and software with communities can: save millions of lives, increase integrity, cut costs by 90%.\n\nCooperation-driven care is the only way to realize the 2030 agenda in time: health for everyone.<sup>6</sup>\n\nWe present nine alternatives to the dominant proprietary excluding innovation model, to drive development towards a responsible, solidar society.\n\n#### Hand prosthesis to ease one's daily life\n\nA prosthetic hand usually costs 6-10 K€. Enable brings together over 30000 volunteers who design and distribute 3D-printed prostheses to vulnerable people. www.enablingthefuture.org + www.gre-nable.fr + www.enablenepal.org\n\n![](_page_0_Picture_7.jpeg)\n\n### Drugs produced with integrity\n\nIndia has a pioneer approach in pharmaceutics. Open Source Drug Discovery brings together 7900 people who collectively develop open-source, low-cost therapies for neglected diseases such as tuberculosis, malaria, leishmaniasis. www.osdd.net\n\n![](_page_0_Picture_10.jpeg)\n\n# Open-sourcing MRI could save the German healthcare over 200 M€ yearly\n\nMedical imaging is crucial in diagnosing, understanding and treating a number of diseases. The Open Source Imaging initiative gathers experts to create MRI scanners that can be built and maintained for a fraction of the cost of current MRIs. www.opensourceimaging.org\n\n![](_page_0_Picture_13.jpeg)\n\n#### Ultrasound scanner in the pocket\n\nOne in three persons have access to medical imaging. A portable ultrasound device usually costs 8-22 K€. EchOpen develops a probe to visualise organs on a smartphone. It helps guide the diagnosis and make patient management more fluid. www.echopen.org\n\n![](_page_0_Picture_16.jpeg)\n\n## Detecting seizures with wearables\n\n50 million people have epilepsy, 1/3 are drug resistant. Epileptic seizures lead to daily stress and social exclusion. We develop wearables and software to log and analyse biological data. www.aura.healthcare + www.openhumans.org + www.cri-paris.org\n\n![](_page_0_Picture_19.jpeg)\n\n# Making air pollution a visible matter\n\nIn Switzerland, one in seven premature deaths is linked to air pollution. LogAir helps everyone to map the air quality (fine particles) using cheap devices. Generating data can help avoid bad air quality, but can also motivate policy changes for healthier cities. www.logair.io\n\n![](_page_0_Picture_22.jpeg)\n\n## Collecting and visualizing data\n\nMindLogger makes it easy for anyone to collect, analyze, and visualize data using mobile devices. Users are able to build their own activities, such as surveys, quizzes, digital diaries, or cognitive tasks. www.mindlogger.org\n\n![](_page_0_Picture_25.jpeg)\n\n#### Transforming gesture into sound\n\nFuga explores the potential of emerging technologies for preventing, diagnosing, monitoring, and rehabilitating mental health disorders in line with recent advances in psychiatry and neuroscience. www.hoosh.space/fuga\n\n![](_page_0_Picture_28.jpeg)\n\n## Taking care of our breathing through play\n\nWorldwide, one child in ten has asthma, one senior in twenty has COPD, a disease caused by pollution and smoking. Breathing Games is developing a multiplayer game and a breath sensor to promote respiratory health. www.breathinggames.net\n\n![](_page_0_Picture_31.jpeg)\n\nWe also discuss ageing, public policies, quality systems, and cryptocurrencies.\n\n# Videos and more: www.openvillage.ch · Cite: www.doi.org/10.5281/zenodo.4327587\n\nFabio Balli A Mathilde Matringe Clement le Couedic Jon Schull Shikshya Gautam Patrick Jandard Emmanuel Kellner<sup>E</sup> Afroditi Anastasaki<sup>F</sup> Katerina Serada<sup>G</sup> Samir K Brahmachari<sup>H</sup> Lukas Winter<sup>I</sup> Pierre Lonchampt<sup>J</sup> Felix Schoeller<sup>K</sup> Anirudh Krishnakumar<sup>L</sup> Bastian Greshake<sup>M</sup> Kevin Lhoste<sup>N</sup> Christophe Parot<sup>O</sup> Guillaume Jeanmaire<sup>A</sup>\n\n<sup>A</sup>Breathing Games <sup>B</sup>EchOpen <sup>C</sup>Aura <sup>D</sup>Enable <sup>E</sup>LogAir <sup>F</sup>Open Geneva <sup>G</sup>SDGHub <sup>H</sup>Open Source Drug Discovery Open Source Imaging JHelpful Engineering KFuga LMindLogger MOpen Humans NCRI Paris OJoin Seeds\n\n7. Winter et al. Open Source Medical Devices for Innovation, Education and Global Health. 2018.\n\nCreative Commons BY-SA\n\n![](_page_0_Picture_41.jpeg)\n\n![](_page_0_Picture_42.jpeg)\n\n<sup>1.</sup> WHO and World Bank. Half the world lacks access to essential health services... 2018.\n\n<sup>2.</sup> WHO. Adherence to long-term therapies: evidence for action. 2003.\n\n<sup>3.</sup> World Bank. Current health expenditure (% of GDP). 2020. 4. WHO. Guide to Local Production: WHO-recommended Handrub Formulations.\n\n<sup>5.</sup> WikiMedia. Wiki Project Med/App. 2020. 6. United Nations. #Envision2030 Goal 3: Good Health and Well-being.",
+    "page_count": 1
+  },
+  "tables": [],
+  "assets": {
+    "images": [
+      {
+        "image_id": "img_00",
+        "file_path": "data/assets/ghf_openvillage_poster_2020_en/images/img_00.png",
+        "caption": "Hand prosthesis to ease one’s daily life",
+        "reference_context": null,
+        "metadata": {
+          "width": 614,
+          "height": 347,
+          "format": "png",
+          "file_size_kb": 205.52
+        }
+      },
+      {
+        "image_id": "img_03",
+        "file_path": "data/assets/ghf_openvillage_poster_2020_en/images/img_03.png",
+        "caption": "Ultrasound scanner in the pocket",
+        "reference_context": null,
+        "metadata": {
+          "width": 597,
+          "height": 353,
+          "format": "png",
+          "file_size_kb": 72.14
+        }
+      },
+      {
+        "image_id": "img_04",
+        "file_path": "data/assets/ghf_openvillage_poster_2020_en/images/img_04.png",
+        "caption": "Detecting seizures with wearables",
+        "reference_context": null,
+        "metadata": {
+          "width": 598,
+          "height": 310,
+          "format": "png",
+          "file_size_kb": 125.14
+        }
+      },
+      {
+        "image_id": "img_05",
+        "file_path": "data/assets/ghf_openvillage_poster_2020_en/images/img_05.png",
+        "caption": "Making air pollution a visible matter",
+        "reference_context": null,
+        "metadata": {
+          "width": 579,
+          "height": 332,
+          "format": "png",
+          "file_size_kb": 147.4
+        }
+      },
+      {
+        "image_id": "img_06",
+        "file_path": "data/assets/ghf_openvillage_poster_2020_en/images/img_06.png",
+        "caption": "Collecting and visualizing data",
+        "reference_context": null,
+        "metadata": {
+          "width": 619,
+          "height": 329,
+          "format": "png",
+          "file_size_kb": 63.72
+        }
+      },
+      {
+        "image_id": "img_07",
+        "file_path": "data/assets/ghf_openvillage_poster_2020_en/images/img_07.png",
+        "caption": "Transforming gesture into sound",
+        "reference_context": null,
+        "metadata": {
+          "width": 647,
+          "height": 341,
+          "format": "png",
+          "file_size_kb": 161.66
+        }
+      },
+      {
+        "image_id": "img_08",
+        "file_path": "data/assets/ghf_openvillage_poster_2020_en/images/img_08.png",
+        "caption": "Taking care of our breathing through play",
+        "reference_context": null,
+        "metadata": {
+          "width": 608,
+          "height": 335,
+          "format": "png",
+          "file_size_kb": 111.32
+        }
+      }
+    ]
+  },
+  "metadata": {
+    "total_images": 7,
+    "total_tables": 0,
+    "processing_time_seconds": 55.91
+  }
+}

@@ -20,14 +20,13 @@ class Config:
     EVAL_BASE_URL = os.getenv("EVAL_BASE_URL")
     EVAL_API_KEY = os.getenv("EVAL_API_KEY")
     
-    # Folder Configs
     BASE_DIR = Path(__file__).parent.parent.parent
     DATA_DIR = BASE_DIR / "data"
+    OUTPUT_DIR = BASE_DIR / "output"
     RAW_DIR = DATA_DIR / "raw"
     ASSETS_DIR = DATA_DIR / "assets"
     CONTEXT_DIR = DATA_DIR / "context"
     LECTURES_DIR = DATA_DIR / "lectures"
-    GENERATED_IMAGES_DIR = ASSETS_DIR / "generated"
     THEME_PATH = DATA_DIR / "theme" / "theme.json"
     
     # Vision Configs
@@ -37,13 +36,21 @@ class Config:
     # IMAGE Configs
     DEFAULT_IMAGE_FORMAT = "png"
     MAX_IMAGE_SIZE = (2048, 2048)
+    MIN_WH_RATIO_IMAGE_DOWNLOAD = 0.556
 
     # THRESHOLD Configs
-    CONFIDENCE_FEEDBACK_THRESHOLD = 0.3
-    FEEDBACK_INTERATION_NUMBER = 3
-    SLIDE_ITERATION_NUMBER = 3
+    CRITICAL_CONFIDENCE_THRESHOLD = 0.90   
+    MAJOR_CONFIDENCE_THRESHOLD    = 0.85   
+    MINOR_CONFIDENCE_THRESHOLD    = 0.80   
+    FEEDBACK_INTERATION_NUMBER = 1
 
-    
+    BACK_PLANNER_CRITICAL_NUM = 5
+    BACK_PLANNER_MAJOR_NUM = 7
+    BACK_PLANNER_MINOR_NUM = 10
+
+    SLIDE_IMAGE_WIDTH_STEP = 5
+    SLIDE_IMPROVING_MAX_ITERATION = 3
+
     @classmethod
     def validate(cls):
         if not cls.OPENAI_API_KEY:
@@ -52,7 +59,6 @@ class Config:
         cls.ASSETS_DIR.mkdir(parents=True, exist_ok=True)
         cls.CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
         cls.LECTURES_DIR.mkdir(parents=True, exist_ok=True)
-        cls.GENERATED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 config = Config()
 

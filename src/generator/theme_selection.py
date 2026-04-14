@@ -1,7 +1,6 @@
 import json
-import llm_extension
-from langchain_openai import ChatOpenAI
 from src.utils.config import Config
+from src.utils.llm import chat
 from src.utils.parse_llm_response import parse_json_response
 
 
@@ -38,9 +37,8 @@ Return ONLY valid JSON with the chosen theme name:
 {{"theme": "<theme_name>"}}
 """
 
-    llm = ChatOpenAI(model=model, temperature=0.2, max_tokens=200)
-    response = llm.invoke([{"role": "user", "content": prompt}])
-    result = parse_json_response(response.content, llm.invoke, expect_list=False)
-
+    _invoke = lambda msgs: chat(model=model, messages=msgs, temperature=0.2, max_tokens=200)
+    response = _invoke([{"role": "user", "content": prompt}])
+    result = parse_json_response(response, _invoke, expect_list=False)
     theme_name = result.get("theme", "default") if isinstance(result, dict) else "default"
     return get_theme(theme_name)

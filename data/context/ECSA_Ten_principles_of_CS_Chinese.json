@@ -1,0 +1,31 @@
+{
+  "document_id": "ECSA_Ten_principles_of_CS_Chinese",
+  "source_file": "ECSA_Ten_principles_of_CS_Chinese.pdf",
+  "processed_at": "2026-04-02T14:56:38.647050Z",
+  "text_content": {
+    "markdown": "![](_page_0_Picture_2.jpeg)\n\n![](_page_0_Picture_3.jpeg)\n\n![](_page_0_Picture_4.jpeg)\n\n## 公众科学原**则**\n\n## 公众科学是一个灵活的概念,可以在多元的情境和**领域适应和应用**\n\nThe statements below were developed by the 'Sharing best practice and building capacity' working group of the European Citizen Science Association, led by the Natural History Museum London with input from many members of the Association, to set out some of the key principles which as a community we believe underlie good practice in citizen science. The translation into Chinese done by Yanjing Hao, requested by the Commons Lab and the China Environment Forum; both programs are part of the Woodrow Wilson International Centre for Scholars.\n\n- 1. 公众科学项目积极地让公众参与到科学研究中来,从而生成新知识或新的理解。公众可以在项目 中作为贡献者,合作者或是项目领导,扮演一个有意义的角色。\n- 2. 公众科学项目能够得出具体的科学结果。例如,回答一个研究问题或是对保护行动,管理决策或 是环境政策提供信息。\n- 3. 专业科学家和公众科学家都会从中受益。这些益处包括研究结果的出版,学习的机会,个人参与 的乐趣,社会益处,通过对科学证据作出贡献而获得的满足感,例如解决本地、国内以及国际问 题,并通过这些来影响政策的可能性。\n- 4. 如果他们愿意的话,公众科学家也可以参与到科学流程的多个阶段中。这个可能包括制定研究问 题,设计研究方法,收集分析数据,以及传达研究结果。\n- 5. 公众科学家会获得项目的回馈意见。例如,他们的数据是被如何使用的,以及最终的研究、政策 和社会影响是什么。\n- 6. 像其他科研方式一样,公众科学被视为一种研究方式,当然有一些限制和偏见是必须要考虑到 并且控制的。但是,不像传统的研究方式,公众科学为更多更广的公众参与提供了机会,而且还 展示了科学的民主性。\n- 7. 只要有可能,公众科学的项目数据和元数据都会作为公开信息,研究结果也会公布在一个公开 的平台。除非有一些安全或隐私的问题导致信息无法公开,否者数据分享会发生在项目中或是项 目后。\n- 8. 公众科学家也会在项目结果和出版物中被认可。\n\n- 9. 公众科学项目也会被评估,评估内容包括它的科学成果、数据质量、参与人经验和更广泛的社会 和政策影响。\n- 10. 公众科学项目的领导要考虑项目活动所涉及的围绕版权、知识产权、数据分享协议、保密、署名以 及环境影响方面的法律和道德问题。\n\nApril 2015, Washington, D.C.",
+    "page_count": 2
+  },
+  "tables": [],
+  "assets": {
+    "images": [
+      {
+        "image_id": "img_00",
+        "file_path": "data/assets/ECSA_Ten_principles_of_CS_Chinese/images/img_00.png",
+        "caption": "Cite this document as: ECSA (European Citizen Science Association). 2015. Ten Principles of Citizen Science. Berlin. http://doi.org/10.17605/OSF.IO/XPR2N",
+        "reference_context": null,
+        "metadata": {
+          "width": 338,
+          "height": 337,
+          "format": "png",
+          "file_size_kb": 39.88
+        }
+      }
+    ]
+  },
+  "metadata": {
+    "total_images": 1,
+    "total_tables": 0,
+    "processing_time_seconds": 10.47
+  }
+}

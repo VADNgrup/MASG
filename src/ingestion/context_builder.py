@@ -7,8 +7,6 @@ from src.models.asset import AssetCollection, ImageAsset
 from src.ingestion.parser import ParsedContent
 from src.utils.file_utils import save_json
 from src.utils.config import config
-from llama_parse import LlamaParse
-from src.utils.config import config
 
 
 class ContextWindowBuilder:
@@ -24,11 +22,10 @@ class ContextWindowBuilder:
         images: List[ImageAsset]
     ) -> DocumentContext:
         
-        # full_text already contains tables from extract_texts()
         full_text = parsed_content.full_text
         
         text_content = TextContent(
-            markdown=full_text,  # Tables already included in full_text
+            markdown=full_text,
             page_count=parsed_content.page_count
         )
         

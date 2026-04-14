@@ -6,13 +6,19 @@ from src.workflow.agents.writer import WriterAgent
 
 
 def _build_slide_feedback(slide_review: SlideReview) -> str:
-    issues: List[Issue] = slide_review.convincing_critical_issues
-    if not issues:
-        issues = slide_review.minor_issues
+    """Build a feedback string from all issues that passed their per-severity
+    confidence threshold (CRITICAL > 0.9, MAJOR > 0.85, MINOR > 0.8).
+    Ordered by severity so the writer addresses the most important issues first.
+    """
+    severity_order = {"critical": 0, "major": 1, "minor": 2}
+    issues: List[Issue] = sorted(
+        slide_review.convincing_issues,
+        key=lambda i: severity_order.get(i.severity.value, 99),
+    )
     if not issues:
         return ""
 
-    lines = ["The following issues were found in this slide and must be fixed:"]
+    lines = ["The following issues were found in this slide and must be addressed:"]
     for i, issue in enumerate(issues, 1):
         lines.append(
             f"  {i}. [{issue.severity.value.upper()}] {issue.location}: "
@@ -36,11 +42,7 @@ class WriterRefinerAgent:
 
         if not failed_slides:
             return slides
-
-        # Build index-based lookup (1-based to match reviewer's slide_index)
         slides_by_index = {i: s for i, s in enumerate(slides, 1)}
-
-        # Build spec lookup by title
         specs_by_title = {}
         if slide_specs:
             for spec in slide_specs:
@@ -58,33 +60,24 @@ class WriterRefinerAgent:
                 continue
 
             slide_title = original_slide.slide.slide_title
-
-            # Find matching spec for this slide
             spec = specs_by_title.get(slide_title.lower())
             if not spec:
-                # Fallback: use the existing slide's spec
                 spec = original_slide.slide
-
             section = self._find_section(slide_title, outline_numbered_md)
-
             current_slides_list = list(slides_by_index.values())
             parent_context: Optional[str] = self.writer.get_relevant_context(
                 section,
                 outline_numbered_md,
                 current_slides_list,
             )
-
             feedback_str = _build_slide_feedback(slide_review)
-
             print(f"    Re-drafting slide {slide_idx}: '{slide_title}'")
-
             refined_slide = self.writer.draft_a_slide(
                 slide_spec=spec,
                 context=context,
                 parent_relevant_context=parent_context,
                 feedback=feedback_str if feedback_str else None,
             )
-
             slides_by_index[slide_idx] = refined_slide
 
         return [slides_by_index[i] for i in sorted(slides_by_index.keys())]

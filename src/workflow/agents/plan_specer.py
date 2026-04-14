@@ -10,22 +10,24 @@ from src.models.slide import Slide, Table, SlideType
 class PlanSpecerAgent:
     """
     Intermediate agent between planner and writer.
-    Converts the outline into a flat array of Slide JSON specifications using LLM.
-    Each heading (both # and ##) produces one Slide spec.
+    Converts the full outline into a flat array of Slide JSON specifications
+    using a single LLM call.  Retries if JSON is invalid or if any heading
+    from the outline is missing from the output.
     """
 
     MAX_FULL_TEXT_LENGTH = 10_000
+    MAX_RETRIES = 3
 
     def __init__(self, model: str):
         self.model = model
 
     def _chat(self, messages: list) -> str:
-        return chat(self.model, messages, temperature=0.3, max_tokens=8000)
+        return chat(self.model, messages, temperature=0.3, max_tokens=16000)
 
     @staticmethod
     def outline_md_to_number(outline_md: str) -> str:
         """
-        Convert markdown headings (#, ##, ###, ...) into numbered format.
+        Convert markdown headings (#, ##, ###, …) into numbered format.
 
         Example:
             # Introduction          -> 1. Introduction
@@ -65,37 +67,58 @@ class PlanSpecerAgent:
 
         return "\n".join(result_lines)
 
-    def _split_outline_by_major_headings(self, numbered_outline: str) -> List[str]:
-        lines = numbered_outline.splitlines()
-        chunks: List[str] = []
-        current_chunk_lines: List[str] = []
-
-        for line in lines:
+    @staticmethod
+    def _extract_expected_titles(numbered_outline: str) -> List[str]:
+        """Return every numbered heading line from the outline as a canonical title."""
+        titles = []
+        for line in numbered_outline.splitlines():
             stripped = line.strip()
-            if re.match(r'^\d+\.\s+', stripped):
-                if current_chunk_lines:
-                    chunks.append("\n".join(current_chunk_lines))
-                current_chunk_lines = [stripped]
-            elif stripped:
-                current_chunk_lines.append(stripped)
+            if re.match(r'^\d[\d.]*[\. ]', stripped):
+                titles.append(stripped)
+        return titles
 
-        if current_chunk_lines:
-            chunks.append("\n".join(current_chunk_lines))
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        """Lower-case and collapse whitespace for loose comparison."""
+        return re.sub(r'\s+', ' ', title.strip().lower())
 
-        return chunks
+    @classmethod
+    def _find_missing_titles(
+        cls, raw_specs: List[Dict], expected_titles: List[str]
+    ) -> List[str]:
+        """
+        Return the list of expected headings that have no matching slide spec.
+        Matching is done by the numeric prefix (e.g. '1.', '1.1', '2.1.3').
+        """
+        def prefix_of(title: str) -> str:
+            m = re.match(r'^([\d.]+)', title.strip())
+            return m.group(1).rstrip('.') if m else ''
 
-    def _truncate_full_text(self, context: DocumentContext) -> str:
-        full_text = context.text_content.markdown
-        return full_text[:self.MAX_FULL_TEXT_LENGTH] if len(full_text) > self.MAX_FULL_TEXT_LENGTH else full_text
+        returned_prefixes = {
+            prefix_of(d.get('slide_title', ''))
+            for d in raw_specs
+            if isinstance(d, dict)
+        }
 
-    def _build_prompt(self, section_chunk: str, full_text: str, context: DocumentContext) -> str:
+        missing = []
+        for expected in expected_titles:
+            if prefix_of(expected) not in returned_prefixes:
+                missing.append(expected)
+        return missing
+
+    def _build_prompt(
+        self,
+        numbered_outline: str,
+        full_text: str,
+        context: DocumentContext,
+    ) -> str:
         schema_example = (
             '{\n'
-            '  "slide_title": "<title from the heading>",\n'
+            '  "slide_title": "<title from the heading, preserving its number prefix>",\n'
             '  "slide_type": "<one of: content, have_table, have_formula, comparison, two_sub_contents>",\n'
             '  "goal": "<1-2 sentence goal describing what this slide should convey>",\n'
-            '  "table": {"table_markdown": "<markdown table string> if slide_type is have_table", "table_caption": "<caption>"} or null,\n'
-            '  "latex_block_formula": "<LaTeX block formula string> if slide_type is have_formula" or null\n'
+            '  "table": {"table_markdown": "<markdown table string>", "table_caption": "<caption>"} or null,\n'
+            '  "latex_block_formula": "<LaTeX block formula string>" or null\n'
             '}'
         )
 
@@ -104,80 +127,73 @@ class PlanSpecerAgent:
 You are a lecture slide specification architect.
 
 # TASK
-Given a section of a lecture outline and the source document text, produce a JSON array of slide specifications.
-Each heading in the outline (including major `#` and sub `##` or sub of sub `###` etc.) must produce exactly ONE JSON object.
+Given the FULL numbered lecture outline and the source document text, produce a JSON array
+of slide specifications — one object per heading line (both major `1.` and sub `1.1`, `1.1.1`, etc.).
+Every heading in the outline MUST have exactly ONE corresponding JSON object.
 
 # INPUT
-## Outline Section
-{section_chunk}
+## Full Numbered Outline
+{numbered_outline}
 
 ## Source Document (truncated)
 {full_text}
 
-## List of Table extracted from document: 
+## Tables extracted from document
 {context.tables}
 
 # IMPORTANT CONSTRAINTS
 1. `slide_type` must be one of: "content", "have_table", "have_formula", "comparison", "two_sub_contents".
-2. Use "have_table" ONLY if the source document contains a table supporting this slide. If so, include `table` with the markdown and caption. Otherwise set `table` to null.
-2.1. Prioritize extracting the tables mentioned in the document. Note that the tables are organized in markdown format directly within the document.
-2.2. For tables, only tables with more than 2 rows and 2 columns will be extracted. Tables that do not meet this condition will be represented as content.
-3. Use "have_formula" ONLY if the source document contains a block-level formula supporting this slide. If so, include `latex_block_formula`. Otherwise set it to null.
-4. Use "comparison", `goal` must describe briefly about two comparsion object.
-5. Use "two_sub_contents", `goal` must describe briefly about two distinct sub-topics that should be shown side by side.
+2. Use "have_table" ONLY if the source document contains a table supporting this slide.
+   If so, include `table` with the markdown and caption. Otherwise set `table` to null.
+   2.1. Prioritize extracting the tables mentioned in the document.
+   2.2. Only tables with more than 2 rows and 2 columns. Smaller tables → use "content".
+3. Use "have_formula" ONLY if the source document contains a block-level formula for this slide.
+   If so, include `latex_block_formula`. Otherwise set it to null.
+4. Use "comparison": `goal` must describe the two comparable entities briefly.
+5. Use "two_sub_contents": `goal` must describe the two distinct sub-topics shown side by side.
 6. Default to "content" when none of the above special types apply.
 
-# IMPORTANT
-- The `slide_title` MUST preserve the numbering prefix exactly as it appears in the outline heading (e.g. "1. Introduction", "1.1 Background").
+# CRITICAL
+- `slide_title` MUST preserve the numbering prefix EXACTLY as it appears in the outline
+  (e.g. "1. Introduction", "1.1 Background", "2.1.3 Survey Design").
+- The output array MUST contain one entry for EVERY line in the outline above — no omissions.
 
 # EXAMPLE
-## Only content:
-{{
-    "slide_title": "1. Title A",
+[
+  {{
+    "slide_title": "1. Introduction",
     "slide_type": "content",
-    "goal": "Goal A, Goal B",
-    "table": null
+    "goal": "Introduce the topic and motivate the study.",
+    "table": null,
     "latex_block_formula": null
-}}
-## Have table:
-{{
-    "slide_title": "1.1 Title A",
+  }},
+  {{
+    "slide_title": "1.1 Background",
+    "slide_type": "content",
+    "goal": "Describe the historical and theoretical background.",
+    "table": null,
+    "latex_block_formula": null
+  }},
+  {{
+    "slide_title": "2. Methods",
     "slide_type": "have_table",
-    "goal": "Goal A, Goal B",
+    "goal": "Summarise the methodology used.",
     "table": {{
-        "table_markdown": "| Col1 | Col2 |\\n|------|------|\\n| Val1 | Val2 |",
-        "table_caption": "Caption A"
+      "table_markdown": "| Col1 | Col2 |\\n|------|------|\\n| Val1 | Val2 |",
+      "table_caption": "Overview of methods"
     }},
     "latex_block_formula": null
-}}
-## Have formula:
-{{
-    "slide_title": "1.2 Title A",
-    "slide_type": "have_formula",
-    "goal": "Goal A, Goal B",
-    "table": null
-    "latex_block_formula": "\\\\frac{{a}}{{b}}"
-}}
-## Comparison:
-{{
-    "slide_title": "2. Title A",
-    "slide_type": "comparison",
-    "goal": "Refers to the comparable entities A and B.",
-    "table": null
-    "latex_block_formula": null
-}}
-## Two sub contents:
-{{
-    "slide_title": "2.1 Title A",
-    "slide_type": "two_sub_contents",
-    "goal": "Refers to the two sub-topics A and B.",
-    "table": null
-    "latex_block_formula": null
-}}
+  }}
+]
+
 # OUTPUT FORMAT
 Return ONLY a valid JSON array. Each element must follow this schema:
 [{schema_example}]
 """
+
+    def _truncate_full_text(self, context: DocumentContext) -> str:
+        full_text = context.text_content.markdown
+        return full_text[:self.MAX_FULL_TEXT_LENGTH] if len(full_text) > self.MAX_FULL_TEXT_LENGTH else full_text
 
     def _parse_json_response(self, content: str) -> List[Dict]:
         invoke_fn = lambda msgs: type('R', (), {'content': self._chat(msgs)})()
@@ -208,22 +224,56 @@ Return ONLY a valid JSON array. Each element must follow this schema:
         )
 
     def specify(self, outline_md: str, context: DocumentContext) -> List[Slide]:
-        """Convert the outline into a flat list of Slide specs."""
+        """
+        Convert the full outline into a flat list of Slide specs (one LLM call).
+        Retries up to MAX_RETRIES times if:
+          - JSON parsing fails, OR
+          - Any heading from the outline is missing in the output.
+        """
         full_text = self._truncate_full_text(context)
         numbered_outline = self.outline_md_to_number(outline_md)
-        chunks = self._split_outline_by_major_headings(numbered_outline)
+        expected_titles = self._extract_expected_titles(numbered_outline)
 
-        all_specs: List[Slide] = []
+        print(f"\n[PlanSpecer] Outline has {len(expected_titles)} heading(s) to spec.")
 
-        for i, chunk in enumerate(chunks):
-            print(f"Specifying section {i + 1}/{len(chunks)}...")
-            prompt = self._build_prompt(chunk, full_text, context)
-            content = self._chat([{"role": "user", "content": prompt}])
-            raw_specs = self._parse_json_response(content)
-            all_specs.extend(self._dict_to_slide(d) for d in raw_specs)
+        last_raw_specs: List[Dict] = []
 
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            print(f"[PlanSpecer] Attempt {attempt}/{self.MAX_RETRIES} — calling LLM for full outline...")
+            prompt = self._build_prompt(numbered_outline, full_text, context)
+            raw_content = self._chat([{"role": "user", "content": prompt}])
+            try:
+                raw_specs = self._parse_json_response(raw_content)
+            except Exception as e:
+                print(f"[PlanSpecer] JSON parse error on attempt {attempt}: {e}")
+                if attempt < self.MAX_RETRIES:
+                    print("[PlanSpecer] Retrying...")
+                continue
+
+            if not isinstance(raw_specs, list):
+                print(f"[PlanSpecer] ✗ Expected a JSON array, got {type(raw_specs).__name__}. Retrying...")
+                continue
+            last_raw_specs = raw_specs
+            missing = self._find_missing_titles(raw_specs, expected_titles)
+            if missing:
+                print(
+                    f"[PlanSpecer] {len(missing)} heading(s) missing from output "
+                    f"(e.g. {missing[:3]}{'...' if len(missing) > 3 else ''})."
+                )
+                if attempt < self.MAX_RETRIES:
+                    print("[PlanSpecer] Retrying...")
+                continue
+            print(f"[PlanSpecer] All {len(raw_specs)} specs validated successfully.")
+            return self._build_slide_list(raw_specs)
+        print(
+            f"[PlanSpecer] WARNING: reached max retries ({self.MAX_RETRIES}). "
+            f"Using last result with {len(last_raw_specs)} spec(s) — may be incomplete."
+        )
+        return self._build_slide_list(last_raw_specs)
+
+    def _build_slide_list(self, raw_specs: List[Dict]) -> List[Slide]:
+        all_specs = [self._dict_to_slide(d) for d in raw_specs]
         for idx, slide in enumerate(all_specs, start=1):
             slide.slide_number = idx
-
-        print(f"Total slide specs generated: {len(all_specs)}")
+        print(f"[PlanSpecer] Total slide specs: {len(all_specs)}")
         return all_specs

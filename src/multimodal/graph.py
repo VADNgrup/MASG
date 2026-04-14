@@ -40,7 +40,7 @@ def create_multimodal_workflow() -> StateGraph:
             lecture_dict = json.load(f)
         
         print(f"Loaded lecture: {lecture_id}")
-        print(f"   Total slides: {lecture_dict.get('metadata', {}).get('total_slides', 'N/A')}")
+        print(f"Total slides: {lecture_dict.get('metadata', {}).get('total_slides', 'N/A')}")
         
         return {
             "lecture_dict": lecture_dict
@@ -100,7 +100,7 @@ def create_multimodal_workflow() -> StateGraph:
         
         return {
             "image_distributions": distributions,
-            "aggregated_media": aggregated_media,  # propagate mutations (downloaded images added)
+            "aggregated_media": aggregated_media,
             "used_images": used_images
         }
     
@@ -133,14 +133,11 @@ def create_multimodal_workflow() -> StateGraph:
     workflow.add_node("distribute_images", distribute_images_node)
     workflow.add_node("distribute_tables", distribute_tables_node)
     
-    # Define workflow edges
     workflow.set_entry_point("load_lecture")
     workflow.add_edge("load_lecture", "generate_queries")
     workflow.add_edge("generate_queries", "aggregate_media")
-    # Parallel execution: both table and image distribution run after aggregate_media
     workflow.add_edge("aggregate_media", "distribute_images")
     workflow.add_edge("aggregate_media", "distribute_tables")
-    # Both converge to END
     workflow.add_edge("distribute_images", END)
     workflow.add_edge("distribute_tables", END)
     
