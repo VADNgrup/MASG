@@ -71,7 +71,7 @@ AVAILABLE TABLES AND IMAGES:
 
 """
 
-        MAX_RETRIES = 4
+        MAX_RETRIES = 3
         target_sections_int = int(target_main_sections)
 
         for attempt in range(1, MAX_RETRIES + 1):
@@ -81,19 +81,59 @@ AVAILABLE TABLES AND IMAGES:
             all_headings = [l for l in outline_md.splitlines() if re.match(r"^#{1,2}\s+\S", l)]
             n_major = len(major_sections)
             n_total = len(all_headings)
-            ok_major = (n_major <= target_sections_int)
-            ok_total = (n_total <= 12)
-            if ok_major and ok_total:
+
+            # --- validation checks ---
+            errors: list[str] = []
+
+            # Rule 1: must have more than 1 major section
+            if n_major <= 1:
+                errors.append(
+                    f"The outline has only {n_major} major section (line starting with '# '). "
+                    f"There must be at least 2 major sections."
+                )
+
+            # Rule 2: total major count must not exceed target
+            if n_major > target_sections_int:
+                errors.append(
+                    f"The outline has {n_major} major sections but the target is "
+                    f"exactly {target_main_sections}. Merge sections until valid."
+                )
+            # Rule 3: total slide count > 15 is invalid (each heading = 1 slide)
+            if n_total > 15:
+                errors.append(
+                    f"Total slide count ({n_total}) exceeds 15. "
+                    f"Reduce the number of headings so the deck has at most 15 slides."
+                )
+
+            # Rule 5: no major section may have exactly 1 subtitle
+            lines = outline_md.splitlines()
+            for i, line in enumerate(lines):
+                if re.match(r"^#\s+\S", line):
+                    # count consecutive ## lines belonging to this major
+                    sub_count = 0
+                    for j in range(i + 1, len(lines)):
+                        if re.match(r"^#\s+\S", lines[j]):
+                            break          # reached next major
+                        if re.match(r"^##\s+\S", lines[j]):
+                            sub_count += 1
+                    if sub_count == 1:
+                        errors.append(
+                            f"Major section '{line.strip()}' has exactly 1 subtitle. "
+                            f"Each major section must have 0 or at least 2 subtitles — never exactly 1."
+                        )
+
+            if not errors:
                 print("OUTLINE is VALID")
                 break
             else:
                 print("OUTLINE is INVALID")
+                error_list = "\n".join(f"- {e}" for e in errors)
                 prompt += f"""
 Old outline:
 {outline_md}
-Your previous outline FAILED validation:
-A major section is any line that starts with "# " (single hash + space). Let's think step-by-step and 
-produce EXACTLY {target_main_sections} and total heading count is less than or equal to 12. This is non-negotiable.
+Your previous outline FAILED validation with the following errors:
+{error_list}
+Let's think step-by-step and fix ALL errors above. This is non-negotiable.
 """
 
         return {"outline": outline_md}

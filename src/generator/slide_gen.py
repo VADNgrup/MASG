@@ -68,14 +68,17 @@ def run_pipeline(
     print(f"[slide_gen] Speaker  : {speaker_information or 'Slide Generation System'}")
 
     slidev_dir = _PROJECT_ROOT / "src" / "generator" / "slidev"
-    pdf_path = slidev_dir / f"{lecture_id}-export.pdf"
     md_path = slidev_dir / f"{lecture_id}.md"
 
-    if pdf_path.exists():
-        print(f"[slide_gen] PDF already exists, skipping build & improve: {pdf_path}")
+    model_name = (Config.LLM_MODEL_NAME or "unknown_model").replace("/", "_")
+    out_pdf_path = _PROJECT_ROOT / "output" / lecture_id / model_name / f"{lecture_id}-export.pdf"
+
+    if out_pdf_path.exists():
+        print(f"[slide_gen] Output PDF already exists, skipping build & improve: {out_pdf_path}")
         print(f"\n{'='*60}")
-        print(f"End Phase 4: Generated Slide in {md_path}")
+        print(f"End Phase 4: Slide already packaged at {out_pdf_path}")
         print(f"{'='*60}\n")
+        return
     else:
         print("[slide_gen] === Step 1: Building slide layout ===")
         if not title:
@@ -140,13 +143,13 @@ def _package_output(
         shutil.rmtree(images_dir)
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    # copy PDF
+    # move PDF
     pdf_src = slidev_dir / f"{lecture_id}-export.pdf"
     if not pdf_src.exists():
         raise FileNotFoundError(f"[package_output] PDF not found: {pdf_src}")
     pdf_dst = out_dir / f"{lecture_id}-export.pdf"
-    shutil.copy2(pdf_src, pdf_dst)
-    print(f"[package_output] PDF copied → {pdf_dst}")
+    shutil.move(str(pdf_src), pdf_dst)
+    print(f"[package_output] PDF moved → {pdf_dst}")
 
     # copy JSON
     json_dst = out_dir / lecture_json_path.name

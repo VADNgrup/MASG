@@ -93,13 +93,11 @@ def create_workflow() -> StateGraph:
         return {"slide_specs": specs}
 
     def writer_node(state: WorkflowState) -> Dict[str, Any]:
-        outline_md = state["lecture_plan"]["outline"]
         slide_specs = state.get("slide_specs", [])
-        slides = writer.draft_slide_from_outline(
-            outline_md,
-            state["document_context"],
+        print(f"  Writer — drafting {len(slide_specs)} slide(s) in one batch call...")
+        slides = writer.draft_slides(
             slide_specs=slide_specs,
-            feedback=None,
+            context=state["document_context"],
         )
         return {
             "slides":              slides,
@@ -111,6 +109,7 @@ def create_workflow() -> StateGraph:
             state["slides"],
             state["document_context"],
             state["lecture_plan"],
+            slide_specs=state.get("slide_specs", []),
         )
         write_iter = state.get("current_iteration", 0)
         _print_writer_review(f"Writer Reviewer (iteration {write_iter})", review)
@@ -178,7 +177,6 @@ def create_workflow() -> StateGraph:
             slides=list(state["slides"]),
             writer_review=review,
             context=state["document_context"],
-            outline_md=outline_md,
             slide_specs=state.get("slide_specs", []),
         )
         return {"slides": refined_slides}

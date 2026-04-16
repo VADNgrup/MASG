@@ -1,8 +1,10 @@
+import asyncio
 from src.utils.llm import chat, achat
 from typing import List, Dict, Any
 import json
+from dataclasses import asdict
 from src.models.context import DocumentContext
-from src.models.slide import SlideContent
+from src.models.slide import SlideContent, Slide
 from src.models.feedback import Issue, CriterionResult, SlideReview, WriterReview, Severity
 
 
@@ -15,11 +17,14 @@ class ReviewerAgent:
         slides: List[SlideContent],
         context: DocumentContext,
         lecture_plan: Dict[str, Any],
+        slide_specs: List[Slide] = None,
     ) -> WriterReview:
 
-        faith_reviews   = await self._evaluate_faithfulness(slides, context)
-        cov_reviews     = await self._evaluate_coverage_and_clarity(slides, lecture_plan, context)
-        pres_reviews    = await self._evaluate_presentation_quality(slides, lecture_plan)
+        faith_reviews, cov_reviews, pres_reviews = await asyncio.gather(
+            self._evaluate_faithfulness(slides, context),
+            self._evaluate_coverage_and_clarity(slides, lecture_plan, slide_specs or []),
+            self._evaluate_presentation_quality(slides, lecture_plan),
+        )
 
         merged: Dict[int, SlideReview] = {}
         for idx, slide in enumerate(slides, 1):
@@ -93,34 +98,49 @@ If you are not confident enough to meet the bar for a severity level, omit the i
         self,
         slides: List[SlideContent],
         lecture_plan: Dict[str, Any],
-        context: DocumentContext,
+        slide_specs: List[Slide],
     ) -> List[SlideReview]:
         slides_json = json.dumps(
             [{"slide_number": i, "slide_title": s.slide.slide_title, "content": s.content} for i, s in enumerate(slides, 1)],
             indent=2
         )
-        prompt = f"""You are a curriculum reviewer and a student evaluator. Assess both content completeness and conceptual clarity of the slides.
 
-PLANNED OUTLINE:
-{json.dumps(lecture_plan, indent=2)}
+        specs_json = json.dumps(
+            [
+                {
+                    "slide_number": i,
+                    "slide_title": spec.slide_title,
+                    "goal": spec.goal,
+                }
+                for i, spec in enumerate(slide_specs, 1)
+            ],
+            indent=2,
+            ensure_ascii=False,
+        ) if slide_specs else "(no specs provided)"
 
-SOURCE DOCUMENT (first 6000 chars):
-{context.text_content.markdown[:6000]}
+        prompt = f"""You are a curriculum reviewer. Your primary job is to verify that each slide strictly achieves its stated goal.
 
-SLIDES:
+SLIDE SPECIFICATIONS (the intended goal each slide MUST fulfil):
+{specs_json}
+
+SLIDES (actual generated content to evaluate):
 {slides_json}
+
+# CORE RULE
+Each slide has an explicit goal defined in the spec above.
+A slide PASSES only if its content directly and fully addresses that goal.
+A slide FAILS if its content is off-topic, too vague, or covers only a superficial part of the goal.
 
 Evaluate per slide on TWO dimensions:
 
-COVERAGE (outline completeness):
-1. Are sections from the outline missing or too superficial?
-2. Does any slide deviate from its intended focus in the outline?
-3. Is depth proportional to topic importance?
+COVERAGE — Goal adherence (most important):
+1. Does EVERY key idea stated in the goal appear in the slide content?
+2. Is there any part of the goal that is completely missing from the content?
+3. Does the slide drift away from its intended focus and cover something not in the goal?
 
-CLARITY (student comprehension):
+CLARITY — Student comprehension:
 1. Are key concepts named and explained without assuming prior knowledge?
-2. Is there enough context for a reader with no prior exposure to follow the main idea?
-3. Are any undefined terms or jargon used without explanation?
+2. Are any undefined terms or jargon used without explanation?
 
 Return ONLY valid JSON listing only slides WITH issues:
 {{
@@ -131,32 +151,23 @@ Return ONLY valid JSON listing only slides WITH issues:
         {{
           "severity": "critical",
           "location": "Slide 5",
-          "description": "Section '2.3 Applications' from outline is missing entirely",
-          "suggestion": "Add content covering the Applications section",
-          "confidence_score": 0.88
+          "description": "Goal required explaining X method in detail, but slide only names it without any elaboration",
+          "suggestion": "Add 2-3 bullets explaining how X method works as specified in the goal",
+          "confidence_score": 0.93
         }},
-        {{
-          "severity": "minor",
-          "location": "Slide 5, bullet 3",
-          "description": "Term 'backpropagation' used without explanation",
-          "suggestion": "Add a one-line definition of backpropagation",
-          "confidence_score": 0.75
-        }}
       ]
     }}
   ]
 }}
 Use severity as follows:
-- "critical": section from outline entirely missing, or slide content contradicts the planned focus — confidence > 0.90
-- "major": coverage is significantly too shallow, or a key concept is unexplained — confidence > 0.85
-- "minor": minor terminology gap or a suggestion to add a clarifying sentence — confidence > 0.80
+- "critical": slide completely fails its goal, or major part of the goal is absent — confidence > 0.90
+- "major": goal only partially met, an important concept from the goal is missing or too shallow — confidence > 0.85
+- "minor": minor gap in clarity or a small suggestion to better fulfil the goal — confidence > 0.80
 Omit any issue where you are not confident enough to meet the threshold for its severity."""
 
         content = await achat(self.model, [{"role": "user", "content": prompt}], temperature=0.2)
         return self._parse_slide_reviews("coverage_and_clarity", content, slides)
 
-
-    # ── Criterion 3: Presentation Quality ─────────────────────────────────────
     async def _evaluate_presentation_quality(
         self,
         slides: List[SlideContent],
@@ -201,13 +212,6 @@ Return ONLY valid JSON listing only slides WITH issues:
           "suggestion": "Split into 2 slides or reduce to 4-5 key points",
           "confidence_score": 0.9
         }},
-        {{
-          "severity": "minor",
-          "location": "Slide 2 title",
-          "description": "Title is vague ('Overview') — should be specific",
-          "suggestion": "Rename to reflect the actual topic covered",
-          "confidence_score": 0.8
-        }}
       ]
     }}
   ]

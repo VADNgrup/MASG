@@ -50,7 +50,8 @@ class SlidePickMerge:
 
         self._image_dist: Dict[int, List[dict]] = self._load_image_dist()
         self._table_dist: Dict[int, dict] = self._load_table_dist()
-        self.theme, self.font = select_theme(self._lecture)
+        outline_md = self.outline_path.read_text(encoding="utf-8") if self.outline_path.exists() else ""
+        self.theme, self.font = select_theme(outline_md)
         logging.info(f"====> Selected theme: {self.theme}")
         self._mgr = SlideLayoutManager(
             theme=self.theme,

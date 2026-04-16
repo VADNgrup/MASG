@@ -13,24 +13,24 @@ def get_theme(theme_name: str) -> dict:
     return "frankfurt", "STIX Two Tex t"
 
 
-def select_theme(lecture , model = Config.LLM_MODEL_NAME) -> dict:
+def select_theme(outline_md: str, model = Config.LLM_MODEL_NAME) -> dict:
     with open(Config.THEME_PATH, "r", encoding="utf-8") as f:
         themes = json.load(f)
 
     themes_description = "\n".join(
         f'- "{t["theme"]}": {t.get("serve", "")}' for t in themes
     )
-    lecture = json.dumps(lecture)[:5000]
+    outline_text = outline_md[:3000]
 
     prompt = f"""You are a helpful theme selection assistant.
 
-Given the following lecture/document content, choose the MOST suitable presentation theme.
+Given the following lecture outline, choose the MOST suitable presentation theme.
 
 ## Available Themes
 {themes_description}
 
-## Content
-{lecture}
+## Lecture Outline
+{outline_text}
 
 ## Output
 Return ONLY valid JSON with the chosen theme name:

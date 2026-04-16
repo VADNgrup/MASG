@@ -51,28 +51,35 @@ def main():
     parser.add_argument("--document_path", default = None, help="Path to input PDF/Docx file")
     parser.add_argument("--lecture_title", default=None, help="Customized title of the lecture")
     parser.add_argument("--speaker_information", default=None, help="Speaker information")
+    parser.add_argument("--limit", help="Limit the number of documents to process")
 
     args = parser.parse_args()
     default_document_folder = Config.RAW_DIR
     document_path = args.document_path
     lecture_title = args.lecture_title
     speaker_information = args.speaker_information
+    limit = int(args.limit) if args.limit is not None else len(os.listdir(default_document_folder))
+
 
     if document_path is None and lecture_title is None:
         document_list = os.listdir(default_document_folder)
         count = 1
         for document_name in document_list:
-            if document_name.endswith(".pdf"):
-                print(f"\nProcessing {count}/{len(document_list)}: {document_name} \n")
+            if document_name.endswith(".pdf") and count <= limit:
+                print(f"\nProcessing {count}/{limit}: {document_name} \n")
                 a_document_path = os.path.join(default_document_folder, document_name)
                 time_taken = gen_slide(a_document_path, lecture_title, speaker_information)
+                print(f"[full time taken] {time_taken}s")
                 count += 1
-                if count <= len(document_list) and time_taken is not None and time_taken > 120:
+                if not time_taken:
+                    continue
+                if time_taken > 120:
                     print("[main] Waiting 1 minutes before next document...")
                     time.sleep(60)
     elif document_path:
         print(f"\nProcessing {document_path} \n")
-        gen_slide(document_path, lecture_title, speaker_information)
+        time_taken = gen_slide(document_path, lecture_title, speaker_information)
+        print(f"[full time taken] {time_taken}s")
     else:
         print("Your arguments is FAILED, let's read my README.md")
 

@@ -9,7 +9,6 @@ class WorkflowState(TypedDict):
     lecture_plan:              Dict[str, Any]
     lecture_title:             str
     slides:                    List[SlideContent]
-    current_section_idx:       int
     current_iteration:         int
     reviewer_feedback:         Optional[WriterReview]
     best_slides:               Optional[List[SlideContent]]

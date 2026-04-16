@@ -11,7 +11,8 @@ cd D:\python
 .\myenv\Scripts\activate
 cd .\LecSlideGen
 # Convert all documents in data/raw to slides (speaker information is Optional)
-python -m main --speaker_information "Your Information"
+python -m main --speaker_information "Your Information" --limit 10
+python -m main --limit 1
 
 # For full pipeline with a single document (document_path is REQUIRED, lecture_title and speaker_information are Optional)
 python -m main --document_path data/raw/{file_name}.{file_type} --lecture_title "Your customized Title" --speaker_information "Your Information"

@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from src.utils.config import Config
 from src.multimodal.state import MultimodalState
-from src.multimodal.agents.generate_query import GenerateQueryAgent
 from src.multimodal.agents.visual_aggregation import VisualAggregation
 from src.multimodal.agents.image_distribution import ImageDistribution
 from src.multimodal.agents.table_chart_distribution import TableChartDistribution
@@ -23,7 +22,6 @@ def create_multimodal_workflow() -> StateGraph:
     workflow = StateGraph(MultimodalState)
     
     # Initialize agents
-    query_agent = GenerateQueryAgent(Config.LLM_MODEL_NAME)
     aggregation_agent = VisualAggregation()
     image_distribution_agent = ImageDistribution()
     table_distribution_agent = TableChartDistribution(Config.LLM_MODEL_NAME)
@@ -44,25 +42,6 @@ def create_multimodal_workflow() -> StateGraph:
         
         return {
             "lecture_dict": lecture_dict
-        }
-    
-    def generate_queries_node(state: MultimodalState) -> Dict[str, Any]:
-        """Generate visualization queries from lecture slides"""
-        lecture_dict = state["lecture_dict"]
-        
-        print("\nGenerating visualization queries...")
-        need_visualization = query_agent.generate_visualization_queries(
-            lecture_dict=lecture_dict
-        )
-        
-        print(f"Generated {len(need_visualization)} visualization queries")
-        for item in need_visualization[:3]:  # Show first 3
-            print(f"   - Slide {item['slide_number']}: {item['query'][:60]}...")
-        if len(need_visualization) > 3:
-            print(f"   ... and {len(need_visualization) - 3} more")
-        
-        return {
-            "need_visualization": need_visualization
         }
     
     def aggregate_media_node(state: MultimodalState) -> Dict[str, Any]:
@@ -128,20 +107,16 @@ def create_multimodal_workflow() -> StateGraph:
     
     # Add nodes to workflow
     workflow.add_node("load_lecture", load_lecture_node)
-    workflow.add_node("generate_queries", generate_queries_node)
     workflow.add_node("aggregate_media", aggregate_media_node)
     workflow.add_node("distribute_images", distribute_images_node)
     workflow.add_node("distribute_tables", distribute_tables_node)
-    
+
     workflow.set_entry_point("load_lecture")
-    workflow.add_edge("load_lecture", "generate_queries")
-    workflow.add_edge("generate_queries", "aggregate_media")
+    workflow.add_edge("load_lecture", "aggregate_media")
     workflow.add_edge("aggregate_media", "distribute_images")
     workflow.add_edge("aggregate_media", "distribute_tables")
     workflow.add_edge("distribute_images", END)
     workflow.add_edge("distribute_tables", END)
     
     return workflow.compile()
-    
-if __name__ == "__main__":
-    main()
+

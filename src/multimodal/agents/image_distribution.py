@@ -305,6 +305,12 @@ class ImageDistribution:
 
         return distributions
 
+    @staticmethod
+    def _is_major_slide(slide_title: str) -> bool:
+        """Return True if the slide is a top-level section header (e.g. '1. Introduction')."""
+        import re
+        return bool(re.match(r'^\d+\.\s', slide_title.strip()))
+
     def _step5_web_search_fallback(
         self,
         slides_without_images: List[Dict[str, Any]],
@@ -326,6 +332,10 @@ class ImageDistribution:
             slide_number = slide_info["slide_number"]
             slide_title = slide_info.get("slide_title", "")
             bullet_points = slide_info.get("bullet_points", [])
+
+            if self._is_major_slide(slide_title):
+                print(f"    [web] Slide {slide_number}: skipped (major slide '{slide_title}')")
+                continue
 
             slide_text = f"{slide_title}. " + " ".join(bullet_points)
 
@@ -546,7 +556,7 @@ class ImageDistribution:
         ``self.num_images`` aspect-ratio-valid images are collected,
         or no more candidates are available.
         """
-        image_urls = self._search_images(query, max_results=self.num_images * 4)
+        image_urls = self._search_images(query, max_results=6)
         if not image_urls:
             return []
 

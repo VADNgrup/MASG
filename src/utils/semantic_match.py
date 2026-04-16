@@ -16,10 +16,11 @@ class SemanticMatcher:
     ):
         self.embedding_model = SentenceTransformer(
             lm_model_embedding,
-            trust_remote_code=True
+            trust_remote_code=True,
+            local_files_only=True,
         )
-        self.clip_model = CLIPModel.from_pretrained(clip_model_embedding)
-        self.clip_processor = CLIPProcessor.from_pretrained(clip_model_embedding)
+        self.clip_model = CLIPModel.from_pretrained(clip_model_embedding, local_files_only=True)
+        self.clip_processor = CLIPProcessor.from_pretrained(clip_model_embedding, local_files_only=True)
         
     
     def sentence_similarity(self, sentence_1: str, sentence_2: str) -> float:

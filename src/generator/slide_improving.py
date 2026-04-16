@@ -36,9 +36,19 @@ class SlideImproving:
     No VLM is used anywhere in this class:
     - text is extracted with PyMuPDF
     - background colour is detected once via KMeans on the last slide
+
+    Optimization strategy — batch round:
+        All slides share a single full-deck slidev export per round.
+        This reduces the total number of slidev invocations from
+        O(N × MAX_ITER) to O(MAX_ITER), where N is the number of
+        image slides.
+
+        Each slide independently tracks its phase (Phase 1 = shrink,
+        Phase 2 = grow) and converges as soon as its stopping criterion
+        is met.  The round loop exits early when every slide has converged.
     """
 
-    SLIDE_IMPROVING_MAX_ITERATION = Config.SLIDE_IMPROVING_MAX_ITERATION   # max gradient steps per slide
+    SLIDE_IMPROVING_MAX_ITERATION = Config.SLIDE_IMPROVING_MAX_ITERATION   # max steps per phase
 
     def __init__(
         self,
@@ -78,281 +88,312 @@ class SlideImproving:
         # Step size for w adjustments (from config)
         self._step = float(Config.SLIDE_IMAGE_WIDTH_STEP)
 
-        # Cached global values (computed once across all slides)
-        self._bg_color: np.ndarray | None = None      # dominant background RGB
+        # Dominant background colour — detected once from the full deck
+        self._bg_color: np.ndarray | None = None
+
+    # ─────────────────────────────── public entry point ───────────────────────
 
     def run(self) -> None:
         logger.info(f"[SlideImproving] Starting for lecture '{self.lecture_id}'")
 
         entries = self._read_layout_dist()
-
-        # Find all slides that carry an image_width parameter
         image_slides = [e for e in entries if "image_width" in e.get("args", {})]
 
         if not image_slides:
             logger.info("[SlideImproving] No image slides found — nothing to optimise.")
         else:
-            # ── Initialise shared constants from the LAST image slide ──────
-            last_entry = image_slides[-1]
-            self._init_global_constants(last_entry)
+            # ── Initialise one state-dict per image slide ──────────────────
+            slide_states: dict[int, dict] = {
+                entry["slide_num"]: {
+                    "slide_num":   entry["slide_num"],
+                    "w":           float(entry["args"]["image_width"].replace("%", "")),
+                    "expected":    self._get_expected_content(entry["args"]),
+                    "phase":       1,       # 1 = shrink until f==0, 2 = grow while g improves
+                    "iter_phase1": 0,
+                    "iter_phase2": 0,
+                    "converged":   False,
+                    "f_cur":       None,
+                    "g_cur":       None,
+                    "prev_w":      float(entry["args"]["image_width"].replace("%", "")),
+                    "prev_g":      1.0,
+                    "stop_reason": "none",
+                    "final_w":     None,
+                    "cand_w":      None,
+                }
+                for entry in image_slides
+            }
 
-            # ── Optimise each image slide independently ────────────────────
-            for entry in image_slides:
-                slide_num = entry["slide_num"]
-                logger.info(f"[SlideImproving] Optimising slide {slide_num} …")
-                new_entry = self._optimise_slide(entry, entries)
-                # Replace entry in-place
+            pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
+
+            # ── Initial full export — detect bg colour + baseline evaluation ─
+            logger.info("[SlideImproving] Initial export for bg-colour detection …")
+            self._replay_layouts(entries)
+            self._export_pdf_full()
+
+            ref_page_idx = image_slides[-1]["slide_num"] - 1
+            with fitz.open(str(pdf_path)) as doc:
+                self._init_bg_color_from_doc(doc, ref_page_idx)
+
+                for slide_num, state in slide_states.items():
+                    page_idx = slide_num - 1
+                    if page_idx < len(doc):
+                        f, g = self._evaluate_page(doc, page_idx, state["expected"])
+                        state["f_cur"] = f
+                        state["g_cur"] = g
+                        logger.info(
+                            f"[SlideImproving] Slide {slide_num}: "
+                            f"initial w={state['w']:g}%  f={f:.4f}  g={g:.4f}"
+                        )
+
+            # ── Batch optimisation rounds ──────────────────────────────────
+            # At most MAX_ITER Phase-1 steps + MAX_ITER Phase-2 steps per slide.
+            # Different slides may be at different phases simultaneously.
+            max_rounds = self.SLIDE_IMPROVING_MAX_ITERATION * 2 + 2
+
+            for round_num in range(1, max_rounds + 1):
+                active = [s for s in slide_states.values() if not s["converged"]]
+                if not active:
+                    logger.info(
+                        f"[SlideImproving] All slides converged after round {round_num - 1}."
+                    )
+                    break
+
+                logger.info(
+                    f"\n[SlideImproving] ── Round {round_num}/{max_rounds} "
+                    f"({len(active)} active slides) ──"
+                )
+
+                # Propose a candidate_w for every active slide
+                for state in active:
+                    slide_num = state["slide_num"]
+
+                    # Phase 1 → 2 transition: as soon as f==0
+                    if state["phase"] == 1 and state["f_cur"] == 0.0:
+                        logger.info(
+                            f"[SlideImproving] Slide {slide_num}: "
+                            f"f=0 → transitioning to Phase 2 (grow)"
+                        )
+                        state["phase"]  = 2
+                        state["prev_w"] = state["w"]
+                        state["prev_g"] = state["g_cur"]
+
+                    if state["phase"] == 1:
+                        cand_w = state["w"] - self._step
+                        if cand_w <= 0:
+                            logger.info(
+                                f"[SlideImproving] Slide {slide_num}: "
+                                f"Phase 1 hit lower bound → converge (f={state['f_cur']:.4f})"
+                            )
+                            state["final_w"]   = state["w"]
+                            state["converged"] = True
+                            continue
+                        state["cand_w"] = cand_w
+
+                    elif state["phase"] == 2:
+                        cand_w = state["w"] + self._step
+                        if cand_w >= 100:
+                            logger.info(
+                                f"[SlideImproving] Slide {slide_num}: "
+                                f"Phase 2 hit upper bound → converge at w={state['w']:g}%"
+                            )
+                            state["final_w"]   = state["w"]
+                            state["converged"] = True
+                            continue
+                        state["cand_w"] = cand_w
+
+                # If nothing needs evaluating this round, we're done
+                pending = [s for s in active if s["cand_w"] is not None]
+                if not pending:
+                    break
+
+                # Build a temporary entries list with each slide's candidate_w.
+                # Slides not in `pending` keep their current (committed) w.
+                tmp_entries = list(entries)   # shallow copy — dicts shared until replaced
+                for state in pending:
+                    slide_num = state["slide_num"]
+                    idx = next(
+                        i for i, e in enumerate(tmp_entries)
+                        if e["slide_num"] == slide_num
+                    )
+                    tmp_entries[idx] = {
+                        **tmp_entries[idx],
+                        "args": {
+                            **tmp_entries[idx]["args"],
+                            "image_width": f"{state['cand_w']:g}%",
+                        },
+                    }
+
+                # One full export covers ALL slides in this round
+                self._replay_layouts(tmp_entries)
+                self._export_pdf_full()
+
+                # Evaluate each pending slide from the single shared PDF
+                with fitz.open(str(pdf_path)) as doc:
+                    for state in pending:
+                        slide_num = state["slide_num"]
+                        page_idx  = slide_num - 1
+                        cand_w    = state["cand_w"]
+                        state["cand_w"] = None              # consume
+
+                        if page_idx >= len(doc):
+                            continue
+
+                        c_f, c_g = self._evaluate_page(doc, page_idx, state["expected"])
+
+                        # ── Phase 1: always accept the shrink step ─────────
+                        if state["phase"] == 1:
+                            state["w"]     = cand_w
+                            state["f_cur"] = c_f
+                            state["g_cur"] = c_g
+                            state["iter_phase1"] += 1
+                            logger.info(
+                                f"[SlideImproving] Slide {slide_num}: "
+                                f"Phase 1 r{round_num}  w={cand_w:g}%  "
+                                f"f={c_f:.4f}  g={c_g:.4f}"
+                            )
+                            if c_f == 0.0:
+                                logger.info(
+                                    f"[SlideImproving] Slide {slide_num}: "
+                                    f"Phase 1 — f=0 reached at w={cand_w:g}%"
+                                )
+                            elif state["iter_phase1"] >= self.SLIDE_IMPROVING_MAX_ITERATION:
+                                logger.info(
+                                    f"[SlideImproving] Slide {slide_num}: "
+                                    f"Phase 1 — max iter, f={c_f:.4f} > 0, converging"
+                                )
+                                state["final_w"]   = state["w"]
+                                state["converged"] = True
+
+                        # ── Phase 2: grow w while g improves and f stays 0 ─
+                        elif state["phase"] == 2:
+                            state["iter_phase2"] += 1
+                            logger.info(
+                                f"[SlideImproving] Slide {slide_num}: "
+                                f"Phase 2 r{round_num}  w={cand_w:g}%  "
+                                f"f={c_f:.4f}  g={c_g:.4f}"
+                            )
+
+                            if c_f > 0.0:
+                                state["stop_reason"] = "f_violated"
+                                final_w = (
+                                    state["prev_w"]
+                                    if state["prev_w"] < state["w"]
+                                    else state["w"]
+                                )
+                                logger.info(
+                                    f"[SlideImproving] Slide {slide_num}: "
+                                    f"Phase 2 — f violated → step back to w={final_w:g}%"
+                                )
+                                state["final_w"]   = final_w
+                                state["converged"] = True
+
+                            elif c_g >= state["g_cur"]:
+                                state["stop_reason"] = "g_plateau"
+                                logger.info(
+                                    f"[SlideImproving] Slide {slide_num}: "
+                                    f"Phase 2 — g plateau ({c_g:.4f} >= {state['g_cur']:.4f}) "
+                                    f"→ keep w={state['w']:g}%"
+                                )
+                                state["final_w"]   = state["w"]
+                                state["converged"] = True
+
+                            else:
+                                # Accept step
+                                state["prev_w"] = state["w"]
+                                state["prev_g"] = state["g_cur"]
+                                state["w"]      = cand_w
+                                state["f_cur"]  = c_f
+                                state["g_cur"]  = c_g
+                                if state["iter_phase2"] >= self.SLIDE_IMPROVING_MAX_ITERATION:
+                                    logger.info(
+                                        f"[SlideImproving] Slide {slide_num}: "
+                                        f"Phase 2 — max iter → converge at w={cand_w:g}%"
+                                    )
+                                    state["final_w"]   = state["w"]
+                                    state["converged"] = True
+
+            # ── Apply final image_widths to the committed entries ──────────
+            for state in slide_states.values():
+                slide_num = state["slide_num"]
+                final_w   = state["final_w"] if state["final_w"] is not None else state["w"]
                 idx = next(i for i, e in enumerate(entries) if e["slide_num"] == slide_num)
-                entries[idx] = new_entry
+                entries[idx] = {
+                    **entries[idx],
+                    "args": {**entries[idx]["args"], "image_width": f"{final_w:g}%"},
+                }
+                logger.info(
+                    f"[SlideImproving] Slide {slide_num}: final image_width={final_w:g}%"
+                )
 
-            # Write updated layout distribution
             self._write_layout_dist(entries)
-
-            # Regenerate the full .md from updated entries
             self._replay_layouts(entries)
 
         # Final full export
         self._export_pdf_full()
         logger.info("[SlideImproving] Finished.")
 
-    def _init_global_constants(self, reference_entry: dict) -> None:
+    # ─────────────────────────── evaluation helpers ───────────────────────────
+
+    def _init_bg_color_from_doc(self, doc: fitz.Document, page_idx: int) -> None:
         """
-        Export the reference (last image) slide, then:
-          1. Measure slide dimensions → self._slide_total_pixels
-          2. Detect dominant background colour via KMeans → self._bg_color
+        Detect the dominant background colour from one page of an open PDF.
+        Uses KMeans on a random pixel sample.  Result stored in self._bg_color.
         """
-        slide_num = reference_entry["slide_num"]
-        logger.info(
-            f"[SlideImproving] Initialising global constants from slide {slide_num} …"
-        )
-        self._export_pdf_single(slide_num)
-        pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
+        page = doc[page_idx]
+        mat  = fitz.Matrix(2, 2)
+        pix  = page.get_pixmap(matrix=mat)
+        img  = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        W, H = img.size
 
-        doc = fitz.open(str(pdf_path))
-        page = doc[0]
-        mat = fitz.Matrix(2, 2)
-        pix = page.get_pixmap(matrix=mat)
-        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        doc.close()
-
-        arr = np.array(img)
-        H, W = arr.shape[:2]
-
-        # KMeans on a random sample of pixels (fast, one-off)
-        pixels = arr.reshape(-1, 3).astype(float)
+        arr        = np.array(img)
+        pixels     = arr.reshape(-1, 3).astype(float)
         sample_idx = np.random.choice(len(pixels), min(5000, len(pixels)), replace=False)
-        sample = pixels[sample_idx]
+        sample     = pixels[sample_idx]
+
         km = KMeans(n_clusters=3, n_init=3, random_state=42)
         km.fit(sample)
         labels, counts = np.unique(km.labels_, return_counts=True)
-        bg_label = labels[np.argmax(counts)]
+        bg_label       = labels[np.argmax(counts)]
         self._bg_color = km.cluster_centers_[bg_label]
 
         logger.info(
             f"[SlideImproving] slide size={W}×{H} px  "
-            f"bg_color=({self._bg_color[0]:.0f},{self._bg_color[1]:.0f},{self._bg_color[2]:.0f})"
+            f"bg_color=({self._bg_color[0]:.0f},"
+            f"{self._bg_color[1]:.0f},"
+            f"{self._bg_color[2]:.0f})"
         )
 
-    def _optimise_slide(self, entry: dict, all_entries: list[dict]) -> dict:
-        """
-        Two-phase optimization for a single slide's image_width (w):
-
-        Phase 1 — Satisfy the hard constraint f(w) = 0:
-            If f > 0 (text is being clipped), shrink w by _step repeatedly
-            until f reaches 0 or the lower bound (w>0) is hit.
-
-        Phase 2 — Minimize empty space g(w):
-            Starting from the w found in Phase 1 (where f=0), grow w by
-            _step repeatedly. Accept only when f stays 0 AND g improves.
-            Stop as soon as either condition fails.
-
-        Both phases share the iteration budget SLIDE_IMPROVING_MAX_ITERATION.
-        """
-        args = entry["args"]
-        slide_num = entry["slide_num"]
-
-        w = float(args["image_width"].replace("%", ""))
-        expected = self._get_expected_content(args)
-
-        f_cur, g_cur = self._evaluate(entry, all_entries, slide_num, w, expected)
-        logger.info(
-            f"[SlideImproving] Slide {slide_num}: initial w={w:g}%  "
-            f"f={f_cur:.4f}  g={g_cur:.4f}"
-        )
-
-        # ── Phase 1: shrink w until f == 0 ───────────────────────────────
-        if f_cur > 0:
-            logger.info(
-                f"[SlideImproving] Slide {slide_num}: Phase 1 — shrinking to fit text "
-                f"(f={f_cur:.4f})"
-            )
-            for it in range(1, self.SLIDE_IMPROVING_MAX_ITERATION + 1):
-                cand_w = w - self._step
-                if cand_w <= 0:
-                    logger.info(
-                        f"[SlideImproving] Slide {slide_num}: Phase 1 iter {it} — "
-                        f"hit lower bound, stopping."
-                    )
-                    break
-
-                c_f, c_g = self._evaluate(entry, all_entries, slide_num, cand_w, expected)
-                logger.info(
-                    f"[SlideImproving] Slide {slide_num}: Phase 1 iter {it}  "
-                    f"w={w:g}% -> {cand_w:g}%  f={c_f:.4f}  g={c_g:.4f}"
-                )
-                w, f_cur, g_cur = cand_w, c_f, c_g
-
-                if f_cur == 0.0:
-                    logger.info(
-                        f"[SlideImproving] Slide {slide_num}: Phase 1 — "
-                        f"f=0 reached at w={w:g}%"
-                    )
-                    break
-
-            if f_cur > 0:
-                logger.info(
-                    f"[SlideImproving] Slide {slide_num}: Phase 1 — "
-                    f"could not reach f=0, keeping w={w:g}% (f={f_cur:.4f})"
-                )
-                new_args = {**args, "image_width": f"{w:g}%"}
-                return {**entry, "args": new_args}
-
-        # ── Phase 2: grow w to minimize g while f stays 0 ────────────────
-        # Second-min safety margin: only step back to prev_w when the loop
-        # stopped because f > 0 at the candidate (text was visually clipped).
-        # In all other cases (g plateau, upper bound, exhausted iterations),
-        # the accepted w already has the minimum g and is safe — use it directly.
-        logger.info(
-            f"[SlideImproving] Slide {slide_num}: Phase 2 — growing to fill space "
-            f"(g={g_cur:.4f})"
-        )
-        prev_w, prev_f, prev_g = w, f_cur, g_cur   # fallback if f is violated
-        stop_reason = "none"
-
-        for it in range(1, self.SLIDE_IMPROVING_MAX_ITERATION + 1):
-            cand_w = w + self._step
-            if cand_w >= 100:
-                logger.info(
-                    f"[SlideImproving] Slide {slide_num}: Phase 2 iter {it} — "
-                    f"hit upper bound, stopping."
-                )
-                stop_reason = "upper_bound"
-                break
-
-            c_f, c_g = self._evaluate(entry, all_entries, slide_num, cand_w, expected)
-            logger.info(
-                f"[SlideImproving] Slide {slide_num}: Phase 2 iter {it}  "
-                f"w={w:g}% -> {cand_w:g}%  f={c_f:.4f}  g={c_g:.4f}"
-            )
-
-            if c_f > 0:
-                logger.info(
-                    f"[SlideImproving] Slide {slide_num}: Phase 2 iter {it} — "
-                    f"f became {c_f:.4f} > 0, stopping."
-                )
-                stop_reason = "f_violated"
-                break
-
-            if c_g >= g_cur:
-                logger.info(
-                    f"[SlideImproving] Slide {slide_num}: Phase 2 iter {it} — "
-                    f"g did not improve ({c_g:.4f} >= {g_cur:.4f}), stopping."
-                )
-                stop_reason = "g_plateau"
-                break
-
-            # Accept step: save current as second-minimum before advancing
-            prev_w, prev_f, prev_g = w, f_cur, g_cur
-            w, f_cur, g_cur = cand_w, c_f, c_g
-
-        # Only apply second-min (step back) when f was violated at the candidate.
-        # prev_w < w in that case → safe margin without wasting space.
-        # In all other cases, w already has the best (minimum) g — use it.
-        if stop_reason == "f_violated" and prev_w < w:
-            logger.info(
-                f"[SlideImproving] Slide {slide_num}: f violated at w={w:g}% — "
-                f"stepping back to second-min w={prev_w:g}% (g={prev_g:.4f}) for safety"
-            )
-            final_w = prev_w
-        else:
-            logger.info(
-                f"[SlideImproving] Slide {slide_num}: stop_reason='{stop_reason}' — "
-                f"using best w={w:g}% (g={g_cur:.4f})"
-            )
-            final_w = w
-
-        new_args = {**args, "image_width": f"{final_w:g}%"}
-        return {**entry, "args": new_args}
-
-    def _evaluate(
+    def _evaluate_page(
         self,
-        entry: dict,
-        all_entries: list[dict],
-        slide_num: int,
-        w: float,
+        doc: fitz.Document,
+        page_idx: int,
         expected: str,
     ) -> tuple[float, float]:
         """
-        Render the slide with image_width=w%, then compute f(w) and g(w).
+        Compute f (text-fit score) and g (background ratio) for one page
+        of an already-open PDF document.
 
         Returns:
-            (f, g)  both in [0, 1]
+            (f, g) both in [0, 1]
         """
-        # Temporarily set w in the entry and regenerate .md
-        tmp_args = {**entry["args"], "image_width": f"{w:g}%"}
-        tmp_entry = {**entry, "args": tmp_args}
-        tmp_entries = [tmp_entry if e["slide_num"] == slide_num else e for e in all_entries]
-        self._replay_layouts(tmp_entries)
+        page = doc[page_idx]
 
-        # Export only this slide (overwrites {lecture_id}-export.pdf)
-        self._export_pdf_single(slide_num)
+        # f: fraction of expected text that is NOT visible (0 = perfect fit)
+        text        = page.get_text("text").strip()
+        fuzzy_score = fuzzy_distance(expected, text)
+        f           = 1.0 - fuzzy_score / 100.0
 
-        # Extract text with PyMuPDF
-        extracted = self._extract_text_pymupdf()
-        fuzzy_score = fuzzy_distance(expected, extracted)
-        f = 1.0 - fuzzy_score / 100.0
-
-        # Compute g: fraction of bg-coloured pixels in the rendered slide
-        g = self._compute_bg_ratio()
+        # g: fraction of pixels matched to the background colour
+        mat  = fitz.Matrix(2, 2)
+        pix  = page.get_pixmap(matrix=mat)
+        img  = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        arr  = np.array(img).astype(float)
+        dist = np.linalg.norm(arr - self._bg_color, axis=2)
+        g    = float(np.mean(dist < 25))
 
         return f, g
 
-    def _extract_text_pymupdf(self) -> str:
-        """Extract all visible text from the single-page exported PDF using PyMuPDF."""
-        pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
-        try:
-            doc = fitz.open(str(pdf_path))
-            text = doc[0].get_text("text")
-            doc.close()
-            return text.strip()
-        except Exception as e:
-            logger.error(f"[SlideImproving] PyMuPDF text extraction failed: {e}")
-            return ""
-
-    def _compute_bg_ratio(self) -> float:
-        """
-        Fraction of pixels whose RGB distance to self._bg_color is < 25.
-        Returns a value in [0, 1].
-        """
-        pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
-        try:
-            doc = fitz.open(str(pdf_path))
-            page = doc[0]
-            mat = fitz.Matrix(2, 2)
-            pix = page.get_pixmap(matrix=mat)
-            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            doc.close()
-        except Exception as e:
-            logger.error(f"[SlideImproving] PDF→image failed for bg_ratio: {e}")
-            return 0.0
-
-        arr = np.array(img).astype(float)
-        dist = np.linalg.norm(arr - self._bg_color, axis=2)
-        bg_mask = dist < 25          # pixel is "background"
-        ratio = float(np.mean(bg_mask))
-        return ratio
-
-
+    # ─────────────────────────── layout / export helpers ──────────────────────
 
     @staticmethod
     def _get_expected_content(args: dict) -> str:
@@ -397,38 +438,11 @@ class SlideImproving:
         doc = ""
         for entry in entries:
             func_name = entry["layout_function_name"]
-            args = entry["args"]
-            func = getattr(mgr, func_name)
-            doc += func(**args)
+            args      = entry["args"]
+            func      = getattr(mgr, func_name)
+            doc      += func(**args)
 
         self.md_path.write_text(doc, encoding="utf-8")
-
-    def _export_pdf_single(self, slide_num: int) -> None:
-        """
-        Export a single slide (1-indexed) to {lecture_id}-export.pdf.
-        Uses --range {slide_num} --per-slide so only that page is written.
-        The file is overwritten on every call.
-        """
-        cmd = (
-            f'slidev export "{self.lecture_id}.md" '
-            f"--range {slide_num} --per-slide"
-        )
-        logger.info(f"[SlideImproving] Exporting slide {slide_num}: {cmd}")
-        _env = os.environ.copy()
-        _env["NODE_OPTIONS"] = "--max-old-space-size=4096"
-        result = subprocess.run(
-            ["npm", "exec", "-c", cmd],
-            cwd=str(self.slidev_dir),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            shell=True,
-            env=_env,
-        )
-        if result.returncode != 0:
-            logger.error(f"[SlideImproving] slidev export (single) failed:\n{result.stderr}")
-            raise RuntimeError(f"slidev export failed: {result.stderr}")
 
     def _export_pdf_full(self) -> None:
         """Export the complete slide deck to {lecture_id}-export.pdf."""
@@ -451,6 +465,68 @@ class SlideImproving:
             raise RuntimeError(f"slidev export failed: {result.stderr}")
         logger.info("[SlideImproving] Full export complete.")
 
+    def _export_pdf_single(self, slide_num: int) -> None:
+        """
+        Export a single slide (1-indexed) to {lecture_id}-export.pdf.
+        Kept as a utility for debugging; not used in the main optimisation loop.
+        """
+        cmd = (
+            f'slidev export "{self.lecture_id}.md" '
+            f"--range {slide_num} --per-slide"
+        )
+        logger.info(f"[SlideImproving] Exporting slide {slide_num}: {cmd}")
+        _env = os.environ.copy()
+        _env["NODE_OPTIONS"] = "--max-old-space-size=4096"
+        result = subprocess.run(
+            ["npm", "exec", "-c", cmd],
+            cwd=str(self.slidev_dir),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            shell=True,
+            env=_env,
+        )
+        if result.returncode != 0:
+            logger.error(f"[SlideImproving] slidev export (single) failed:\n{result.stderr}")
+            raise RuntimeError(f"slidev export failed: {result.stderr}")
+
+    # ──────────────────────────── low-level utilities ─────────────────────────
+
+    def _extract_text_pymupdf(self) -> str:
+        """Extract all visible text from the single-page exported PDF using PyMuPDF."""
+        pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
+        try:
+            doc  = fitz.open(str(pdf_path))
+            text = doc[0].get_text("text")
+            doc.close()
+            return text.strip()
+        except Exception as e:
+            logger.error(f"[SlideImproving] PyMuPDF text extraction failed: {e}")
+            return ""
+
+    def _compute_bg_ratio(self) -> float:
+        """
+        Fraction of pixels whose RGB distance to self._bg_color is < 25.
+        Reads from the current {lecture_id}-export.pdf on disk.
+        Returns a value in [0, 1].
+        """
+        pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
+        try:
+            doc  = fitz.open(str(pdf_path))
+            page = doc[0]
+            mat  = fitz.Matrix(2, 2)
+            pix  = page.get_pixmap(matrix=mat)
+            img  = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            doc.close()
+        except Exception as e:
+            logger.error(f"[SlideImproving] PDF→image failed for bg_ratio: {e}")
+            return 0.0
+
+        arr   = np.array(img).astype(float)
+        dist  = np.linalg.norm(arr - self._bg_color, axis=2)
+        return float(np.mean(dist < 25))
+
 
 if __name__ == "__main__":
     import argparse
@@ -461,7 +537,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("md_path", help="Path to the .md slide file")
     parser.add_argument("--lecture-json", required=True, help="Path to lecture JSON file")
-    parser.add_argument("--title", default="", help="Lecture title")
+    parser.add_argument("--title",   default="", help="Lecture title")
     parser.add_argument("--speaker", default="", help="Speaker information")
     args = parser.parse_args()
 

@@ -5,7 +5,6 @@ class MultimodalState(TypedDict):
     """State for multimodal processing pipeline"""
     lecture_id: str
     lecture_dict: Dict[str, Any]  
-    need_visualization: List[Dict[str, Any]]  
     aggregated_media: Dict[str, Any]  
     used_tables: Set[str]  
     used_images: Set[str]  
