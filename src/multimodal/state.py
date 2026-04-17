@@ -9,5 +9,4 @@ class MultimodalState(TypedDict):
     used_tables: Set[str]  
     used_images: Set[str]  
     image_distributions: List[Dict[str, Any]]  
-    table_distributions: List[Dict[str, Any]]  
-    
+    table_distributions: List[Dict[str, Any]]

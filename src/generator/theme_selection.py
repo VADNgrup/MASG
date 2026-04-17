@@ -12,7 +12,6 @@ def get_theme(theme_name: str) -> dict:
                 return theme["theme"], theme["font"]
     return "frankfurt", "STIX Two Tex t"
 
-
 def select_theme(outline_md: str, model = Config.LLM_MODEL_NAME) -> dict:
     with open(Config.THEME_PATH, "r", encoding="utf-8") as f:
         themes = json.load(f)

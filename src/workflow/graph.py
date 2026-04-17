@@ -30,8 +30,6 @@ def _print_writer_review(label: str, review: WriterReview) -> None:
           f"minor={review.convincing_minor_count})")
     print(f"  {'─'*50}\n")
 
-
-
 def _extract_coverage_feedback(review: WriterReview) -> str:
     issue_list = []
     suggestion_list = []
@@ -49,7 +47,6 @@ def _extract_coverage_feedback(review: WriterReview) -> str:
         "suggestion": suggestion_list,
     }
     return json.dumps(feedback, ensure_ascii=False, indent=2)
-
 
 def create_workflow() -> StateGraph:
     workflow     = StateGraph(WorkflowState)

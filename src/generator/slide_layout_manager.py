@@ -2,7 +2,6 @@ from typing import List, Optional
 
 
 class SlideLayoutManager:
-    
     def __init__(
         self,
         theme: str = "frankfurt",

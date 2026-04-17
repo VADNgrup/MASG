@@ -1,12 +1,10 @@
 from __future__ import annotations
-
 import argparse
 import json
 import logging
 import shutil
 import sys
-
-import fitz  # PyMuPDF
+import fitz
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -19,9 +17,7 @@ from src.utils.config import Config
 
 logger = logging.getLogger(__name__)
 
-
 def _load_lecture_meta(json_path: Path) -> tuple[str, str]:
-    
     with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
 
@@ -35,7 +31,6 @@ def _load_lecture_meta(json_path: Path) -> tuple[str, str]:
     title: str = data.get("title") or data.get("lecture_title") or lecture_id
 
     return title, lecture_id
-
 
 def run_pipeline(
     lecture_json_path: str,
@@ -93,7 +88,6 @@ def run_pipeline(
         selected_font = picker.font
 
         print("[slide_gen] === Step 2: Evaluating and improving slides ===")
-
         improver = SlideImproving(
             md_path=str(md_path),
             lecture_json_path=str(json_path),
@@ -108,13 +102,11 @@ def run_pipeline(
         print(f"End Phase 4: Generated Slide in {md_path}")
         print(f"{'='*60}\n")
 
-    # Package output: PDF + JSON + slide images
     _package_output(
         lecture_id=lecture_id,
         slidev_dir=slidev_dir,
         lecture_json_path=json_path,
     )
-
 
 def _package_output(
     lecture_id: str,
@@ -138,12 +130,9 @@ def _package_output(
     out_dir = _PROJECT_ROOT / "output" / lecture_id / model_name
     images_dir = out_dir / "slide_images"
 
-    # prepare directories
     if images_dir.exists():
         shutil.rmtree(images_dir)
     images_dir.mkdir(parents=True, exist_ok=True)
-
-    # move PDF
     pdf_src = slidev_dir / f"{lecture_id}-export.pdf"
     if not pdf_src.exists():
         raise FileNotFoundError(f"[package_output] PDF not found: {pdf_src}")
@@ -151,12 +140,9 @@ def _package_output(
     shutil.move(str(pdf_src), pdf_dst)
     print(f"[package_output] PDF moved → {pdf_dst}")
 
-    # copy JSON
     json_dst = out_dir / lecture_json_path.name
     shutil.copy2(lecture_json_path, json_dst)
     print(f"[package_output] JSON copied → {json_dst}")
-
-    # copy table_distribution and image_distribution (optional siblings)
     for suffix in ("_table_distribution", "_image_distribution"):
         sibling = lecture_json_path.parent / f"{lecture_id}{suffix}.json"
         if sibling.exists():
@@ -165,7 +151,6 @@ def _package_output(
         else:
             print(f"[package_output] (skipped, not found) {sibling.name}")
 
-    # render PDF pages to JPEG images
     doc = fitz.open(str(pdf_dst))
     page_count = len(doc)
     for page_num in range(page_count):
@@ -176,7 +161,6 @@ def _package_output(
         pix.save(str(images_dir / img_name))
     doc.close()
     print(f"[package_output] {page_count} slide image(s) saved → {images_dir}")
-
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -219,19 +203,3 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Logging verbosity (default: INFO).",
     )
     return parser
-
-
-if __name__ == "__main__":
-    args = _build_parser().parse_args()
-
-    logging.basicConfig(
-        level=getattr(logging, args.log_level),
-        format="%(asctime)s | %(levelname)s | %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
-    run_pipeline(
-        lecture_json_path=args.lecture,
-        lecture_title=args.title,
-        speaker_information=args.speaker,
-    )

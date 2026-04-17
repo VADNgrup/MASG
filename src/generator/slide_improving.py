@@ -4,12 +4,10 @@ import json
 import logging
 import subprocess
 from pathlib import Path
-
-import fitz  # PyMuPDF
+import fitz
 import numpy as np
 from PIL import Image
 from sklearn.cluster import KMeans
-
 from src.utils.config import Config
 from src.utils.fuzzy_distance import fuzzy_distance
 
@@ -18,8 +16,6 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
-
-
 
 class SlideImproving:
     """
@@ -59,7 +55,6 @@ class SlideImproving:
         theme: str = "frankfurt",
         font: str = "STIX Two Text",
     ):
-        # Resolve md_path
         _given = Path(md_path)
         _generator_dir = Path(__file__).parent
         if _given.is_absolute() and _given.exists():
@@ -85,13 +80,9 @@ class SlideImproving:
         self.lecture_title = lecture_title
         self.speaker_information = speaker_information
 
-        # Step size for w adjustments (from config)
         self._step = float(Config.SLIDE_IMAGE_WIDTH_STEP)
 
-        # Dominant background colour — detected once from the full deck
         self._bg_color: np.ndarray | None = None
-
-    # ─────────────────────────────── public entry point ───────────────────────
 
     def run(self) -> None:
         logger.info(f"[SlideImproving] Starting for lecture '{self.lecture_id}'")
@@ -102,7 +93,6 @@ class SlideImproving:
         if not image_slides:
             logger.info("[SlideImproving] No image slides found — nothing to optimise.")
         else:
-            # ── Initialise one state-dict per image slide ──────────────────
             slide_states: dict[int, dict] = {
                 entry["slide_num"]: {
                     "slide_num":   entry["slide_num"],
@@ -125,7 +115,6 @@ class SlideImproving:
 
             pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
 
-            # ── Initial full export — detect bg colour + baseline evaluation ─
             logger.info("[SlideImproving] Initial export for bg-colour detection …")
             self._replay_layouts(entries)
             self._export_pdf_full()
@@ -145,9 +134,6 @@ class SlideImproving:
                             f"initial w={state['w']:g}%  f={f:.4f}  g={g:.4f}"
                         )
 
-            # ── Batch optimisation rounds ──────────────────────────────────
-            # At most MAX_ITER Phase-1 steps + MAX_ITER Phase-2 steps per slide.
-            # Different slides may be at different phases simultaneously.
             max_rounds = self.SLIDE_IMPROVING_MAX_ITERATION * 2 + 2
 
             for round_num in range(1, max_rounds + 1):
@@ -163,11 +149,9 @@ class SlideImproving:
                     f"({len(active)} active slides) ──"
                 )
 
-                # Propose a candidate_w for every active slide
                 for state in active:
                     slide_num = state["slide_num"]
 
-                    # Phase 1 → 2 transition: as soon as f==0
                     if state["phase"] == 1 and state["f_cur"] == 0.0:
                         logger.info(
                             f"[SlideImproving] Slide {slide_num}: "
@@ -201,14 +185,10 @@ class SlideImproving:
                             continue
                         state["cand_w"] = cand_w
 
-                # If nothing needs evaluating this round, we're done
                 pending = [s for s in active if s["cand_w"] is not None]
                 if not pending:
                     break
-
-                # Build a temporary entries list with each slide's candidate_w.
-                # Slides not in `pending` keep their current (committed) w.
-                tmp_entries = list(entries)   # shallow copy — dicts shared until replaced
+                tmp_entries = list(entries)
                 for state in pending:
                     slide_num = state["slide_num"]
                     idx = next(
@@ -223,24 +203,22 @@ class SlideImproving:
                         },
                     }
 
-                # One full export covers ALL slides in this round
                 self._replay_layouts(tmp_entries)
                 self._export_pdf_full()
 
-                # Evaluate each pending slide from the single shared PDF
                 with fitz.open(str(pdf_path)) as doc:
                     for state in pending:
                         slide_num = state["slide_num"]
                         page_idx  = slide_num - 1
                         cand_w    = state["cand_w"]
-                        state["cand_w"] = None              # consume
+                        state["cand_w"] = None
 
                         if page_idx >= len(doc):
                             continue
 
                         c_f, c_g = self._evaluate_page(doc, page_idx, state["expected"])
 
-                        # ── Phase 1: always accept the shrink step ─────────
+                        # Phase 1: always accept the shrink step
                         if state["phase"] == 1:
                             state["w"]     = cand_w
                             state["f_cur"] = c_f
@@ -264,7 +242,7 @@ class SlideImproving:
                                 state["final_w"]   = state["w"]
                                 state["converged"] = True
 
-                        # ── Phase 2: grow w while g improves and f stays 0 ─
+                        # Phase 2: grow w while g improves and f stays 0
                         elif state["phase"] == 2:
                             state["iter_phase2"] += 1
                             logger.info(
@@ -312,7 +290,7 @@ class SlideImproving:
                                     state["final_w"]   = state["w"]
                                     state["converged"] = True
 
-            # ── Apply final image_widths to the committed entries ──────────
+            # Apply final image_widths to the committed entries
             for state in slide_states.values():
                 slide_num = state["slide_num"]
                 final_w   = state["final_w"] if state["final_w"] is not None else state["w"]
@@ -331,8 +309,6 @@ class SlideImproving:
         # Final full export
         self._export_pdf_full()
         logger.info("[SlideImproving] Finished.")
-
-    # ─────────────────────────── evaluation helpers ───────────────────────────
 
     def _init_bg_color_from_doc(self, doc: fitz.Document, page_idx: int) -> None:
         """
@@ -392,8 +368,6 @@ class SlideImproving:
         g    = float(np.mean(dist < 25))
 
         return f, g
-
-    # ─────────────────────────── layout / export helpers ──────────────────────
 
     @staticmethod
     def _get_expected_content(args: dict) -> str:
@@ -491,8 +465,6 @@ class SlideImproving:
             logger.error(f"[SlideImproving] slidev export (single) failed:\n{result.stderr}")
             raise RuntimeError(f"slidev export failed: {result.stderr}")
 
-    # ──────────────────────────── low-level utilities ─────────────────────────
-
     def _extract_text_pymupdf(self) -> str:
         """Extract all visible text from the single-page exported PDF using PyMuPDF."""
         pdf_path = self.slidev_dir / f"{self.lecture_id}-export.pdf"
@@ -526,25 +498,3 @@ class SlideImproving:
         arr   = np.array(img).astype(float)
         dist  = np.linalg.norm(arr - self._bg_color, axis=2)
         return float(np.mean(dist < 25))
-
-
-if __name__ == "__main__":
-    import argparse
-
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
-    parser = argparse.ArgumentParser(
-        description="Optimise image_width per slide using PyMuPDF + bg-ratio objective."
-    )
-    parser.add_argument("md_path", help="Path to the .md slide file")
-    parser.add_argument("--lecture-json", required=True, help="Path to lecture JSON file")
-    parser.add_argument("--title",   default="", help="Lecture title")
-    parser.add_argument("--speaker", default="", help="Speaker information")
-    args = parser.parse_args()
-
-    improver = SlideImproving(
-        md_path=args.md_path,
-        lecture_json_path=args.lecture_json,
-        lecture_title=args.title,
-        speaker_information=args.speaker,
-    )
-    improver.run()
