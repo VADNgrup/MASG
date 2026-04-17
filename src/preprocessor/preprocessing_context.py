@@ -8,13 +8,38 @@ from src.models.context import DocumentContext
 from src.utils.config import config, Config
 from dataclasses import asdict
 
+def clean_repetition(text: str) -> str:
+    """Detect and remove extreme word repetitions often caused by extraction tool loops."""
+    words = text.split()
+    if not words: return text
+    cleaned = []
+    i = 0
+    while i < len(words):
+        word = words[i]
+        j = i + 1
+        count = 1
+        while j < len(words) and words[j] == word:
+            count += 1
+            j += 1
+        cleaned.append(word)
+        if count > 3: # If a word repeats more than 3 times consecutively, it's likely a loop
+            i = j
+        else:
+            i += 1
+    return " ".join(cleaned)
+
 async def preprocess_context(context, output=None):
     print(f"\n{'=' * 60}")
     print(f'Phase 2: Lecture Generation Workflow')
     print(f"{'=' * 60}\n")
     context_data = load_json(context)
-    if len(context_data['text_content']['markdown']) < 512 or len(context_data['text_content']['markdown']) > 32768:
-        print('[SKIP] Lecture is too short or too long')
+    
+    # Clean repetition loops before checking length
+    context_data['text_content']['markdown'] = clean_repetition(context_data['text_content']['markdown'])
+    
+    # Increase limit to 100k characters for technical/complex documents
+    if len(context_data['text_content']['markdown']) < 512 or len(context_data['text_content']['markdown']) > 100000:
+        print(f"[SKIP] Lecture is too short or too long ({len(context_data['text_content']['markdown'])} chars)")
         return (None, False)
     context = DocumentContext(**context_data)
     lecture_path = Path(Config.LECTURES_DIR / f'{context.document_id}' / f'{context.document_id}.json')

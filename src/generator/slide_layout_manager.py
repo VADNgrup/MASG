@@ -67,16 +67,16 @@ class SlideLayoutManager:
 
     def comparison_layout(self, title: str, table_markdown: str) -> str:
         style_block = """
-                    <style scoped>
-                    table {
-                    font-size: 0.75rem;
-                    display: block;
-                    max-height: 60vh;
-                    overflow-y: auto;
-                    width: 100%;
-                    }
-                    </style>
-                    """
+<style scoped>
+table {
+  font-size: 0.75rem;
+  display: block;
+  max-height: 60vh;
+  overflow-y: auto;
+  width: 100%;
+}
+</style>
+"""
         return '\n\n' + self._h1(title) + '\n\n' + table_markdown + '\n' + style_block + '\n' + self._slide_sep()
 
     def two_contents_in_a_slide_layout(self, title: str, sub_title_1: str, sub_title_2: str, sub_content_1: List[str], sub_content_2: List[str]) -> str:
