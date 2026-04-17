@@ -16,14 +16,12 @@ class ImageAsset(BaseModel):
 
 class AssetCollection(BaseModel):
     images: List[ImageAsset] = Field(default_factory=list)
-    
+
     def add_image(self, image: ImageAsset) -> None:
         self.images.append(image)
-    
+
     def get_by_id(self, image_id: str) -> Optional[ImageAsset]:
         for image in self.images:
             if image.image_id == image_id:
                 return image
         return None
-    
-

@@ -24,41 +24,31 @@ from marker.models import create_model_dict
 import json
 import base64
 import fitz
-
 _log = logging.getLogger(__name__)
-
-
 IMAGE_RESOLUTION_SCALE = 2.0
-
-os.environ["TORCH_DEVICE"] = "cuda"
+os.environ['TORCH_DEVICE'] = 'cuda'
 
 class ParsedContent:
+
     def __init__(self):
-        self.full_text: str = ""
-        self.tables: List[Dict[str, Any]] = []  
+        self.full_text: str = ''
+        self.tables: List[Dict[str, Any]] = []
         self.images: List[Dict[str, Any]] = []
         self.page_count: int = 0
 
 class DocumentParser:
+
     def __init__(self, pdf_path: Path):
-        config_dict = {
-            "output_format": "markdown",
-            "use_llm": False,
-        }
+        config_dict = {'output_format': 'markdown', 'use_llm': False}
         parser = ConfigParser(config_dict)
-
-        converter = PdfConverter(
-            config=parser.generate_config_dict(),
-            artifact_dict=create_model_dict(),
-        )
-
+        converter = PdfConverter(config=parser.generate_config_dict(), artifact_dict=create_model_dict())
         self.pdf_path = pdf_path
         self.doc = fitz.open(self.pdf_path)
         rendered = converter(self.pdf_path)
-        self.full_text, _, self.images = text_from_rendered(rendered)
+        (self.full_text, _, self.images) = text_from_rendered(rendered)
         self.table_filter = TableFilter()
-        
-    def parse_document(self, document_id: str = "") -> ParsedContent:
+
+    def parse_document(self, document_id: str='') -> ParsedContent:
         content = ParsedContent()
         content.full_text = self.extract_texts()
         content.tables = self.extract_tables(document_id)
@@ -69,28 +59,20 @@ class DocumentParser:
 
     def extract_texts(self) -> str:
         return self.full_text
-        
-    def extract_tables(self, document_id: str = "") -> List[Dict[str, Any]]:
+
+    def extract_tables(self, document_id: str='') -> List[Dict[str, Any]]:
         tables = []
         table_page_information = self.get_table_page_information()
-        
         table_image_paths = {}
         if document_id:
             table_image_paths = self.save_table_images(table_page_information, document_id)
-        
         table_index = 0
         for table_page in table_page_information:
             table_markdown = table_page['table']
             table_caption = table_page['caption']
             should_visualize = self.table_filter.should_visualize_table(table_markdown, table_caption)
-            table_id = f"table_{table_index+1:03d}"
-            tables.append({
-                'table_id': table_id,
-                'markdown': table_markdown,
-                'table_caption': table_caption,
-                'should_visualize': should_visualize,
-                'image_table_path': table_image_paths.get(table_index),
-            })
+            table_id = f'table_{table_index + 1:03d}'
+            tables.append({'table_id': table_id, 'markdown': table_markdown, 'table_caption': table_caption, 'should_visualize': should_visualize, 'image_table_path': table_image_paths.get(table_index)})
             table_index += 1
         return tables
 
@@ -99,219 +81,149 @@ class DocumentParser:
         image_page_information = self.get_image_page_information(self.images)
         image_index = 0
         for image_page in image_page_information:
-            image_with_number = re.search(r'\S+\s+\d+', image_page['caption'])
+            image_with_number = re.search('\\S+\\s+\\d+', image_page['caption'])
             if image_with_number:
-                image_with_number = image_with_number.group() 
-                escaped = re.escape(image_with_number)              
-                flexible = escaped.replace(r'\ ', r'\s+')          
+                image_with_number = image_with_number.group()
+                escaped = re.escape(image_with_number)
+                flexible = escaped.replace('\\ ', '\\s+')
                 pattern = re.compile(flexible, re.IGNORECASE)
-
                 matched_lines = []
                 for line in self.full_text.splitlines():
                     if pattern.search(line):
                         stripped = line.strip()
                         if stripped:
                             matched_lines.append(stripped)
-
-                reference_context = "\n".join(matched_lines)
+                reference_context = '\n'.join(matched_lines)
             else:
-                reference_context = ""
+                reference_context = ''
             img_bytes = BytesIO()
             img = image_page['image']
             img.save(img_bytes, format='PNG')
-            images.append({
-                'image_index':image_index,
-                'image_bytes':img_bytes.getvalue(),
-                'page_number': image_page['page'],
-                'raw_name': image_page['raw_name'],
-                'relevant_caption': image_page['caption'],
-                'reference_context': reference_context,
-            })
+            images.append({'image_index': image_index, 'image_bytes': img_bytes.getvalue(), 'page_number': image_page['page'], 'raw_name': image_page['raw_name'], 'relevant_caption': image_page['caption'], 'reference_context': reference_context})
             image_index += 1
         return images
-    
+
     def get_image_page_information(self, images) -> List[Dict[str, Any]]:
         image_page_information = []
-        for key, value in images.items():
-            page_index = re.search(r'page_(\d+)', key)
-            image_page = {"page": page_index.group(1), "raw_name": key, "image": value}
+        for (key, value) in images.items():
+            page_index = re.search('page_(\\d+)', key)
+            image_page = {'page': page_index.group(1), 'raw_name': key, 'image': value}
             image_page_information.append(image_page)
-
         image_page_count = {}
         for image_page in image_page_information:
             page = image_page['page']
             image_page_count[page] = image_page_count.get(page, 0) + 1
         page_captions: Dict[str, List[str]] = {}
-        for page, count in image_page_count.items():
-            page_captions[page] = self.get_caption(int(page), count, type_search="image")
-
+        for (page, count) in image_page_count.items():
+            page_captions[page] = self.get_caption(int(page), count, type_search='image')
         page_index_tracker: Dict[str, int] = {}
         for image_page in image_page_information:
             page = image_page['page']
             idx = page_index_tracker.get(page, 0)
             image_page['caption'] = page_captions[page][idx]
             page_index_tracker[page] = idx + 1
-
         full_text = self.extract_texts()
         text_lines = full_text.splitlines()
         vision_generator = VisionCaptionGenerator()
-
         for image_page in image_page_information:
-            if image_page['caption'].strip().lower() == "no caption":
+            if image_page['caption'].strip().lower() == 'no caption':
                 raw_name = image_page['raw_name']
-
                 target_line_idx = None
-                for i, line in enumerate(text_lines):
+                for (i, line) in enumerate(text_lines):
                     if raw_name in line:
                         target_line_idx = i
                         break
-
                 if target_line_idx is not None:
                     start = max(0, target_line_idx - 15)
                     end = min(len(text_lines), target_line_idx + 15 + 1)
-                    context = "\n".join(text_lines[start:end])
+                    context = '\n'.join(text_lines[start:end])
                 else:
-                    context = ""
-
+                    context = ''
                 img_bytes_io = BytesIO()
                 img = image_page['image']
                 img.save(img_bytes_io, format='PNG')
                 img_bytes = img_bytes_io.getvalue()
                 image_page['caption'] = vision_generator.generate_caption(img_bytes, context)
-
         return image_page_information
 
-    
-    def save_table_images(
-        self,
-        table_page_information: List[Dict[str, Any]],
-        document_id: str,
-    ) -> Dict[int, str]:
-        """Crop table images from PDF using bbox and save to assets directory.
-        Returns a dict mapping table_index -> relative image path.
-        """
+    def save_table_images(self, table_page_information: List[Dict[str, Any]], document_id: str) -> Dict[int, str]:
         from src.utils.config import config as app_config
-
-        image_dir = app_config.ASSETS_DIR / document_id / "images"
+        image_dir = app_config.ASSETS_DIR / document_id / 'images'
         ensure_dir(image_dir)
-
         table_image_paths: Dict[int, str] = {}
-        for idx, table_page in enumerate(table_page_information):
+        for (idx, table_page) in enumerate(table_page_information):
             bbox = table_page.get('bbox')
             if bbox is None:
                 continue
-
             page_index = table_page['page']
             page = self.doc.load_page(page_index)
             clip_rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
             pix = page.get_pixmap(dpi=150, clip=clip_rect)
-
-            file_name = f"table_{idx+1:03d}.png"
+            file_name = f'table_{idx + 1:03d}.png'
             file_path = image_dir / file_name
             pix.save(str(file_path))
-
             relative_path = str(file_path.relative_to(app_config.BASE_DIR))
             table_image_paths[idx] = relative_path
-
         return table_image_paths
 
     def get_table_page_information(self) -> List[Dict[str, Any]]:
         config_parser = ConfigParser({})
-        converter = TableConverter(
-            artifact_dict=create_model_dict(),
-            config=config_parser.generate_config_dict(),
-        )
+        converter = TableConverter(artifact_dict=create_model_dict(), config=config_parser.generate_config_dict())
         document = converter.build_document(self.pdf_path)
         renderer = MarkdownRenderer()
         markdown_output = renderer(document)
         tables = document.contained_blocks((BlockTypes.Table,))
-        tables_content = markdown_output.markdown.split("\n\n")
+        tables_content = markdown_output.markdown.split('\n\n')
         table_page_information = []
         for i in range(len(tables)):
             bbox = tables[i].polygon.bbox if hasattr(tables[i], 'polygon') and tables[i].polygon else None
-            table_page = {
-                "page": tables[i].page_id,
-                "table": tables_content[i],
-                "bbox": bbox,
-            }
+            table_page = {'page': tables[i].page_id, 'table': tables_content[i], 'bbox': bbox}
             table_page_information.append(table_page)
-
         table_page_count = {}
         for table_page in table_page_information:
             page = table_page['page']
             table_page_count[page] = table_page_count.get(page, 0) + 1
         page_captions: Dict[str, List[str]] = {}
-        for page, count in table_page_count.items():
-            page_captions[page] = self.get_caption(int(page), count, type_search="table")
-
+        for (page, count) in table_page_count.items():
+            page_captions[page] = self.get_caption(int(page), count, type_search='table')
         page_index_tracker: Dict[str, int] = {}
         for table_page in table_page_information:
             page = table_page['page']
             idx = page_index_tracker.get(page, 0)
             table_page['caption'] = page_captions[page][idx]
             page_index_tracker[page] = idx + 1
-
         full_text = self.extract_texts()
         text_lines = full_text.splitlines()
         vision_generator = VisionCaptionGenerator()
-
         for table_page in table_page_information:
-            if table_page['caption'].strip().lower() == "no caption":
+            if table_page['caption'].strip().lower() == 'no caption':
                 table_markdown_content = table_page['table']
-                
-                first_table_line = table_markdown_content.strip().splitlines()[0] if table_markdown_content.strip() else ""
+                first_table_line = table_markdown_content.strip().splitlines()[0] if table_markdown_content.strip() else ''
                 target_line_idx = None
-                for i, line in enumerate(text_lines):
+                for (i, line) in enumerate(text_lines):
                     if first_table_line and first_table_line in line:
                         target_line_idx = i
                         break
-
                 if target_line_idx is not None:
                     start = max(0, target_line_idx - 15)
                     end = min(len(text_lines), target_line_idx + 15 + 1)
-                    context = "\n".join(text_lines[start:end])
+                    context = '\n'.join(text_lines[start:end])
                 else:
-                    context = ""
-
+                    context = ''
                 table_page['caption'] = vision_generator.generate_table_caption(table_markdown_content, context)
-
         return table_page_information
 
-    
-    def get_caption(self, page_id, object_number, type_search: str = "image") -> List[str]:
+    def get_caption(self, page_id, object_number, type_search: str='image') -> List[str]:
         page = self.doc.load_page(page_id)
         pix = page.get_pixmap(dpi=200)
-        image_bytes = pix.tobytes("png")
-
-        prompt = (
-            f"This page contains {object_number} {type_search}. "
-            f"Extract the caption for each {type_search}, if available. "
-            f"Return a JSON array of exactly {object_number} strings, one caption per {type_search}, "
-            f"in the order they appear on the page. If a {type_search} has no caption, use \"No Caption\" as the value. "
-            f"Do not include any explanation, only output the JSON array. "
-            f"Example output (if the 2nd {type_search} has no caption): "
-            f'["Caption of first {type_search}", "No Caption", "Caption of third {type_search}"]'
-        )
-
-        raw_content = vision_chat(
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        b64_image(image_bytes),
-                    ],
-                }
-            ],
-            temperature=0.2,
-        )
-
-        match = re.search(r'\[.*\]', raw_content, re.DOTALL)
+        image_bytes = pix.tobytes('png')
+        prompt = f'This page contains {object_number} {type_search}. Extract the caption for each {type_search}, if available. Return a JSON array of exactly {object_number} strings, one caption per {type_search}, in the order they appear on the page. If a {type_search} has no caption, use "No Caption" as the value. Do not include any explanation, only output the JSON array. Example output (if the 2nd {type_search} has no caption): ["Caption of first {type_search}", "No Caption", "Caption of third {type_search}"]'
+        raw_content = vision_chat(messages=[{'role': 'user', 'content': [{'type': 'text', 'text': prompt}, b64_image(image_bytes)]}], temperature=0.2)
+        match = re.search('\\[.*\\]', raw_content, re.DOTALL)
         if match:
             captions: List[str] = json.loads(match.group())
         else:
             captions = []
         captions = captions[:object_number]
-        captions += ["No Caption"] * (object_number - len(captions))
+        captions += ['No Caption'] * (object_number - len(captions))
         return captions
-    

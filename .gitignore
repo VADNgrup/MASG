@@ -9,6 +9,9 @@ ENV/
 .venv
 .env
 data/lectures/*
+data/assets/*
+data/context/*
+logs/*
 data/optimization/*
 !data/lectures/.gitkeep
 !data/optimization/.gitkeep

@@ -4,32 +4,20 @@ from typing import List
 from src.utils.config import Config
 
 class Severity(str, Enum):
-    """Three-tier severity scale for LLM-as-Judge feedback.
-
-    CRITICAL — factual errors, hallucinations, or entirely missing required
-               sections. Triggers a slide rewrite.
-    MAJOR    — significant structural or comprehension issues: wrong depth,
-               undefined key terms, density violations that impede learning.
-               Shown to the writer but does not trigger a rewrite on its own.
-    MINOR    — style, phrasing, or minor presentation suggestions.
-               Informational only; never triggers a rewrite.
-    """
-    CRITICAL = "critical"
-    MAJOR    = "major"
-    MINOR    = "minor"
+    CRITICAL = 'critical'
+    MAJOR = 'major'
+    MINOR = 'minor'
 
 @dataclass
 class Issue:
-    severity:         Severity
-    location:         str
-    description:      str
-    suggestion:       str
-    confidence_score: float   
+    severity: Severity
+    location: str
+    description: str
+    suggestion: str
+    confidence_score: float
 
     @property
     def is_convincing(self) -> bool:
-        """True when the LLM Judge is confident enough in this issue to surface it
-        to the writer.  Each severity level requires a higher confidence bar."""
         if self.severity == Severity.CRITICAL:
             return self.confidence_score >= Config.CRITICAL_CONFIDENCE_THRESHOLD
         if self.severity == Severity.MAJOR:
@@ -41,7 +29,7 @@ class Issue:
 @dataclass
 class CriterionResult:
     criterion: str
-    issues:    List[Issue] = field(default_factory=list)
+    issues: List[Issue] = field(default_factory=list)
 
     @property
     def convincing_critical_issues(self) -> List[Issue]:
@@ -53,15 +41,13 @@ class CriterionResult:
 
 @dataclass
 class SlideReview:
-    slide_index:  int                              
-    slide_title:  str                              
-    criteria:     dict[str, CriterionResult]       
-    protected:    List[str] = field(default_factory=list)  
+    slide_index: int
+    slide_title: str
+    criteria: dict[str, CriterionResult]
+    protected: List[str] = field(default_factory=list)
 
     @property
     def convincing_critical_issues(self) -> List[Issue]:
-        """CRITICAL issues that pass the confidence threshold — used to decide
-        whether the slide needs a rewrite."""
         issues = []
         for cr in self.criteria.values():
             issues.extend(cr.convincing_critical_issues)
@@ -69,8 +55,6 @@ class SlideReview:
 
     @property
     def convincing_issues(self) -> List[Issue]:
-        """All issues (CRITICAL + MAJOR + MINOR) that pass their respective
-        confidence thresholds — the full set surfaced to the writer."""
         issues = []
         for cr in self.criteria.values():
             issues.extend([i for i in cr.issues if i.is_convincing])
@@ -97,25 +81,19 @@ class WriterReview:
 
     @property
     def convincing_critical_count(self) -> int:
-        return sum(len(s.convincing_critical_issues) for s in self.slide_reviews)
+        return sum((len(s.convincing_critical_issues) for s in self.slide_reviews))
 
     @property
     def convincing_major_count(self) -> int:
-        return sum(
-            len([i for i in s.convincing_issues if i.severity == Severity.MAJOR])
-            for s in self.slide_reviews
-        )
+        return sum((len([i for i in s.convincing_issues if i.severity == Severity.MAJOR]) for s in self.slide_reviews))
 
     @property
     def convincing_minor_count(self) -> int:
-        return sum(
-            len([i for i in s.convincing_issues if i.severity == Severity.MINOR])
-            for s in self.slide_reviews
-        )
+        return sum((len([i for i in s.convincing_issues if i.severity == Severity.MINOR]) for s in self.slide_reviews))
 
     @property
     def minor_count(self) -> int:
-        return sum(len(s.minor_issues) for s in self.slide_reviews)
+        return sum((len(s.minor_issues) for s in self.slide_reviews))
 
     @property
     def passed(self) -> bool:
@@ -124,13 +102,14 @@ class WriterReview:
 @dataclass
 class Version:
     iteration: int
-    slides:    dict[int, str]      
-    review:    WriterReview
+    slides: dict[int, str]
+    review: WriterReview
 
-    def is_better_than(self, other: "Version") -> bool:
+    def is_better_than(self, other: 'Version') -> bool:
         if self.review.convincing_critical_count != other.review.convincing_critical_count:
             return self.review.convincing_critical_count < other.review.convincing_critical_count
         return self.review.minor_count < other.review.minor_count
+
     def get_slides_to_fix(self) -> List[SlideReview]:
         return self.review.failed_slides
 
@@ -152,5 +131,5 @@ class PlannerReview:
     @property
     def decision(self) -> str:
         if self.passed:
-            return "ACCEPT"
-        return "RETRY"
+            return 'ACCEPT'
+        return 'RETRY'

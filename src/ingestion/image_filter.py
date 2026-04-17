@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Tuple, Optional
 from PIL import Image, ImageStat
 import numpy as np
-
 from src.utils.config import config
 
 class ImageFilter:
@@ -13,68 +12,48 @@ class ImageFilter:
         pass
 
     def should_use_image(self, image_bytes: bytes) -> Tuple[bool, str]:
-        """
-        High-level verdict: should this image be used in a slide?
-
-        Returns:
-            (True, reason)  — image is acceptable
-            (False, reason) — image should be rejected
-        """
-        passed, reason = self.pre_filter(image_bytes)
+        (passed, reason) = self.pre_filter(image_bytes)
         if not passed:
-            return False, reason
-
+            return (False, reason)
         quality = self.assess_quality(image_bytes)
         if quality < self.QUALITY_THRESHOLD:
-            return False, f"low_quality (score={quality:.2f})"
-
-        return True, f"accepted (score={quality:.2f})"
+            return (False, f'low_quality (score={quality:.2f})')
+        return (True, f'accepted (score={quality:.2f})')
 
     def pre_filter(self, image_bytes: bytes) -> Tuple[bool, str]:
         try:
             img = Image.open(io.BytesIO(image_bytes))
-
             if img.mode != 'RGB':
                 img = img.convert('RGB')
-
-            width, height = img.size
+            (width, height) = img.size
             ratio = width / height
             r_ratio = height / width
             if width < 300 or height < 300:
-                return False, "too_small"
+                return (False, 'too_small')
             if ratio > 5 or r_ratio > 5:
-                return False, "too_thin"
-
+                return (False, 'too_thin')
             img_array = np.array(img)
             if self._is_pure_single_color(img_array):
-                return False, "pure_single_color"
-
-            return True, "passed_pre_filter"
+                return (False, 'pure_single_color')
+            return (True, 'passed_pre_filter')
         except Exception:
-            return True, "error_assume_valid"
+            return (True, 'error_assume_valid')
 
     def assess_quality(self, image_bytes: bytes) -> float:
-        """
-        Return a quality score in [0.0, 1.0].
-        Score = resolution×0.4 + sharpness×0.4 + contrast×0.2
-        """
         try:
             img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-            width, height = img.size
-
+            (width, height) = img.size
             resolution_score = self._score_resolution(width, height)
-            sharpness_score  = self._score_sharpness(img)
-            contrast_score   = self._score_contrast(img)
-
+            sharpness_score = self._score_sharpness(img)
+            contrast_score = self._score_contrast(img)
             quality = resolution_score * 0.4 + sharpness_score * 0.4 + contrast_score * 0.2
             return min(max(quality, 0.0), 1.0)
         except Exception as e:
-            print(f"Image quality assessment error: {e}")
+            print(f'Image quality assessment error: {e}')
             return 0.5
 
     @staticmethod
     def _score_resolution(width: int, height: int) -> float:
-        """Higher resolution → higher score."""
         pixel_count = width * height
         if pixel_count >= 500 * 500:
             return 1.0
@@ -91,13 +70,10 @@ class ImageFilter:
 
     @staticmethod
     def _score_sharpness(img: Image.Image) -> float:
-        """Variance of Laplacian — blurry images score low."""
         try:
             img_array = np.array(img.convert('L'))
             laplacian = np.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]])
-            laplacian_result = np.abs(
-                np.convolve(img_array.flatten(), laplacian.flatten(), mode='valid')
-            )
+            laplacian_result = np.abs(np.convolve(img_array.flatten(), laplacian.flatten(), mode='valid'))
             variance = np.var(laplacian_result)
             if variance > 500:
                 return 1.0
@@ -114,7 +90,6 @@ class ImageFilter:
 
     @staticmethod
     def _score_contrast(img: Image.Image) -> float:
-        """Standard deviation of pixel values — low contrast images score low."""
         try:
             stat = ImageStat.Stat(img)
             std_dev = np.mean(stat.stddev)
@@ -134,18 +109,14 @@ class ImageFilter:
     def _is_pure_single_color(self, img_array: np.ndarray) -> bool:
         if len(img_array.shape) != 3:
             return False
-
         unique_colors = len(np.unique(img_array.reshape(-1, img_array.shape[2]), axis=0))
-
         if unique_colors <= 2:
             return True
-
         if unique_colors <= 5:
             flat = img_array.reshape(-1, img_array.shape[2])
-            unique, counts = np.unique(flat, axis=0, return_counts=True)
+            (unique, counts) = np.unique(flat, axis=0, return_counts=True)
             most_common_count = counts.max()
             total_pixels = img_array.shape[0] * img_array.shape[1]
             if most_common_count / total_pixels > 0.99:
                 return True
-
         return False

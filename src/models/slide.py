@@ -2,13 +2,12 @@ from typing import Optional, List, Dict, Union
 from dataclasses import dataclass, field
 from enum import Enum
 
-
 class SlideType(Enum):
-    CONTENT = "content"
-    HAVE_TABLE = "have_table"
-    HAVE_FORMULA = "have_formula"
-    COMPARISON = "comparison"
-    TWO_SUB_CONTENTS = "two_sub_contents"
+    CONTENT = 'content'
+    HAVE_TABLE = 'have_table'
+    HAVE_FORMULA = 'have_formula'
+    COMPARISON = 'comparison'
+    TWO_SUB_CONTENTS = 'two_sub_contents'
 
 @dataclass
 class Table:
@@ -27,8 +26,4 @@ class Slide:
 @dataclass
 class SlideContent:
     slide: Slide
-    content: Union[
-        str,                    
-        List[str],              
-        Dict[str, List[str]],   
-    ] = field(default_factory=list)
+    content: Union[str, List[str], Dict[str, List[str]]] = field(default_factory=list)

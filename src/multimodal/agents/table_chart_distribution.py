@@ -3,111 +3,59 @@ import json
 from pathlib import Path
 from src.utils.fuzzy_distance import fuzzy_distance
 
-
 class TableChartDistribution:
-    def __init__(self, model: str = "gpt-5"):
+
+    def __init__(self, model: str='gpt-5'):
         pass
 
-    def distribute_tables(
-        self,
-        lecture_id: str,
-        lecture_dict: Dict[str, Any],
-        aggregated_media: Dict[str, Any],
-        used_tables: Set[str]
-    ) -> List[Dict[str, Any]]:
-        """
-        Distribute tables to slides by fuzzy-matching slide tables against context tables.
-        
-        Strategy:
-            1. Find all slides with slide_type == "have_table"
-            2. For each slide's table, fuzzy-match against all context tables
-            3. Pick the highest-scoring context table as the match
-            4. If that context table has a chart_path, assign it
-        
-        Args:
-            lecture_id: Lecture ID for saving results
-            lecture_dict: Lecture dictionary with slides
-            aggregated_media: Aggregated media containing context tables
-            used_tables: Set of already used table IDs
-            
-        Returns:
-            List of table distributions with slide_number, table_data, and optional chart_path
-        """
+    def distribute_tables(self, lecture_id: str, lecture_dict: Dict[str, Any], aggregated_media: Dict[str, Any], used_tables: Set[str]) -> List[Dict[str, Any]]:
         distributions = []
-
         context_tables = aggregated_media.get('tables', [])
         slides = lecture_dict.get('slides', [])
-
         if not context_tables or not slides:
-            print("No tables or slides found")
+            print('No tables or slides found')
             return distributions
-
-        print(f"\nDistributing tables via fuzzy matching...")
-        print(f"  Context tables: {len(context_tables)}, Slides: {len(slides)}")
-
+        print(f'\nDistributing tables via fuzzy matching...')
+        print(f'  Context tables: {len(context_tables)}, Slides: {len(slides)}')
         for slide_entry in slides:
             slide = slide_entry.get('slide', {})
             slide_type = slide.get('slide_type', '')
             slide_number = slide.get('slide_number', 0)
-
             if slide_type != 'have_table':
                 continue
-
             table_info = slide.get('table')
             if not table_info:
                 continue
-
             slide_table_md = table_info.get('table_markdown', '')
             slide_table_caption = table_info.get('table_caption', '')
-
             if not slide_table_md:
                 continue
-
             print(f"\n  Slide {slide_number} ({slide.get('slide_title', '')}):")
-
             best_score = -1
             best_ctx_table = None
             best_ctx_id = None
-
-            for ctx_idx, ctx_table in enumerate(context_tables):
+            for (ctx_idx, ctx_table) in enumerate(context_tables):
                 ctx_id = ctx_table.get('table_id', f'table_{ctx_idx}')
-
                 if ctx_id in used_tables:
                     continue
-
                 ctx_md = ctx_table.get('markdown', '')
                 if not ctx_md:
                     continue
-
                 score = fuzzy_distance(slide_table_md, ctx_md)
-
-                print(f"    vs {ctx_id}: {score:.1f}")
-
+                print(f'    vs {ctx_id}: {score:.1f}')
                 if score > best_score:
                     best_score = score
                     best_ctx_table = ctx_table
                     best_ctx_id = ctx_id
-
             if best_ctx_table and best_score > 0:
                 chart_path = best_ctx_table.get('chart_path') or best_ctx_table.get('image_table_path')
-
-                distributions.append({
-                    'slide_number': slide_number,
-                    'table_data': best_ctx_table.get('markdown', ''),
-                    'table_caption': best_ctx_table.get('table_caption', slide_table_caption),
-                    'chart_path': chart_path,
-                    'relevance_score': best_score
-                })
-
+                distributions.append({'slide_number': slide_number, 'table_data': best_ctx_table.get('markdown', ''), 'table_caption': best_ctx_table.get('table_caption', slide_table_caption), 'chart_path': chart_path, 'relevance_score': best_score})
                 used_tables.add(best_ctx_id)
-                print(f"Matched {best_ctx_id} (score: {best_score:.1f}), chart: {chart_path}")
+                print(f'Matched {best_ctx_id} (score: {best_score:.1f}), chart: {chart_path}')
             else:
-                print(f"No matching context table found")
-
-        output_path = Path(f"data/lectures/{lecture_id}_table_distribution.json")
+                print(f'No matching context table found')
+        output_path = Path(f'data/lectures/{lecture_id}_table_distribution.json')
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(distributions, f, indent=2, ensure_ascii=False)
-
-        print(f"\nSaved table distributions to: {output_path}")
-
+        print(f'\nSaved table distributions to: {output_path}')
         return distributions

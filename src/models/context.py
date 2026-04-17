@@ -12,8 +12,8 @@ class TableData(BaseModel):
     markdown: str
     table_caption: str
     should_visualize: str
-    chart_path: Optional[str] = None  
-    chart_type: Optional[str] = None  
+    chart_path: Optional[str] = None
+    chart_type: Optional[str] = None
     image_table_path: Optional[str] = None
 
 class ProcessingMetadata(BaseModel):
@@ -24,9 +24,8 @@ class ProcessingMetadata(BaseModel):
 class DocumentContext(BaseModel):
     document_id: str
     source_file: str
-    processed_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    processed_at: str = Field(default_factory=lambda : datetime.utcnow().isoformat() + 'Z')
     text_content: TextContent
     tables: List[TableData] = Field(default_factory=list)
     assets: AssetCollection = Field(default_factory=AssetCollection)
     metadata: ProcessingMetadata
-
