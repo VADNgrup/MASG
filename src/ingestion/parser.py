@@ -220,10 +220,12 @@ class DocumentParser:
         prompt = f'This page contains {object_number} {type_search}. Extract the caption for each {type_search}, if available. Return a JSON array of exactly {object_number} strings, one caption per {type_search}, in the order they appear on the page. If a {type_search} has no caption, use "No Caption" as the value. Do not include any explanation, only output the JSON array. Example output (if the 2nd {type_search} has no caption): ["Caption of first {type_search}", "No Caption", "Caption of third {type_search}"]'
         raw_content = vision_chat(messages=[{'role': 'user', 'content': [{'type': 'text', 'text': prompt}, b64_image(image_bytes)]}], temperature=0.2)
         match = re.search('\\[.*\\]', raw_content, re.DOTALL)
+        captions = []
         if match:
-            captions: List[str] = json.loads(match.group())
-        else:
-            captions = []
+            try:
+                captions = json.loads(match.group())
+            except json.JSONDecodeError:
+                captions = []
         captions = captions[:object_number]
         captions += ['No Caption'] * (object_number - len(captions))
         return captions

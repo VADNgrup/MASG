@@ -50,14 +50,15 @@ def main():
             if document_name.endswith('.pdf') and count <= limit:
                 print(f'\nProcessing {count}/{limit}: {document_name} \n')
                 a_document_path = os.path.join(default_document_folder, document_name)
-                time_taken = gen_slide(a_document_path, lecture_title, speaker_information)
-                print(f'[full time taken] {time_taken}s')
+                try:
+                    time_taken = gen_slide(a_document_path, lecture_title, speaker_information)
+                    print(f'[full time taken] {time_taken}s')
+                except Exception as e:
+                    print(f'[ERROR] Failed to process {document_name}: {e}')
+                    time_taken = None
                 count += 1
                 if not time_taken:
                     continue
-                if time_taken > 120:
-                    print('[main] Waiting 1 minutes before next document...')
-                    time.sleep(60)
     elif document_path:
         print(f'\nProcessing {document_path} \n')
         time_taken = gen_slide(document_path, lecture_title, speaker_information)
