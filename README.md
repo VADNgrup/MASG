@@ -1,38 +1,64 @@
-# Lecture Generation Pipeline
+# LecSlideGen: Automated Lecture Generation Pipeline
 
-This repository contains ideas and an experimental pipeline for **automatic lecture generation**, from raw documents to Slidev-based presentation slides.
+LecSlideGen is an automated experimental pipeline designed to convert raw academic documents into structured, presentation-ready Slidev decks. The system utilizes a parallel Multi-Agent LLM architecture with built-in reflection and refinement mechanisms to ensure structural integrity and high content faithfulness to the source material.
 
-## Usage
-Follow the steps below to generate lectures and slides:
+## Architecture Highlights
+- Multi-Agent Workflow: Modular agents handling document planning, slide specification, drafting, peer-reviewing, and active refinement.
+- Self-Correction Mechanism: Parallel reviewers and a backtracking system to eliminate content hallucination and formatting failures.
+- Pedagogical Layouts: Outputs directly to Slidev, focusing on standard educational presentation rules.
+
+## Setup
+Ensure all dependencies are installed, then create your local environment configuration by copying the provided example file:
 
 ```bash
-# Myenv Activate
-cd D:\python
-.\myenv\Scripts\activate
-cd .\LecSlideGen
-# Convert all documents in data/raw to slides (speaker information is Optional)
-python -m main --speaker_information "Your Information" --limit 10
-python -m main --limit 1
+cp .env.example .env
+```
+After copying, update the `.env` file with your specific API keys and model configurations.
 
-# For full pipeline with a single document (document_path is REQUIRED, lecture_title and speaker_information are Optional)
-python -m main --document_path data/raw/{file_name}.{file_type} --lecture_title "Your customized Title" --speaker_information "Your Information"
+## Usage
 
-# For debug
-#1. Extract from a raw doc file or batch extract
-python -m src.extractor.extract_file --input data/raw/{file_name}.{file_type}
-#2. Build a lecture from above doc file information
-python -m src.preprocessor.preprocessing_context --context data/context/{doc_id}.json
-#3. Multimodal Processing
-python -m src.multimodal.multimodal_processing --lecture data/lectures/{file_name}.json
-#4. Generate a lecture from above lecture information
-python -m src.generator.slide_gen --lecture data/lectures/{file_name}.json --title "{Your customized Title}" --speaker "{Your Information}"
-
-# PPT Eval Benchmark
-python -m src.evaluation.eval --model Qwen_Qwen3.5-9B
-python -m src.evaluation.eval --model gpt-4.1-mini
+### 1. Automated Batch Processing
+Generate slides for all supported documents placed inside the `data/raw/` directory.
+```bash
+python -m main --limit 10
 ```
 
-## Pipeline Overview
+### 2. Single Document Processing
+Convert a specific document into slides, allowing customized overriding of the title and presenter metadata.
+```bash
+python -m main \
+    --document_path "data/raw/document.pdf" \
+    --lecture_title "Customized Lecture Title" \
+    --speaker_information "John Doe"
+```
 
-![Lecture generation pipeline overview](docs/images/images/Lecture-gen-2025-12-31.png)
-*Figure 1: End-to-end lecture generation pipeline from raw documents to Slidev slides.*
+### 3. Modular Debugging
+For analytical purposes or manual intervention, the pipeline can be executed chronologically:
+```bash
+# Phase 1: Extract textual and tabular context
+python -m src.extractor.extract_file --input "data/raw/document.pdf"
+
+# Phase 2: Preprocess context
+python -m src.preprocessor.preprocessing_context --context "data/context/doc_id.json"
+
+# Phase 3: Process multimodal assets
+python -m src.multimodal.multimodal_processing --lecture "data/lectures/file_name.json"
+
+# Phase 4: Generate slides through the Multi-Agent framework
+python -m src.generator.slide_gen --lecture "data/lectures/file_name.json"
+```
+
+## Evaluation & Benchmarking
+The system supports automated evaluation using the PPTEval framework (LLM-as-a-Judge) to assess ROUGE-L, Content, Design, and Coherence metrics.
+
+```bash
+# 1. Run the entire generation and evaluation suite
+python run_benchmark.py
+
+# 2. Summarize runtime and quality metrics (automatically filters by model)
+python summarize_performance.py --log logs/llm_calls_gpt-4.1-mini.jsonl
+```
+
+## System Overview
+![Lecture Generation Pipeline](docs/images/Lecture-gen-2025-12-31.png)
+*Figure 1: End-to-end framework architecture.*
