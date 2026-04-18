@@ -60,11 +60,9 @@ def summarize():
             total_tokens_gen += d.get('token_usage', {}).get('total_tokens', 0)
             total_time_gen += d.get('elapsed_s', 0)
 
-    # Count successful lectures by finding the specific model's PDF
     pdf_files = list(output_dir.glob(f'**/{model_filter}/*-export.pdf'))
     success_count = len(pdf_files)
     
-    # Total attempted is the number of main lecture directories
     all_lectures = [d for d in output_dir.iterdir() if d.is_dir()]
     total_attempted = len(all_lectures)
     failed_count = total_attempted - success_count
