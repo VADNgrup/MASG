@@ -8,12 +8,11 @@ from pathlib import Path
 from typing import Optional
 import httpx
 from src.utils.config import Config
-_LOG_PATH = Path('logs/llm_calls.jsonl')
 
 def _write_log(model: str, token_usage: dict, elapsed: float) -> None:
-    _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    log_path = Config.get_log_path()
     entry = {'time': datetime.now(timezone.utc).isoformat(), 'model': model, 'token_usage': token_usage, 'elapsed_s': round(elapsed, 3)}
-    with _LOG_PATH.open('a', encoding='utf-8') as f:
+    with log_path.open('a', encoding='utf-8') as f:
         f.write(json.dumps(entry, ensure_ascii=False) + '\n')
 _MAX_RETRIES = 6
 
