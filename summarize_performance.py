@@ -98,7 +98,7 @@ def summarize():
     print(f"{'Metric':<25} | {'Value':<10}")
     print('-' * 40)
     print(f"{'Call (Avg)':<25} | {avg_call:.1f}")
-    print(f"{'Total Token per output':<25} | {avg_token_k:.1f}")
+    print(f"{'Total Token per output(k)':<25} | {avg_token_k:.1f}")
     print(f"{'Failed':<25} | {failed_count}")
     print(f"{'Done time (m)':<25} | {avg_done_time_m:.2f}")
     print(f"{'Success Rate':<25} | {(success_count / total_attempted * 100 if total_attempted > 0 else 0):.2f}%")
