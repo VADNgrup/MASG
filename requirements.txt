@@ -15,7 +15,7 @@ httpx>=0.24.0
 requests>=2.31.0
 fastapi>=0.110.0
 uvicorn>=0.29.0
-transformers==4.38.2
+transformers>=4.45.2
 marker-pdf==1.10.2
 rouge-chinese==1.0.3
 jieba==0.42.1
