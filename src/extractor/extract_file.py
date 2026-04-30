@@ -13,6 +13,7 @@ from src.ingestion.context_builder import ContextWindowBuilder
 from src.ingestion.image_filter import ImageFilter
 from src.models.context import TableData
 from src.ingestion.generate_charts import generate_charts_for_context
+from src.ingestion.vector_store import VectorStoreManager
 
 def extract_file(input_path):
     config.validate()
@@ -31,13 +32,15 @@ def extract_file(input_path):
     print('[1/6] Marker Parsing...')
     doc_parser = DocumentParser(input_path)
     parsed_content = doc_parser.parse_document(document_id)
-    print('\n[2/6] Extracting and saving images...')
+    print('\n[2/6] Generating VLM captions and saving images...')
     asset_manager = AssetManager(document_id)
+    vlm = VisionCaptionGenerator()
     images_data = parsed_content.images
-    for img_data in tqdm(images_data, desc='Saving images into assets manager'):
-        asset_manager.save_image(image_bytes=img_data['image_bytes'], image_index=img_data['image_index'], caption=img_data['relevant_caption'], reference_context=img_data['reference_context'])
+    for img_data in tqdm(images_data, desc='Saving images & captions'):
+        vlm_caption = vlm.generate_caption(img_data['image_bytes'], img_data['reference_context'])
+        asset_manager.save_image(image_bytes=img_data['image_bytes'], image_index=img_data['image_index'], caption=vlm_caption, reference_context=img_data['reference_context'])
     all_images = asset_manager.get_all_images()
-    print(f'Saved {len(all_images)} valid images')
+    print(f'Saved {len(all_images)} valid images with VLM captions')
     print(f'\n[3/6] Found {len(parsed_content.tables)} tables')
     tables_markdown = parsed_content.tables
     tables_markdown = [TableData(**tbl) for tbl in parsed_content.tables]
@@ -55,6 +58,10 @@ def extract_file(input_path):
     except Exception as e:
         print(f'Warning: Chart generation failed: {e}')
         print('  Continuing without charts...')
+
+    print('\n[7/7] Chunking Markdown & Building Local FAISS Vector Store...')
+    vsm = VectorStoreManager(document_id)
+    vsm.build_and_save(parsed_content.full_text)
     print(f"\n{'=' * 60}")
     print('SUMMARY')
     print(f"{'=' * 60}")

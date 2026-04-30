@@ -1,4 +1,8 @@
 import os
+os.environ['TORCH_DEVICE'] = 'cpu'
+os.environ['MARKER_DEVICE'] = 'cpu'
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+
 from src.utils.file_utils import ensure_dir
 import re
 import logging
@@ -20,13 +24,11 @@ from marker.renderers.markdown import MarkdownRenderer
 from marker.schema import BlockTypes
 from marker.schema.blocks import Table
 from marker.schema.document import Document
-from marker.models import create_model_dict
 import json
 import base64
 import fitz
 _log = logging.getLogger(__name__)
 IMAGE_RESOLUTION_SCALE = 2.0
-os.environ['TORCH_DEVICE'] = 'cuda'
 
 class ParsedContent:
 

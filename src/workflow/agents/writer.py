@@ -5,6 +5,7 @@ from src.utils.parse_llm_response import parse_json_response
 from dataclasses import asdict
 from src.models.context import DocumentContext
 from src.models.slide import SlideContent, Slide
+from src.ingestion.vector_store import VectorStoreManager
 
 class WriterAgent:
 
@@ -14,15 +15,73 @@ class WriterAgent:
     def _chat(self, messages: list, temperature: float=0.4, max_tokens: int=None) -> str:
         return chat(self.model, messages, temperature=temperature, max_tokens=max_tokens)
 
-    def _extract_relevant_text(self, context: DocumentContext) -> str:
-        full_text = context.text_content.markdown
-        return full_text if len(full_text) <= 8000 else full_text[: 8000]
+    def _retrieve_relevant_text(self, context: DocumentContext, slide_specs: List[Slide]) -> str:
+        try:
+            vsm = VectorStoreManager(context.document_id)
+            vectorstore = vsm.load_vector_store()
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+            
+            combined_context = []
+            for spec in slide_specs:
+                query = f"{spec.slide_title}: {spec.goal}"
+                docs = retriever.invoke(query)
+                combined_context.append(f"--- Context for '{spec.slide_title}' ---\n" + "\n".join([d.page_content for d in docs]))
+            
+            return "\n\n".join(combined_context)
+        except Exception as e:
+            print(f"Warning: RAG retrieval failed ({e}), falling back to truncation.")
+            full_text = context.text_content.markdown
+            return full_text if len(full_text) <= 12000 else full_text[:12000]
 
     def _build_batch_system_prompt(self) -> str:
-        return '# ROLE\nYou are an expert lecture slide writer specializing in engaging,\npedagogically clear slides derived from structured academic material.\n\n# TASK\nYou will receive a list of slide specifications and the full source material.\nGenerate content for ALL slides at once in a single response.\n\n# CORE PRINCIPLE\nAll generated content must satisfy three quality criteria:\n- Faithfulness: Each slide must accurately reflect the meaning, tone, and technical\n  content of the source material - do not paraphrase into generic textbook language.\n- Coverage: Together, all slides should cover the key ideas, arguments, and details\n  present in the source material. No important concept should be omitted.\n- Coherence: The slides must be internally consistent and logically connected from\n  beginning to end - terminology, notation, and narrative flow must remain uniform\n  across the entire deck.\n\n# SLIDE HIERARCHY\nThe slide titles follow a numbered outline structure. Use the title prefix to\ndetermine the role of each slide and write content accordingly:\n- Major slide, that has title matches `N.` (e.g. "1. Introduction", "3. Results"):\n  Write a high-level overview. Introduce the theme, state the key questions\n  or objectives, and briefly preview what the sub-slides will elaborate on.\n  Do NOT go into granular detail - save that for the sub-slides.\n- Sub-slide, that has title matches `N.M` or `N.M.K` (e.g. "1.1 Background",\n  "2.3 Experimental Setup"):\n  Write specific, detailed content that expands on exactly one aspect of\n  its parent major slide. Assume the audience already saw the parent overview.\n\n# SLIDE CONSTRUCTION RULES\n- Follow the language, tone, and style of the source material.\n- Stay strictly within the scope of each slide\'s description / goal.\n- Write 3 to 6 main bullet points per slide, occasionally using sub-bullets for logical grouping.\n- Emphasize logical transitions (cause-and-effect) and coherence. You are allowed to write sentences up to 25 words if it helps maintain a complex concept\'s integrity without fragmenting it.\n- Preserve vivid phrasing, examples, or questions when possible.\n- Use proper LaTeX for any mathematical expression.\n\n# MATHEMATICS & NOTATION\n- Inline mathematical expressions are wrapped in LaTeX delimiters by using $...$\n- Correct LaTeX commands are used consistently:\n  - Trigonometric functions: $\\sin$, $\\cos$, $\\tan$\n  - Greek letters: $\\alpha$, $\\beta$, $\\pi$\n  - Fractions: $\\frac{a}{b}$\n  - Superscripts: $x^2$, $\\sin^2 x$\n  - Subscripts: $x_1$, $a_n$\n  - Symbols: $\\neq$, $\\leq$, $\\geq$, $\\pm$, $\\infty$\n- Plain-text mathematical notation is never used.\n\n# CONTENT FORMAT FOR SLIDE TYPE\n- For "content" / "have_table" / "have_formula":\n    "content": ["Point 1", "Point 2", "Point 3", ...]\n- For "two_sub_contents":\n    "content": {"Sub Title 1": ["Point 1", "Point 2", ...], "Sub Title 2": ["Point 1", "Point 2", ...]}\n- For "comparison":\n    "content": "A markdown table summarising the two comparable entities."\n\n# OUTPUT FORMAT\nReturn ONLY valid JSON — an array with one object per slide, in the same\norder as the input specifications:\n[\n  {\n    "slide_number": 1,\n    "content": ["Point 1 supporting the slide title", "Point 2 supporting the slide title", "Point 3 supporting the slide title", "Point 4 (optional)", "Point 5 (optional)"]\n  },\n  {\n    "slide_number": 2,\n    "content": ["Point 1 supporting the slide title", "Point 2 supporting the slide title", "Point 3 supporting the slide title", "Point 4 (optional)", "Point 5 (optional)"]\n  }\n]\n'
+        return '''# ROLE
+You are an expert lecture writer specializing in highly accurate and detailed academic material.
+
+# TASK
+You will receive a list of slide specifications and the relevant source material from the Vector DB.
+Generate content for ALL slides at once in a single response.
+
+# CORE PRINCIPLE
+All generated content must satisfy two quality criteria:
+- Faithfulness: Each slide must accurately reflect the meaning, tone, and technical content of the source material. DO NOT ADD INFO outside the source.
+- Coverage: Together, all slides should cover the key ideas, arguments, and details present in the source material according to the slide goal.
+
+# SLIDE CONSTRUCTION RULES
+- Stay strictly within the scope of each slide's description / goal.
+- Draft the content as FULL, COMPREHENSIVE PARAGRAPHS. DO NOT USE BULLET POINTS yet.
+- Ensure absolutely nothing important is missed from the source chunks. Write in a descriptive, educational tone.
+- Emphasize logical transitions (cause-and-effect) and coherence.
+- Use proper LaTeX for any mathematical expression.
+
+# PRESERVE SPECIFIC DETAILS (CRITICAL)
+- ALWAYS preserve specific names: people, companies, software, tools, brands, institutions.
+  Example: If source mentions "BIOVIA, labguru, labfolder, RSpace, eLABJOURNAL", ALL of these must appear in the relevant slide.
+- ALWAYS preserve specific numbers: years, statistics, measurements, percentages.
+- NEVER generalize away concrete details. "Several software tools exist" is WRONG if the source names them.
+- If the source provides a list of items, include ALL items — do not summarize as "etc." or "and others".
+
+# MATHEMATICS & NOTATION
+- Inline mathematical expressions are wrapped in LaTeX delimiters by using $...$
+- CRITICAL: For multiline LaTeX equations, use double-backslash `\\\\` for newlines. 
+- NEVER use the character `\n` (newline) inside a LaTeX string in the JSON output. 
+- Keep all LaTeX clean and valid.
+
+# OUTPUT FORMAT
+Return ONLY valid JSON — an array with one object per slide, in the same order as the input specifications:
+[
+  {
+    "slide_number": 1,
+    "content": "A comprehensive paragraph fully covering the topic and goal of the slide based on the source text..."
+  },
+  {
+    "slide_number": 2,
+    "content": "Detailed paragraphs..."
+  }
+]
+'''
 
     def draft_slides(self, slide_specs: List[Slide], context: DocumentContext) -> List[SlideContent]:
-        text_excerpt = self._extract_relevant_text(context)
+        text_excerpt = self._retrieve_relevant_text(context, slide_specs)
         specs_payload = []
         for (i, spec) in enumerate(slide_specs, 1):
             d = asdict(spec)
@@ -37,7 +96,8 @@ class WriterAgent:
         return self._parse_batch_response(raw, slide_specs)
 
     def draft_slides_with_feedback(self, slide_specs_with_feedback: List[tuple], context: DocumentContext) -> List[SlideContent]:
-        text_excerpt = self._extract_relevant_text(context)
+        slide_specs_ordered = [spec for (_, spec, _) in slide_specs_with_feedback]
+        text_excerpt = self._retrieve_relevant_text(context, slide_specs_ordered)
         specs_payload = []
         slide_specs_ordered: List[Slide] = []
         for (seq_num, (orig_idx, spec, feedback)) in enumerate(slide_specs_with_feedback, 1):

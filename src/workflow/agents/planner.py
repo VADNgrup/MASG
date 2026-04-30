@@ -12,20 +12,66 @@ class PlannerAgent:
         full_text = context.text_content.markdown
         text_length = len(full_text)
         print('Length of document: ', text_length)
-        if text_length < 6000:
+        if text_length < 4000:
             target_main_sections = '2'
-        elif text_length < 12000:
+            max_total_headings = '6'
+        elif text_length < 8000:
+            target_main_sections = '2'
+            max_total_headings = '8'
+        elif text_length < 15000:
             target_main_sections = '3'
+            max_total_headings = '10'
         else:
             target_main_sections = '4'
-        print('target_main_sections', target_main_sections)
+            max_total_headings = '12'
+        print('target_main_sections', target_main_sections, 'max_total_headings', max_total_headings)
         tables_assets_info = f'# Avaliable Table \n {context.tables}\n # Avaliable Image \n {context.assets.images}'
         feedback_block = ''
         if feedback:
             feedback_block = f'\nREVISION FEEDBACK FROM PREVIOUS OUTLINE REVIEW:\n{feedback}\n\nApply all the suggestions above when generating this revised outline.\n'
-        prompt = f'\n# ROLE\nYou are a senior lecture designer and slide-structure architect.\n\n# TASK\nAnalyze the document and produce a lecture OUTLINE that will be converted into presentation slides.\nHARD CONSTRAINTS (MUST FOLLOW EXACTLY):\n- EXACTLY {target_main_sections} lines starting with "# "\n- Total number of headings ("# " + "## ") MUST be ≤ 12\n- If a section has subsections, it must have AT LEAST 2 (never exactly 1)\n- If exceeding limits, you MUST merge sections until valid\n\nFULL DOCUMENT TEXT:\n{full_text}\nAVAILABLE TABLES AND IMAGES:\n{tables_assets_info}\n\n{feedback_block}\n\n# RULES\n- Same language as the document\n- Title of each heading: maximum 7 words\n- 2 heading levels allowed: "# " and "## " is must be popular.\n- Do NOT add content absent from the source document\n- Do NOT include the lecture topic name as a heading\n- Return ONLY the markdown outline, no commentary, no explanations\n\n# EXAMPLE OUTPUT (for illustration only structure, not content):\n\n# Section One\n## Subsection A\n## Subsection B\n# Section Two\n# Section Three\n## Subsection X\n## Subsection Y\n\n'
+        prompt = (
+            "# ROLE\n"
+            "You are a senior lecture designer and slide-structure architect.\n\n"
+            "# TASK\n"
+            "Analyze the document and produce a lecture OUTLINE that will be converted into presentation slides.\n\n"
+            "HARD CONSTRAINTS (MUST FOLLOW EXACTLY):\n"
+            f"- EXACTLY {target_main_sections} lines starting with \"# \"\n"
+            f"- Total number of headings (\"# \" + \"## \") MUST be ≤ {max_total_headings}\n"
+            "- If a section has subsections, it must have AT LEAST 2 (never exactly 1)\n"
+            "- If exceeding limits, you MUST merge sections until valid\n\n"
+            "PROPORTIONALITY RULE:\n"
+            f"- The source document is {text_length} characters long.\n"
+            "- A SHORT document (< 5000 chars / ~2 pages) should produce 4-6 total slides MAX.\n"
+            "- A MEDIUM document (5000-15000 chars) should produce 6-10 slides.\n"
+            "- A LONG document (> 15000 chars) should produce 8-12 slides.\n"
+            "- NEVER inflate a short document into many slides. Consolidate related ideas.\n\n"
+            f"FULL DOCUMENT TEXT:\n{full_text}\n"
+            f"AVAILABLE TABLES AND IMAGES:\n{tables_assets_info}\n"
+            f"{feedback_block}\n\n"
+            "# RULES\n"
+            "- Same language as the document\n"
+            "- Title of each heading: maximum 7 words\n"
+            "- 2 heading levels allowed: \"# \" and \"## \"\n"
+            "- Do NOT add content absent from the source document\n"
+            "- Do NOT include the lecture topic name as a heading\n"
+            "- NEVER split one topic into \"Part 1\" and \"Part 2\". If content is related, keep it in ONE heading.\n"
+            "- CRITICAL FOR STEM/MATH DOCUMENTS: Worked examples, case studies, numerical problems with specific data "
+            "(tables, constraints, solutions) are the MOST IMPORTANT parts. They MUST have their own dedicated section(s).\n"
+            "- CRITICAL FOR ALL DOCUMENTS: If the source names specific tools, software, brands, or real-world examples, "
+            "these MUST appear in the outline. Never generalize away concrete details.\n"
+            "- Return ONLY the markdown outline, no commentary, no explanations\n\n"
+            "# EXAMPLE OUTPUT (for illustration only structure, not content):\n\n"
+            "# Section One\n"
+            "## Subsection A\n"
+            "## Subsection B\n"
+            "# Section Two\n"
+            "# Section Three\n"
+            "## Subsection X\n"
+            "## Subsection Y\n\n"
+        )
         MAX_RETRIES = 3
         target_sections_int = int(target_main_sections)
+        max_headings_int = int(max_total_headings)
         for attempt in range(1, MAX_RETRIES + 1):
             outline_md = chat(self.model, [{'role': 'user', 'content': prompt}], temperature=0)
             print(outline_md)
@@ -38,8 +84,11 @@ class PlannerAgent:
                 errors.append(f"The outline has only {n_major} major section (line starting with '# '). There must be at least 2 major sections.")
             if n_major > target_sections_int:
                 errors.append(f'The outline has {n_major} major sections but the target is exactly {target_main_sections}. Merge sections until valid.')
-            if n_total > 15:
-                errors.append(f'Total slide count ({n_total}) exceeds 15. Reduce the number of headings so the deck has at most 15 slides.')
+            if n_total > max_headings_int:
+                errors.append(f'Total heading count ({n_total}) exceeds {max_total_headings}. Merge or remove subsections.')
+            for line in outline_md.splitlines():
+                if re.search(r'part\s*[12]', line, re.IGNORECASE):
+                    errors.append(f"Heading '{line.strip()}' uses 'Part 1/Part 2' splitting. Merge into a single heading.")
             lines = outline_md.splitlines()
             for (i, line) in enumerate(lines):
                 if re.match('^#\\s+\\S', line):

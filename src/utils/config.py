@@ -7,7 +7,7 @@ class Config:
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     LLM_MODEL_NAME = os.getenv('LLM_MODEL_NAME')
     LLM_BASE_URL = os.getenv('LLM_BASE_URL')
-    SERPER_API_KEY = os.getenv('SERPER_API_KEY')
+    TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
     VLM_BASE_URL = os.getenv('VLM_BASE_URL')
     VLM_API_KEY = os.getenv('VLM_API_KEY')
     VLM_MODEL_NAME = os.getenv('VLM_MODEL_NAME')
@@ -31,12 +31,6 @@ class Config:
     CRITICAL_CONFIDENCE_THRESHOLD = 0.95
     MAJOR_CONFIDENCE_THRESHOLD = 0.92
     MINOR_CONFIDENCE_THRESHOLD = 0.92
-    FEEDBACK_INTERATION_NUMBER = int(os.getenv('FEEDBACK_INTERATION_NUMBER', 1))
-    BACK_PLANNER_CRITICAL_NUM = 7
-    BACK_PLANNER_MAJOR_NUM = 10
-    BACK_PLANNER_MINOR_NUM = 15
-    SLIDE_IMAGE_WIDTH_STEP = 5
-    SLIDE_IMPROVING_MAX_ITERATION = 3
     @classmethod
     def get_log_path(cls):
         sanitized_model = (cls.LLM_MODEL_NAME or 'default').replace('/', '_').replace(':', '_')

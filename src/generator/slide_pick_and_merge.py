@@ -70,7 +70,7 @@ class SlidePickMerge:
 
     def _copy_assets(self):
         base = _PROJECT_ROOT / 'data' / 'assets' / self.source_doc_id
-        for sub in ('charts', 'images'):
+        for sub in ('charts', 'images', 'downloaded_images'):
             folder = base / sub
             if folder.exists():
                 for f in folder.iterdir():
@@ -210,6 +210,18 @@ class SlidePickMerge:
             cleaned.append(item)
         return cleaned
 
+    @staticmethod
+    def _sanitise_latex(latex: str) -> str:
+        if not latex:
+            return ""
+        s = latex.replace("\\n", " ")
+        s = s.strip()
+        if s.startswith("$$") and s.endswith("$$"):
+            s = s[2:-2].strip()
+        elif s.startswith("$") and s.endswith("$"):
+            s = s[1:-1].strip()
+        return s
+
     def _build_content_slide(self, slide_entry: dict) -> str:
         slide_info = slide_entry['slide']
         num = int(slide_info['slide_number'])
@@ -241,7 +253,7 @@ class SlidePickMerge:
             self._log_layout(sn, 'two_contents_in_a_slide_layout', {'title': title, 'sub_title_1': sub_title_1, 'sub_title_2': sub_title_2, 'sub_content_1': sub_content_1, 'sub_content_2': sub_content_2})
             return mgr.two_contents_in_a_slide_layout(title, sub_title_1, sub_title_2, sub_content_1, sub_content_2)
         if stype == 'have_formula':
-            latex = slide_info.get('latex_block_formula') or ''
+            latex = self._sanitise_latex(slide_info.get('latex_block_formula') or '')
             _args = {'title': title, 'latex_formula_block': latex, 'content': contents}
             if random.random() < 0.5:
                 self._log_layout(sn, 'formula_top_layout', _args)

@@ -11,6 +11,7 @@ from src.utils.llm import chat
 from src.utils.semantic_match import SemanticMatcher
 from src.ingestion.image_filter import ImageFilter
 from src.utils.config import Config
+from src.ingestion.vision_model import VisionCaptionGenerator
 
 class ImageDistribution:
 
@@ -18,12 +19,12 @@ class ImageDistribution:
         self.matcher = SemanticMatcher()
         self.llm_model = config.LLM_MODEL_NAME
         self.vlm_model = config.VLM_MODEL_NAME
-        self.serper_api_key = config.SERPER_API_KEY
+        self.tavily_api_key = config.TAVILY_API_KEY
         self.num_images = 3
         self.skip_websites = ['researchgate.net', 'huggingface.co', 'towardsdatascience.com', 'mdpi.com']
         self.alpha = 0.7
-        self.threshold = 0.4
-        self.web_threshold = 0.2
+        self.threshold = 0.28
+        self.web_threshold = 0.35
         self.web_dedup_threshold = 0.85
         self.max_images_per_slide = 2
         self.fusion_threshold = 1.2
@@ -51,8 +52,15 @@ class ImageDistribution:
         print(f'  Step 3 complete: {len(distributions)} images matched to slides')
         assigned_slide_numbers = {d['slide_number'] for d in distributions}
         slides_without_images = [s for s in slide_pool if s['slide_number'] not in assigned_slide_numbers]
-        if slides_without_images:
-            print(f'\n  Step 5: {len(slides_without_images)} slides still need images — Web search fallback is DISABLED for academic rigor.')
+        if slides_without_images and self.tavily_api_key:
+            print(f'\n  Step 5: {len(slides_without_images)} slides still need images — searching web via Tavily...')
+            download_dir = Path(f'data/assets/{lecture_id}/downloaded_images')
+            download_dir.mkdir(parents=True, exist_ok=True)
+            web_distributions = self._step5_web_search_fallback(slides_without_images, download_dir, used_images, aggregated_media)
+            distributions.extend(web_distributions)
+            print(f'  Step 5 complete: {len(web_distributions)} web images added')
+        elif slides_without_images:
+            print(f'\n  Step 5: {len(slides_without_images)} slides still need images — no TAVILY_API_KEY configured, skipping web fallback.')
         output_path = Path(f'data/lectures/{lecture_id}_image_distributions.json')
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w', encoding='utf-8') as f:
@@ -94,11 +102,12 @@ class ImageDistribution:
         return image_pool
 
     def _extract_content_slides(self, slides: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        skip_types = {'greeting', 'goodbye'}
         content_slides = []
         for slide_entry in slides:
             slide_meta = slide_entry.get('slide', {})
             slide_type = slide_meta.get('slide_type', '')
-            if slide_type == 'content':
+            if slide_type not in skip_types:
                 content_slides.append(slide_entry)
         return content_slides
 
@@ -231,6 +240,25 @@ class ImageDistribution:
                 if not selected_candidate:
                     print(f'[web] Slide {slide_number} query {q_idx}: no suitable image found')
                     continue
+                    
+                print(f"[web] Slide {slide_number} query {q_idx}: Validating {selected_candidate['name']} with VLM...")
+                vlm = VisionCaptionGenerator()
+                with open(selected_candidate['path'], "rb") as img_file:
+                    img_bytes = img_file.read()
+                vlm_caption = vlm.generate_caption(img_bytes, slide_text)
+                if "error" in vlm_caption.lower() or len(vlm_caption) < 5:
+                     print(f"[web] Slide {slide_number} query {q_idx}: VLM rejected {selected_candidate['name']}")
+                     continue
+
+                relevance_prompt = f'Is this image directly relevant to the following slide topic? Answer ONLY "yes" or "no".\n\nSlide topic: {slide_text[:500]}\nImage description: {vlm_caption}'
+                try:
+                    relevance_answer = chat(model=self.llm_model, messages=[{'role': 'user', 'content': relevance_prompt}], temperature=0, max_tokens=10).strip().lower()
+                    if 'no' in relevance_answer:
+                        print(f"[web] Slide {slide_number} query {q_idx}: LLM says image is NOT relevant to slide topic → skip")
+                        continue
+                except Exception:
+                    pass
+
                 try:
                     with Image.open(selected_candidate['path']) as pil_img:
                         (cand_w, cand_h) = pil_img.size
@@ -245,7 +273,7 @@ class ImageDistribution:
                         print(f'[web] Slide {slide_number}: combined ratio {fusion_ratio:.2f} >= {self.fusion_threshold} → reject 2nd image')
                         continue
                     print(f'[web] Slide {slide_number}: combined ratio {fusion_ratio:.2f} < {self.fusion_threshold} → accept 2nd image')
-                distributions.append({'slide_number': slide_number, 'image_path': selected_candidate['path'], 'score': round(selected_candidate['score'], 4), 'source': 'downloaded', 'caption': self._shorten_caption(query)})
+                distributions.append({'slide_number': slide_number, 'image_path': selected_candidate['path'], 'score': round(selected_candidate['score'], 4), 'source': 'downloaded', 'caption': self._shorten_caption(vlm_caption)})
                 used_images.add(selected_candidate['name'])
                 self._selected_web_embs.append(selected_candidate['clip_emb'])
                 self._add_downloaded_to_media(selected_candidate['path'], slide_number, query, aggregated_media)
@@ -329,18 +357,24 @@ class ImageDistribution:
     def _search_images(self, query: str, max_results: int | None=None) -> List[str]:
         if max_results is None:
             max_results = self.num_images
-        url = 'https://google.serper.dev/images'
-        payload = json.dumps({'q': query})
-        headers = {'X-API-KEY': self.serper_api_key, 'Content-Type': 'application/json'}
+            
+        url = 'https://api.tavily.com/search'
+        payload = json.dumps({
+            'api_key': self.tavily_api_key,
+            'query': query,
+            'include_images': True,
+            'search_depth': 'advanced'
+        })
+        headers = {'Content-Type': 'application/json'}
         try:
             response = requests.post(url, headers=headers, data=payload, timeout=10)
             response.raise_for_status()
+            # Tavily returns an 'images' list containing image URLs
             results = response.json().get('images', [])
             image_urls = []
-            for r in results:
+            for img_url in results:
                 if len(image_urls) >= max_results:
                     break
-                img_url = r.get('imageUrl', '')
                 if not img_url:
                     continue
                 if img_url.lower().endswith('.svg'):
@@ -350,7 +384,7 @@ class ImageDistribution:
                 image_urls.append(img_url)
             return image_urls
         except Exception as e:
-            print(f'[serper] Error: {e}')
+            print(f'[tavily] Error searching images: {e}')
             return []
 
     def _cached_text_emb(self, text: str):

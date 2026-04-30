@@ -7,7 +7,7 @@ from src.models.context import DocumentContext
 from src.models.slide import Slide, Table, SlideType
 
 class PlanSpecerAgent:
-    MAX_FULL_TEXT_LENGTH = 10000
+    MAX_FULL_TEXT_LENGTH = 30000
     MAX_RETRIES = 3
 
     def __init__(self, model: str):

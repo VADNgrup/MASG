@@ -55,7 +55,7 @@ async def preprocess_context(context, output=None):
     print(f'Tables: {context.metadata.total_tables}\n')
     config.validate()
     workflow = create_workflow()
-    initial_state = {'document_context': context, 'lecture_plan': None, 'lecture_title': '', 'slides': [], 'current_section_idx': 0, 'current_iteration': 0, 'reviewer_feedback': None, 'best_slides': None, 'best_slides_score': float('inf'), 'best_slides_feedback': None, 'slide_specs': None, 'planner_backtrack_used': False, 'coverage_feedback': None}
+    initial_state = {'document_context': context, 'lecture_plan': None, 'lecture_title': '', 'slides': [], 'reviewer_feedback': None, 'slide_specs': None}
     result = await workflow.ainvoke(initial_state)
     final_slides = result['slides']
     final_plan = result['lecture_plan']
@@ -66,7 +66,7 @@ async def preprocess_context(context, output=None):
         quality_score = round(passed / total * 100, 1) if total > 0 else 0.0
     else:
         quality_score = 0.0
-    lecture_output = {'lecture_id': context.document_id, 'metadata': {'source_document_id': context.document_id, 'generated_at': datetime.now().isoformat(), 'total_slides': len(final_slides), 'quality_score': quality_score, 'iterations': result['current_iteration']}, 'lecture_title': result['lecture_title'], 'slides': [asdict(s) for s in final_slides]}
+    lecture_output = {'lecture_id': context.document_id, 'metadata': {'source_document_id': context.document_id, 'generated_at': datetime.now().isoformat(), 'total_slides': len(final_slides), 'quality_score': quality_score, 'iterations': 1}, 'lecture_title': result['lecture_title'], 'slides': [asdict(s) for s in final_slides]}
     output_save_path = Path(output) if output else config.LECTURES_DIR / f"{lecture_output['lecture_id']}"
     output_save_path.mkdir(parents=True, exist_ok=True)
     lecture_json_path = output_save_path / f"{lecture_output['lecture_id']}.json"
@@ -87,8 +87,6 @@ async def preprocess_context(context, output=None):
         save_json(specs_data, specs_path)
     else:
         specs_path = None
-    slides_critical = result.get('best_slides_score', float('inf'))
-    slides_critical_str = str(int(slides_critical)) if slides_critical != float('inf') else 'n/a'
     print(f"\n{'=' * 60}")
     print(f'Lecture Generated Successfully')
     print(f"{'=' * 60}\n")
@@ -97,8 +95,6 @@ async def preprocess_context(context, output=None):
     print(f'Plan Spec:               {specs_path}')
     print(f"Slides:                  {lecture_output['metadata']['total_slides']}")
     print(f'Quality Score:           {quality_score:.1f}% slides passed')
-    print(f'Best slides critical issues: {slides_critical_str}')
-    print(f"Writer iterations:       {lecture_output['metadata']['iterations']}")
     print(f"\n{'=' * 60}")
     print(f'End Phase 2: Generated Lecture')
     print(f"\n{'=' * 60}")

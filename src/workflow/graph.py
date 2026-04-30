@@ -5,8 +5,8 @@ from src.workflow.state import WorkflowState
 from src.workflow.agents.planner import PlannerAgent
 from src.workflow.agents.writer import WriterAgent
 from src.workflow.agents.writer_reviewer import ReviewerAgent
-from src.workflow.agents.writer_refiner import WriterRefinerAgent
 from src.workflow.agents.plan_specer import PlanSpecerAgent
+from src.workflow.agents.formatter import FormatterAgent
 from src.models.feedback import WriterReview
 from src.utils.config import Config
 
@@ -22,7 +22,7 @@ def _print_writer_review(label: str, review: WriterReview) -> None:
         n_min = len(sr.minor_issues)
         print(f"    {status} Slide {sr.slide_index:>2}: '{sr.slide_title[:35]}'  critical={n_crit}  major={n_major}  minor={n_min}")
     print(f"  {'─' * 50}")
-    print(f"  Decision: {('ACCEPT' if review.passed else 'RETRY')}  (critical={review.convincing_critical_count}  major={review.convincing_major_count}  minor={review.convincing_minor_count})")
+    print(f"  Decision: {('ACCEPT' if review.passed else 'HAS_ISSUES → forwarding to Formatter')}  (critical={review.convincing_critical_count}  major={review.convincing_major_count}  minor={review.convincing_minor_count})")
     print(f"  {'─' * 50}\n")
 
 def _extract_coverage_feedback(review: WriterReview) -> str:
@@ -44,23 +44,17 @@ def create_workflow() -> StateGraph:
     planner = PlannerAgent(Config.LLM_MODEL_NAME)
     writer = WriterAgent(Config.LLM_MODEL_NAME)
     reviewer = ReviewerAgent(Config.LLM_MODEL_NAME)
-    refiner = WriterRefinerAgent(Config.LLM_MODEL_NAME)
+    formatter = FormatterAgent(Config.LLM_MODEL_NAME)
     plan_specer = PlanSpecerAgent(Config.LLM_MODEL_NAME)
 
     def planner_node(state: WorkflowState) -> Dict[str, Any]:
-        feedback_str = state.get('coverage_feedback')
-        if feedback_str:
-            print(f"\n{'=' * 60}")
-            print(f' Planner — Re-generating outline with coverage feedback...')
-            print(f"{'=' * 60}\n")
-        else:
-            print(f"\n{'=' * 60}")
-            print(f' Planner — Generating initial outline...')
-            print(f"{'=' * 60}\n")
-        plan = planner.create_outline(state['document_context'], feedback=feedback_str)
+        print(f"\n{'=' * 60}")
+        print(f' Planner — Generating initial outline with goals...')
+        print(f"{'=' * 60}\n")
+        plan = planner.create_outline(state['document_context'])
         lecture_title = planner.generate_title(plan['outline'])
         print(f'\nGenerated lecture title: {lecture_title}\n')
-        return {'lecture_plan': plan, 'lecture_title': lecture_title, 'current_section_idx': 0, 'slides': [], 'current_iteration': 0}
+        return {'lecture_plan': plan, 'lecture_title': lecture_title, 'slides': []}
 
     def plan_specer_node(state: WorkflowState) -> Dict[str, Any]:
         outline_md = state['lecture_plan']['outline']
@@ -74,82 +68,33 @@ def create_workflow() -> StateGraph:
         slide_specs = state.get('slide_specs', [])
         print(f'  Writer — drafting {len(slide_specs)} slide(s) in one batch call...')
         slides = writer.draft_slides(slide_specs=slide_specs, context=state['document_context'])
-        return {'slides': slides, 'current_section_idx': len(slides)}
+        return {'slides': slides}
 
     async def reviewer_node(state: WorkflowState) -> Dict[str, Any]:
+        print(f"\n{'=' * 60}")
+        print(f' Reviewer — Validating paragraphs against Vector DB...')
+        print(f"{'=' * 60}\n")
         review = await reviewer.evaluate(state['slides'], state['document_context'], state['lecture_plan'], slide_specs=state.get('slide_specs', []))
-        write_iter = state.get('current_iteration', 0)
-        _print_writer_review(f'Writer Reviewer (iteration {write_iter})', review)
-        current_best_score = state.get('best_slides_score', float('inf'))
-        n_critical = review.convincing_critical_count
-        if n_critical < current_best_score:
-            print(f'New best slides!  {n_critical} critical issues (was {current_best_score})')
-            return {'reviewer_feedback': review, 'best_slides': state['slides'], 'best_slides_score': float(n_critical), 'best_slides_feedback': review}
+        _print_writer_review(f'Writer Reviewer (1-pass logic check)', review)
         return {'reviewer_feedback': review}
 
-    def should_continue(state: WorkflowState) -> str:
-        review = state.get('reviewer_feedback')
-        if not review:
-            return 'end'
-        if review.passed:
-            return 'end'
-        current_iter = state.get('current_iteration', 0)
-        if current_iter < Config.FEEDBACK_INTERATION_NUMBER:
-            return 'retry'
-        n_critical = review.convincing_critical_count
-        n_major = review.convincing_major_count
-        n_minor = review.convincing_minor_count
-        backtrack_used = state.get('planner_backtrack_used', False)
-        if not backtrack_used and n_critical > Config.BACK_PLANNER_CRITICAL_NUM and (n_major > Config.BACK_PLANNER_MAJOR_NUM) and (n_minor > Config.BACK_PLANNER_MINOR_NUM):
-            print(f'\nBacktrack threshold reached after {current_iter} iterations: critical={n_critical} (>{Config.BACK_PLANNER_CRITICAL_NUM})  major={n_major} (>{Config.BACK_PLANNER_MAJOR_NUM})  minor={n_minor} (>{Config.BACK_PLANNER_MINOR_NUM})')
-            print('Backtracking to planner (1-time only)...\n')
-            return 'backtrack_planner'
-        return 'end'
-
-    def increment_iteration(state: WorkflowState) -> Dict[str, Any]:
-        new_iter = state.get('current_iteration', 0) + 1
+    def formatter_node(state: WorkflowState) -> Dict[str, Any]:
         print(f"\n{'=' * 60}")
-        print(f' Writer iteration {new_iter}/3 — Refining failed slides...')
+        print(f' Formatter — Converting validated text into presentation bullet points...')
         print(f"{'=' * 60}\n")
-        return {'current_iteration': new_iter}
+        formatted_slides = formatter.format_slides(state['slides'], state.get('slide_specs', []), state.get('reviewer_feedback'))
+        return {'slides': formatted_slides}
 
-    def writer_refiner_node(state: WorkflowState) -> Dict[str, Any]:
-        review: WriterReview = state['reviewer_feedback']
-        outline_md = state['lecture_plan']['outline']
-        refined_slides = refiner.refine(slides=list(state['slides']), writer_review=review, context=state['document_context'], slide_specs=state.get('slide_specs', []))
-        return {'slides': refined_slides}
-
-    def backtrack_to_planner_node(state: WorkflowState) -> Dict[str, Any]:
-        review: WriterReview = state['reviewer_feedback']
-        feedback_json = _extract_coverage_feedback(review)
-        print(f"\n{'=' * 60}")
-        print(f' Backtrack — Sending coverage feedback to planner:')
-        print(feedback_json[:500])
-        print(f"{'=' * 60}\n")
-        return {'coverage_feedback': feedback_json, 'planner_backtrack_used': True, 'current_iteration': 0, 'best_slides': None, 'best_slides_score': float('inf'), 'best_slides_feedback': None}
-
-    def finalize_slides_node(state: WorkflowState) -> Dict[str, Any]:
-        best = state.get('best_slides')
-        if best:
-            n_iter = state.get('current_iteration', 0)
-            print(f'\nUsing best slides (tracked across {n_iter} writer iteration(s))')
-            return {'slides': best}
-        return {}
     workflow.add_node('planner', planner_node)
     workflow.add_node('plan_specer', plan_specer_node)
     workflow.add_node('writer', writer_node)
     workflow.add_node('reviewer', reviewer_node)
-    workflow.add_node('increment', increment_iteration)
-    workflow.add_node('writer_refiner', writer_refiner_node)
-    workflow.add_node('backtrack_to_planner', backtrack_to_planner_node)
-    workflow.add_node('finalize_slides', finalize_slides_node)
+    workflow.add_node('formatter', formatter_node)
+
     workflow.set_entry_point('planner')
     workflow.add_edge('planner', 'plan_specer')
     workflow.add_edge('plan_specer', 'writer')
     workflow.add_edge('writer', 'reviewer')
-    workflow.add_conditional_edges('reviewer', should_continue, {'retry': 'increment', 'backtrack_planner': 'backtrack_to_planner', 'end': 'finalize_slides'})
-    workflow.add_edge('increment', 'writer_refiner')
-    workflow.add_edge('writer_refiner', 'reviewer')
-    workflow.add_edge('backtrack_to_planner', 'planner')
-    workflow.add_edge('finalize_slides', END)
+    workflow.add_edge('reviewer', 'formatter')
+    workflow.add_edge('formatter', END)
     return workflow.compile()

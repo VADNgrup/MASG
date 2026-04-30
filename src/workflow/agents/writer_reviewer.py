@@ -6,6 +6,7 @@ from dataclasses import asdict
 from src.models.context import DocumentContext
 from src.models.slide import SlideContent, Slide
 from src.models.feedback import Issue, CriterionResult, SlideReview, WriterReview, Severity
+from src.ingestion.vector_store import VectorStoreManager
 
 class ReviewerAgent:
 
@@ -13,7 +14,12 @@ class ReviewerAgent:
         self.model = model
 
     async def evaluate(self, slides: List[SlideContent], context: DocumentContext, lecture_plan: Dict[str, Any], slide_specs: List[Slide]=None) -> WriterReview:
-        (faith_reviews, cov_reviews, pres_reviews, coh_reviews) = await asyncio.gather(self._evaluate_faithfulness(slides, context), self._evaluate_coverage_and_clarity(slides, lecture_plan, slide_specs or []), self._evaluate_presentation_quality(slides, lecture_plan), self._evaluate_coherence(slides))
+        (faith_reviews, cov_reviews, pres_reviews, coh_reviews) = await asyncio.gather(
+            self._evaluate_faithfulness(slides, context),
+            self._evaluate_coverage_and_clarity(slides, lecture_plan, slide_specs or []),
+            self._evaluate_presentation_quality(slides, lecture_plan),
+            self._evaluate_coherence(slides)
+        )
         merged: Dict[int, SlideReview] = {}
         for (idx, slide) in enumerate(slides, 1):
             merged[idx] = SlideReview(slide_index=idx, slide_title=slide.slide.slide_title, criteria={})
@@ -27,27 +33,161 @@ class ReviewerAgent:
         return WriterReview(slide_reviews=list(merged.values()))
 
     async def _evaluate_faithfulness(self, slides: List[SlideContent], context: DocumentContext) -> List[SlideReview]:
-        slides_json = json.dumps([{'slide_number': i, 'slide_title': s.slide.slide_title, 'content': s.content} for (i, s) in enumerate(slides, 1)], indent=2)
-        prompt = f'You are a fact-checker. Compare the slides against the source document and detect any inaccuracies or hallucinations.\n\nSOURCE DOCUMENT:\n{context.text_content.markdown[:10000]}\n\nSLIDES:\n{slides_json}\n\nFor each slide that has issues, return a JSON entry. Slides with no issues should NOT appear in the list.\n\nReturn ONLY valid JSON:\n{{\n  "slide_reviews": [\n    {{\n      "slide_number": 3,\n      "issues": [\n        {{\n          "severity": "critical",\n          "location": "Slide 3, bullet 2",\n          "description": "Year 2023 changed to 2024 — source says 2023",\n          "suggestion": "Revert to 2023 as stated in the source",\n          "confidence_score": 0.95\n        }}\n      ]\n    }}\n  ]\n}}\nUse severity as follows:\n- "critical": factual errors, hallucinations, years/numbers changed — set confidence > 0.90 only if you are near-certain\n- "major": important phrasing issue, significant omission of a supporting fact — set confidence > 0.85 only if clearly evident\n- "minor": style, tone, or phrasing suggestion — set confidence > 0.80 only if genuinely useful\nIf you are not confident enough to meet the bar for a severity level, omit the issue entirely.'
-        content = await achat(self.model, [{'role': 'user', 'content': prompt}], temperature=0.2)
+        slides_json = json.dumps(
+            [{'slide_number': i, 'slide_title': s.slide.slide_title, 'content': s.content} for (i, s) in enumerate(slides, 1)],
+            indent=2
+        )
+        try:
+            vsm = VectorStoreManager(context.document_id)
+            vectorstore = vsm.load_vector_store()
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+            combined_context = []
+            for s in slides:
+                query = f"{s.slide.slide_title}: {s.content}"
+                docs = await retriever.ainvoke(query)
+                combined_context.append(
+                    f"--- Source Context for Slide {s.slide.slide_number}: '{s.slide.slide_title}' ---\n"
+                    + "\n".join([d.page_content for d in docs])
+                )
+            reference_text = "\n\n".join(combined_context)
+        except Exception as e:
+            print(f"Warning: RAG retrieval failed in reviewer ({e}), falling back to truncation.")
+            reference_text = context.text_content.markdown[:10000]
+
+        prompt = (
+            "You are a fact-checker reviewing lecture slide DRAFTS (written as paragraphs, not yet formatted as bullets).\n"
+            "Compare each slide's content against the retrieved source document context.\n"
+            "Flag ONLY clear, near-certain factual errors — NOT style, tone, or paraphrasing.\n\n"
+            f"SOURCE DOCUMENT CONTEXTS:\n{reference_text}\n\n"
+            f"SLIDES (draft paragraphs):\n{slides_json}\n\n"
+            "# WHAT TO FLAG (only if confidence > 0.92):\n"
+            "- A specific fact, number, name, or year that directly contradicts the source\n"
+            "  (e.g., source says 1947 but slide says 1974)\n"
+            "- A claim that is completely absent from all source contexts and cannot be inferred (hallucination)\n\n"
+            "# WHAT NOT TO FLAG:\n"
+            "- Paraphrasing or rewording that preserves the correct meaning\n"
+            "- Information the source implies but does not state verbatim\n"
+            "- Missing details that are not factually wrong\n"
+            "- Style, tone, or length differences\n\n"
+            "Slides with no issues should NOT appear. Return ONLY valid JSON:\n"
+            '{\n  "slide_reviews": [\n    {\n      "slide_number": 3,\n      "issues": [\n        {\n'
+            '          "severity": "critical",\n'
+            '          "location": "Slide 3",\n'
+            '          "description": "Slide states algorithm was invented in 1974, but source clearly states 1947",\n'
+            '          "suggestion": "Correct the year to 1947 as stated in the source",\n'
+            '          "confidence_score": 0.96\n'
+            '        }\n      ]\n    }\n  ]\n}'
+        )
+        content = await achat(self.model, [{'role': 'user', 'content': prompt}], temperature=0.1)
         return self._parse_slide_reviews('faithfulness', content, slides)
 
     async def _evaluate_coverage_and_clarity(self, slides: List[SlideContent], lecture_plan: Dict[str, Any], slide_specs: List[Slide]) -> List[SlideReview]:
-        slides_json = json.dumps([{'slide_number': i, 'slide_title': s.slide.slide_title, 'content': s.content} for (i, s) in enumerate(slides, 1)], indent=2)
-        specs_json = json.dumps([{'slide_number': i, 'slide_title': spec.slide_title, 'goal': spec.goal} for (i, spec) in enumerate(slide_specs, 1)], indent=2, ensure_ascii=False) if slide_specs else '(no specs provided)'
-        prompt = f'You are a curriculum reviewer. Your primary job is to verify that each slide strictly achieves its stated goal.\n\nSLIDE SPECIFICATIONS (the intended goal each slide MUST fulfil):\n{specs_json}\n\nSLIDES (actual generated content to evaluate):\n{slides_json}\n\n# CORE RULE\nEach slide has an explicit goal defined in the spec above.\nA slide PASSES only if its content directly and fully addresses that goal.\nA slide FAILS if its content is off-topic, too vague, or covers only a superficial part of the goal.\n\nEvaluate per slide on TWO dimensions:\n\nCOVERAGE — Goal adherence (most important):\n1. Does EVERY key idea stated in the goal appear in the slide content?\n2. Is there any part of the goal that is completely missing from the content?\n3. Does the slide drift away from its intended focus and cover something not in the goal?\n\nCLARITY — Student comprehension:\n1. Are key concepts named and explained without assuming prior knowledge?\n2. Are any undefined terms or jargon used without explanation?\n\nReturn ONLY valid JSON listing only slides WITH issues:\n{{\n  "slide_reviews": [\n    {{\n      "slide_number": 5,\n      "issues": [\n        {{\n          "severity": "critical",\n          "location": "Slide 5",\n          "description": "Goal required explaining X method in detail, but slide only names it without any elaboration",\n          "suggestion": "Add 2-3 bullets explaining how X method works as specified in the goal",\n          "confidence_score": 0.93\n        }},\n      ]\n    }}\n  ]\n}}\nUse severity as follows:\n- "critical": slide completely fails its goal, or major part of the goal is absent — confidence > 0.90\n- "major": goal only partially met, an important concept from the goal is missing or too shallow — confidence > 0.85\n- "minor": minor gap in clarity or a small suggestion to better fulfil the goal — confidence > 0.80\nOmit any issue where you are not confident enough to meet the threshold for its severity.'
+        slides_json = json.dumps(
+            [{'slide_number': i, 'slide_title': s.slide.slide_title, 'content': s.content} for (i, s) in enumerate(slides, 1)],
+            indent=2
+        )
+        specs_json = json.dumps(
+            [{'slide_number': i, 'slide_title': spec.slide_title, 'goal': spec.goal} for (i, spec) in enumerate(slide_specs, 1)],
+            indent=2, ensure_ascii=False
+        ) if slide_specs else '(no specs provided)'
+
+        prompt = (
+            "You are a curriculum reviewer. Each slide has an explicit GOAL it must achieve.\n"
+            "Your job: verify the slide draft actually covers what the goal requires.\n\n"
+            f"SLIDE SPECIFICATIONS (goal each slide MUST fulfil):\n{specs_json}\n\n"
+            f"SLIDES (draft paragraphs — not yet formatted as bullet points):\n{slides_json}\n\n"
+            "# EVALUATION: GOAL COVERAGE ONLY\n"
+            "For each slide, ask:\n"
+            "1. Does the content address the core idea stated in the goal?\n"
+            "2. Is there a KEY concept from the goal that is COMPLETELY absent (not just briefly mentioned)?\n"
+            "3. Does the content drift entirely off-topic from the goal?\n\n"
+            "# DO NOT FLAG:\n"
+            "- Paragraph format vs bullet points (Formatter will convert this)\n"
+            "- Writing style or tone\n"
+            "- A concept mentioned briefly — only flag if COMPLETELY missing\n"
+            "- Depth of explanation unless the goal explicitly requires deep detail\n\n"
+            "Slides with no issues should NOT appear. Return ONLY valid JSON:\n"
+            '{\n  "slide_reviews": [\n    {\n      "slide_number": 5,\n      "issues": [\n        {\n'
+            '          "severity": "critical",\n'
+            '          "location": "Slide 5",\n'
+            '          "description": "Goal requires explaining the constraint formulation but slide has no mention of constraints at all",\n'
+            '          "suggestion": "Include the constraint equations or describe what they represent",\n'
+            '          "confidence_score": 0.93\n'
+            '        }\n      ]\n    }\n  ]\n}\n'
+            "Severity guide:\n"
+            "- 'critical': a KEY part of the goal is completely absent — confidence > 0.90\n"
+            "- 'major': goal partially met but an important supporting idea is missing — confidence > 0.85\n"
+            "- 'minor': a small clarification would better serve the goal — confidence > 0.80\n"
+            "Omit any issue below its confidence threshold."
+        )
         content = await achat(self.model, [{'role': 'user', 'content': prompt}], temperature=0.2)
         return self._parse_slide_reviews('coverage_and_clarity', content, slides)
 
     async def _evaluate_presentation_quality(self, slides: List[SlideContent], lecture_plan: Dict[str, Any]) -> List[SlideReview]:
-        slides_json = json.dumps([{'slide_number': i, 'slide_title': s.slide.slide_title, 'content': s.content} for (i, s) in enumerate(slides, 1)], indent=2)
-        prompt = f'You are an academic examiner evaluating the presentation format and quality of lecture slides.\n\nPLANNED OUTLINE:\n{json.dumps(lecture_plan, indent=2)}\n\nSLIDES:\n{slides_json}\n\nEvaluate per slide on TWO dimensions:\n\nFORMAT & PEDAGOGY:\n1. Content density: ideally 4-6 main bullets. Each bullet up to 25 words to maintain complex concepts. Total <= 95 words per slide. Sub-bullets are allowed if they help logical grouping and coherence.\n2. Tone: friendly, conversational, not overly academic?\n3. Structure: 3-6 bullets per slide?\n4. Flow: logical progression between adjacent slides?\n\nPRESENTATION PROFESSIONALISM:\n1. Clear, informative titles (not vague like "More Details")?\n2. Consistent terminology used throughout the deck?\n3. Balanced and well-organized content?\n4. Would an academic examiner approve the overall quality?\n\nReturn ONLY valid JSON listing only slides WITH issues:\n{{\n  "slide_reviews": [\n    {{\n      "slide_number": 2,\n      "issues": [\n        {{\n          "severity": "critical",\n          "location": "Slide 2",\n          "description": "7 bullets — exceeds maximum of 6",\n          "suggestion": "Split into 2 slides or reduce to 4-5 key points",\n          "confidence_score": 0.9\n        }},\n      ]\n    }}\n  ]\n}}\nUse severity as follows:\n- "critical": slide has > 6 bullets or > 95 words — hard structural violation (unless explicitly conveying a complex mathematical/logical theorem that demands it) — confidence > 0.90\n- "major": logical flow broken between adjacent slides, or title is genuinely uninformative — confidence > 0.85\n- "minor": tone slightly too formal, or a single bullet could be shorter — confidence > 0.80\nOmit any issue where you are not confident enough to meet the threshold for its severity.'
+        slides_json = json.dumps(
+            [{'slide_number': i, 'slide_title': s.slide.slide_title, 'content': s.content} for (i, s) in enumerate(slides, 1)],
+            indent=2
+        )
+        prompt = (
+            "You are reviewing lecture slide DRAFTS written as prose paragraphs (not yet formatted as bullet points).\n"
+            "Focus ONLY on whether each slide teaches its topic clearly and substantively.\n\n"
+            f"SLIDES:\n{slides_json}\n\n"
+            "# WHAT TO EVALUATE\n"
+            "1. SUBSTANCE: Does the slide contain real educational content, or is it vague filler?\n"
+            "   - Flag if a slide is essentially empty (only 1 vague sentence with no actual information)\n"
+            "   - Flag if content is entirely generic (e.g., 'LP is important and useful' with nothing else)\n\n"
+            "2. TITLE-CONTENT MATCH: Does the content actually match what the title promises?\n"
+            "   - Flag if title says 'Product Mix Problem Setup' but content talks about something unrelated\n\n"
+            "# DO NOT FLAG:\n"
+            "- Paragraph format vs bullet points (Formatter converts this)\n"
+            "- Word count or number of sentences\n"
+            "- Academic tone or formal writing style\n"
+            "- Math-heavy slides being longer than average (math requires more text)\n\n"
+            "Slides with no issues should NOT appear. Return ONLY valid JSON:\n"
+            '{\n  "slide_reviews": [\n    {\n      "slide_number": 2,\n      "issues": [\n        {\n'
+            '          "severity": "major",\n'
+            '          "location": "Slide 2",\n'
+            '          "description": "Content is entirely generic with no specific facts, dates, or mechanisms from source material",\n'
+            '          "suggestion": "Add at least one concrete fact or example from the source",\n'
+            '          "confidence_score": 0.88\n'
+            '        }\n      ]\n    }\n  ]\n}\n'
+            "Severity guide:\n"
+            "- 'major': slide is essentially empty or completely off-topic from its title — confidence > 0.85\n"
+            "- 'minor': slide is thin but has some useful content — confidence > 0.80\n"
+            "Omit any issue below its confidence threshold."
+        )
         content = await achat(self.model, [{'role': 'user', 'content': prompt}], temperature=0.2)
         return self._parse_slide_reviews('presentation_quality', content, slides)
 
     async def _evaluate_coherence(self, slides: List[SlideContent]) -> List[SlideReview]:
-        slides_json = json.dumps([{'slide_number': i, 'slide_title': s.slide.slide_title, 'content': s.content} for (i, s) in enumerate(slides, 1)], indent=2)
-        prompt = f'You are an expert editor evaluating the narrative coherence of lecture slides.\n\nSLIDES:\n{slides_json}\n\nEvaluate per slide based on logical flow from the PREVIOUS slide and to the NEXT slide:\n1. Is there an abrupt jump in topic without any transitional context?\n2. Are terms and concepts introduced smoothly?\n\nReturn ONLY valid JSON listing only slides WITH issues:\n{{\n  "slide_reviews": [\n    {{\n      "slide_number": 4,\n      "issues": [\n        {{\n          "severity": "major",\n          "location": "Slide 4",\n          "description": "Topic jumps suddenly from X to Y without transition",\n          "suggestion": "Add a transitional point explaining how X leads to Y",\n          "confidence_score": 0.9\n        }}\n      ]\n    }}\n  ]\n}}\nUse severity as follows:\n- "major": extreme logical leap rendering the flow broken — confidence > 0.85\n- "minor": slight thematic shift that could be smoothed — confidence > 0.80\nOmit any issue where you are not confident enough to meet the threshold for its severity.'
+        slides_json = json.dumps(
+            [{'slide_number': i, 'slide_title': s.slide.slide_title, 'content': s.content} for (i, s) in enumerate(slides, 1)],
+            indent=2
+        )
+        prompt = (
+            "You are checking whether lecture slide drafts flow logically from one to the next.\n\n"
+            f"SLIDES:\n{slides_json}\n\n"
+            "# WHAT TO CHECK\n"
+            "Only flag if a slide has an EXTREME, disorienting topic jump that would confuse a student.\n"
+            "Example: jumping from 'History of LP' directly into 'Software UI walkthrough' with absolutely no bridge.\n\n"
+            "# DO NOT FLAG:\n"
+            "- Normal section transitions (e.g., Introduction → Model Formulation is expected)\n"
+            "- Slight thematic shifts within the same topic area\n"
+            "- Mathematical content following conceptual content (normal in STEM lectures)\n"
+            "- Sub-topic progression within the same main section\n\n"
+            "Return ONLY valid JSON listing only slides WITH issues (most slides will have none):\n"
+            '{\n  "slide_reviews": [\n    {\n      "slide_number": 4,\n      "issues": [\n        {\n'
+            '          "severity": "major",\n'
+            '          "location": "Slide 4",\n'
+            '          "description": "Slide 3 ends on model constraints; Slide 4 opens on software UI with no bridge",\n'
+            '          "suggestion": "Add a sentence connecting model formulation to its software implementation",\n'
+            '          "confidence_score": 0.87\n'
+            '        }\n      ]\n    }\n  ]\n}\n'
+            "Severity:\n"
+            "- 'major': truly disorienting jump that breaks student comprehension — confidence > 0.85\n"
+            "- 'minor': slight thematic shift that could benefit from a bridging phrase — confidence > 0.80\n"
+            "Omit any issue below its confidence threshold."
+        )
         content = await achat(self.model, [{'role': 'user', 'content': prompt}], temperature=0.2)
         return self._parse_slide_reviews('coherence', content, slides)
 
@@ -81,6 +221,16 @@ class ReviewerAgent:
                     severity = Severity(item.get('severity', 'minor').lower())
                 except ValueError:
                     severity = Severity.MINOR
-                issues.append(Issue(severity=severity, location=str(item.get('location', f'Slide {slide_number}')), description=str(item.get('description', '')), suggestion=str(item.get('suggestion', '')), confidence_score=float(item.get('confidence_score', 0.0))))
-            result.append(SlideReview(slide_index=slide_number, slide_title=slide.slide.slide_title, criteria={criterion_name: CriterionResult(criterion=criterion_name, issues=issues)}))
+                issues.append(Issue(
+                    severity=severity,
+                    location=str(item.get('location', f'Slide {slide_number}')),
+                    description=str(item.get('description', '')),
+                    suggestion=str(item.get('suggestion', '')),
+                    confidence_score=float(item.get('confidence_score', 0.0))
+                ))
+            result.append(SlideReview(
+                slide_index=slide_number,
+                slide_title=slide.slide.slide_title,
+                criteria={criterion_name: CriterionResult(criterion=criterion_name, issues=issues)}
+            ))
         return result

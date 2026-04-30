@@ -10,7 +10,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 from src.generator.slide_pick_and_merge import SlidePickMerge
-from src.generator.slide_improving import SlideImproving
+import os
+import subprocess
 from src.utils.config import Config
 logger = logging.getLogger(__name__)
 
@@ -53,15 +54,24 @@ def run_pipeline(lecture_json_path: str, lecture_title: str | None=None, speaker
             title = json.load(json_path)['lecture_title']
         picker = SlidePickMerge(lecture_json_path=str(json_path), lecture_title=title, speaker_information=speaker_information)
         picker.build()
-        selected_theme = picker.theme
-        selected_font = picker.font
-        print('[slide_gen] === Step 2: Evaluating and improving slides ===')
-        improver = SlideImproving(md_path=str(md_path), lecture_json_path=str(json_path), lecture_title=title, speaker_information=speaker_information, theme=selected_theme, font=selected_font)
-        improver.run()
+        print('[slide_gen] === Step 2: Slide construction complete ===')
+        print('[slide_gen] === Step 3: Exporting to PDF ===')
+        _export_pdf(lecture_id=lecture_id, slidev_dir=slidev_dir)
         print(f"\n{'=' * 60}")
         print(f'End Phase 4: Generated Slide in {md_path}')
         print(f"{'=' * 60}\n")
     _package_output(lecture_id=lecture_id, slidev_dir=slidev_dir, lecture_json_path=json_path)
+
+def _export_pdf(lecture_id: str, slidev_dir: Path) -> None:
+    cmd = f'slidev export "{lecture_id}.md"'
+    logger.info(f'[slide_gen] Exporting PDF: {cmd}')
+    _env = os.environ.copy()
+    result = subprocess.run(['npx', 'slidev', 'export', f'{lecture_id}.md'], cwd=str(slidev_dir), capture_output=True, text=True, encoding='utf-8', errors='replace', shell=False, env=_env)
+    if result.returncode != 0:
+        error_msg = f'STDOUT: {result.stdout}\nSTDERR: {result.stderr}'
+        logger.error(f'[slide_gen] slidev export failed:\n{error_msg}')
+        raise RuntimeError(f'slidev export failed with return code {result.returncode}.\n{error_msg}')
+    logger.info('[slide_gen] PDF export complete.')
 
 def _package_output(lecture_id: str, slidev_dir: Path, lecture_json_path: Path) -> None:
     from src.utils.config import Config

@@ -86,11 +86,11 @@ table {
 
     def formula_below_layout(self, title: str, latex_formula_block: str, content: List[str]) -> str:
         bullet_lines = '\n'.join((f'- {item}' for item in content))
-        return '\n\n' + self._h1(title) + '\n\n' + bullet_lines + '\n' + '<!-- Latex Formula Block -->\n' + '$$\n' + latex_formula_block + '\n$$\n' + self._slide_sep()
+        return '\n\n' + self._h1(title) + '\n\n' + bullet_lines + '\n\n' + '<div class="formula-container" style="font-size: 1.2rem; margin-top: 1rem;">\n\n' + '$$\n' + latex_formula_block + '\n$$\n\n' + '</div>\n' + self._slide_sep()
 
     def formula_top_layout(self, title: str, latex_formula_block: str, content: List[str]) -> str:
         bullet_lines = '\n'.join((f'- {item}' for item in content))
-        return '\n\n' + self._h1(title) + '\n\n' + '<!-- Latex Formula Block -->\n' + '$$\n' + latex_formula_block + '\n$$\n' + '\n' + bullet_lines + '\n' + self._slide_sep()
+        return '\n\n' + self._h1(title) + '\n\n' + '<div class="formula-container" style="font-size: 1.2rem; margin-bottom: 1rem;">\n\n' + '$$\n' + latex_formula_block + '\n$$\n\n' + '</div>\n\n' + bullet_lines + '\n' + self._slide_sep()
 
     def two_image_right_layout(self, title: str, content: List[str], img1_path: str, img2_path: str, image_width: str='22.5%', caption1: Optional[str]=None, caption2: Optional[str]=None) -> str:
         li_items = '\n'.join((f'        <li>{item}</li>' for item in content))
