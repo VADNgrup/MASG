@@ -7,7 +7,6 @@ class Config:
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     LLM_MODEL_NAME = os.getenv('LLM_MODEL_NAME')
     LLM_BASE_URL = os.getenv('LLM_BASE_URL')
-    TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
     VLM_BASE_URL = os.getenv('VLM_BASE_URL')
     VLM_API_KEY = os.getenv('VLM_API_KEY')
     VLM_MODEL_NAME = os.getenv('VLM_MODEL_NAME')
@@ -25,12 +24,6 @@ class Config:
     THEME_PATH = DATA_DIR / 'theme' / 'theme.json'
     VISION_MAX_TOKENS = 2000
     VISION_TEMPERATURE = 0.3
-    DEFAULT_IMAGE_FORMAT = 'png'
-    MAX_IMAGE_SIZE = (2048, 2048)
-    MIN_WH_RATIO_IMAGE_DOWNLOAD = 0.556
-    CRITICAL_CONFIDENCE_THRESHOLD = 0.95
-    MAJOR_CONFIDENCE_THRESHOLD = 0.92
-    MINOR_CONFIDENCE_THRESHOLD = 0.92
     @classmethod
     def get_log_path(cls):
         sanitized_model = (cls.LLM_MODEL_NAME or 'default').replace('/', '_').replace(':', '_')

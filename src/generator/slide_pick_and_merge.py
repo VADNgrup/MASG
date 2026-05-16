@@ -70,7 +70,7 @@ class SlidePickMerge:
 
     def _copy_assets(self):
         base = _PROJECT_ROOT / 'data' / 'assets' / self.source_doc_id
-        for sub in ('charts', 'images', 'downloaded_images'):
+        for sub in ('images', 'downloaded_images'):
             folder = base / sub
             if folder.exists():
                 for f in folder.iterdir():
@@ -207,8 +207,26 @@ class SlidePickMerge:
                     continue
                 if s.count('|') >= 6:
                     continue
+                parts = SlidePickMerge._split_bullet_text(s)
+                cleaned.extend(parts)
+                continue
             cleaned.append(item)
         return cleaned
+
+    @staticmethod
+    def _split_bullet_text(text: str) -> List[str]:
+        text = str(text).strip()
+        if not text:
+            return []
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if len(lines) > 1:
+            parts = []
+            for line in lines:
+                line = re.sub(r'^[-*•]\s+', '', line).strip()
+                if line:
+                    parts.append(line)
+            return parts
+        return [text]
 
     @staticmethod
     def _sanitise_latex(latex: str) -> str:
@@ -222,22 +240,41 @@ class SlidePickMerge:
             s = s[1:-1].strip()
         return s
 
+    @staticmethod
+    def _normalise_contents(raw_contents):
+        if isinstance(raw_contents, list):
+            cleaned = SlidePickMerge._strip_table_bullets(raw_contents)
+            return [str(item).strip() for item in cleaned if isinstance(item, str) and str(item).strip()]
+        if isinstance(raw_contents, str):
+            text = re.sub(r'\s+', ' ', raw_contents).strip()
+            if not text:
+                return []
+            sentences = re.split(r'(?<=[.!?])\s+', text)
+            bullets = [s.strip() for s in sentences if s.strip()]
+            return bullets[:5] if bullets else [text]
+        if isinstance(raw_contents, dict):
+            return raw_contents
+        return []
+
     def _build_content_slide(self, slide_entry: dict) -> str:
         slide_info = slide_entry['slide']
         num = int(slide_info['slide_number'])
         title = slide_info['slide_title']
         stype = slide_info['slide_type']
         raw_contents = slide_entry.get('content', [])
-        contents = self._strip_table_bullets(raw_contents) if isinstance(raw_contents, list) else raw_contents
+        contents = self._normalise_contents(raw_contents)
         mgr = self._mgr
         self._slide_counter += 1
         sn = self._slide_counter
         has_images = num in self._image_dist
         has_table_dist = num in self._table_dist
         if stype == 'comparison':
-            table_md = contents if isinstance(contents, str) else ''
-            self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md})
-            return mgr.comparison_layout(title, table_md)
+            if isinstance(contents, str) and '|' in contents:
+                table_md = contents
+                self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md})
+                return mgr.comparison_layout(title, table_md)
+            self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
+            return mgr.only_content(title, contents if isinstance(contents, list) else [str(contents)])
         if stype == 'two_sub_contents':
             if isinstance(contents, dict):
                 keys = list(contents.keys())
@@ -265,13 +302,14 @@ class SlidePickMerge:
             table_obj = slide_info.get('table') or {}
             table_caption = table_obj.get('table_caption', None)
             if has_table_dist:
-                chart_path = self._table_dist[num].get('chart_path')
-                if chart_path and chart_path != 'None':
-                    chart_url = _to_assets_path(chart_path)
-                    ratio = self._img_aspect_ratio(chart_path)
-                    chart_width = '90%' if ratio >= 1.0 else '60%'
-                    self._log_layout(sn, 'image_above_layout', {'title': title, 'content': [], 'img_path': chart_url, 'image_width': chart_width, 'caption': table_caption})
-                    return mgr.image_above_layout(title, [], chart_url, image_width=chart_width, caption=table_caption)
+                # Use the original table screenshot instead of a generated chart
+                image_table_path = self._table_dist[num].get('image_table_path')
+                if image_table_path and image_table_path != 'None':
+                    image_url = _to_assets_path(image_table_path)
+                    ratio = self._img_aspect_ratio(image_table_path)
+                    image_width = '90%' if ratio >= 1.0 else '60%'
+                    self._log_layout(sn, 'image_above_layout', {'title': title, 'content': [], 'img_path': image_url, 'image_width': image_width, 'caption': table_caption})
+                    return mgr.image_above_layout(title, [], image_url, image_width=image_width, caption=table_caption)
             self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
             return mgr.only_content(title, contents)
         if has_images:
@@ -285,14 +323,14 @@ class SlidePickMerge:
                 return self._pick_image_layout(sn, title, contents, _to_assets_path(img['image_path']), img['image_path'], caption=img.get('caption'))
         if has_table_dist:
             tbl_entry = self._table_dist[num]
-            chart_path = tbl_entry.get('chart_path')
-            if chart_path and chart_path != 'None':
-                chart_url = _to_assets_path(chart_path)
+            image_table_path = tbl_entry.get('image_table_path')
+            if image_table_path and image_table_path != 'None':
+                image_url = _to_assets_path(image_table_path)
                 table_caption = tbl_entry.get('table_caption')
-                ratio = self._img_aspect_ratio(chart_path)
-                chart_width = '90%' if ratio >= 1.0 else '60%'
-                self._log_layout(sn, 'image_above_layout', {'title': title, 'content': [], 'img_path': chart_url, 'image_width': chart_width, 'caption': table_caption})
-                return mgr.image_above_layout(title, [], chart_url, image_width=chart_width, caption=table_caption)
+                ratio = self._img_aspect_ratio(image_table_path)
+                image_width = '90%' if ratio >= 1.0 else '60%'
+                self._log_layout(sn, 'image_above_layout', {'title': title, 'content': [], 'img_path': image_url, 'image_width': image_width, 'caption': table_caption})
+                return mgr.image_above_layout(title, [], image_url, image_width=image_width, caption=table_caption)
         if isinstance(contents, list):
             total_chars = sum((len(s) for s in contents))
             if total_chars > 600 and len(contents) >= 6:
@@ -315,6 +353,7 @@ class SlidePickMerge:
         self._slide_counter += 1
         doc += self._mgr.end_layout(end_text='Thank you for listening!')
         self._log_layout(self._slide_counter, 'end_layout', {'end_text': 'Thank you for listening!'})
+        self._validate_slide_markdown(doc)
         _OUTPUT_MD.mkdir(parents=True, exist_ok=True)
         out_path = _OUTPUT_MD / f'{self.lecture_id}.md'
         with open(out_path, 'w', encoding='utf-8') as f:
@@ -323,6 +362,26 @@ class SlidePickMerge:
         with open(log_path, 'w', encoding='utf-8') as f:
             json.dump(self._layout_log, f, ensure_ascii=False, indent=2)
         return doc
+
+    @staticmethod
+    def _validate_slide_markdown(doc: str) -> None:
+        failures = []
+        for idx, part in enumerate(doc.split('---'), start=1):
+            if idx <= 3:
+                continue
+            title_match = re.search(r'<h1[^>]*>(.*?)</h1>|^#\s+(.+)$', part, flags=re.MULTILINE | re.DOTALL)
+            if not title_match:
+                continue
+            title = re.sub('<[^>]+>', '', title_match.group(1) or title_match.group(2) or '').strip()
+            if not title or title in {'Table Of Content', 'Thank you for listening!'}:
+                continue
+            if 'layout: cover' in part:
+                continue
+            has_body = any(token in part for token in ['<li>', '<img', '\n- ', '\n|'])
+            if not has_body:
+                failures.append(f'{idx}: {title}')
+        if failures:
+            raise RuntimeError('Empty slide body detected: ' + '; '.join(failures))
 
     def _summarise_title(self, title: str) -> str:
         prompt = f"Summarise the following lecture title into AT MOST 6 words that capture its core topic. The result must be concise, clear, and suitable as a presentation cover heading. Don't include any special charaters like ':', '-', '!', '?', etc. Return ONLY the summarised title, nothing else.\n\nTitle: {title}\n\nSummarised title:"

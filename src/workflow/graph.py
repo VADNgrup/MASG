@@ -1,50 +1,19 @@
 from langgraph.graph import StateGraph, END
 from typing import Dict, Any
-import json
 from src.workflow.state import WorkflowState
 from src.workflow.agents.planner import PlannerAgent
-from src.workflow.agents.writer import WriterAgent
-from src.workflow.agents.writer_reviewer import ReviewerAgent
 from src.workflow.agents.plan_specer import PlanSpecerAgent
-from src.workflow.agents.formatter import FormatterAgent
-from src.models.feedback import WriterReview
+from src.workflow.agents.content_quality import ContentQualityAgent
+from src.workflow.agents.slide_packet_builder import SlidePacketBuilderAgent
+from src.workflow.agents.direct_bullet_writer import DirectBulletWriterAgent
 from src.utils.config import Config
-
-def _print_writer_review(label: str, review: WriterReview) -> None:
-    failed = review.failed_slides
-    total = len(review.slide_reviews)
-    print(f"\n  {'─' * 50}")
-    print(f'  {label}:  {total - len(failed)}/{total} slides passed')
-    for sr in review.slide_reviews:
-        status = '✓' if sr.passed else '✗'
-        n_crit = len(sr.convincing_critical_issues)
-        n_major = len([i for i in sr.convincing_issues if i.severity.value == 'major'])
-        n_min = len(sr.minor_issues)
-        print(f"    {status} Slide {sr.slide_index:>2}: '{sr.slide_title[:35]}'  critical={n_crit}  major={n_major}  minor={n_min}")
-    print(f"  {'─' * 50}")
-    print(f"  Decision: {('ACCEPT' if review.passed else 'HAS_ISSUES → forwarding to Formatter')}  (critical={review.convincing_critical_count}  major={review.convincing_major_count}  minor={review.convincing_minor_count})")
-    print(f"  {'─' * 50}\n")
-
-def _extract_coverage_feedback(review: WriterReview) -> str:
-    issue_list = []
-    suggestion_list = []
-    for sr in review.slide_reviews:
-        cov = sr.criteria.get('coverage_and_clarity')
-        if not cov:
-            continue
-        for issue in cov.convincing_critical_issues:
-            issue_list.append(f"[Slide {sr.slide_index} '{sr.slide_title}']: {issue.description}")
-            if issue.suggestion:
-                suggestion_list.append(f'[Slide {sr.slide_index}]: {issue.suggestion}')
-    feedback = {'issue_list': issue_list, 'suggestion': suggestion_list}
-    return json.dumps(feedback, ensure_ascii=False, indent=2)
 
 def create_workflow() -> StateGraph:
     workflow = StateGraph(WorkflowState)
     planner = PlannerAgent(Config.LLM_MODEL_NAME)
-    writer = WriterAgent(Config.LLM_MODEL_NAME)
-    reviewer = ReviewerAgent(Config.LLM_MODEL_NAME)
-    formatter = FormatterAgent(Config.LLM_MODEL_NAME)
+    content_quality = ContentQualityAgent(Config.LLM_MODEL_NAME)
+    packet_builder = SlidePacketBuilderAgent(Config.LLM_MODEL_NAME)
+    bullet_writer = DirectBulletWriterAgent(Config.LLM_MODEL_NAME)
     plan_specer = PlanSpecerAgent(Config.LLM_MODEL_NAME)
 
     def planner_node(state: WorkflowState) -> Dict[str, Any]:
@@ -62,39 +31,39 @@ def create_workflow() -> StateGraph:
         print(f' Plan Specer — Specifying slide specs from outline...')
         print(f"{'=' * 60}\n")
         specs = plan_specer.specify(outline_md, state['document_context'])
+        if not specs:
+            raise RuntimeError('Plan Specer produced 0 slide specs from the outline.')
         return {'slide_specs': specs}
 
-    def writer_node(state: WorkflowState) -> Dict[str, Any]:
+    def packet_builder_node(state: WorkflowState) -> Dict[str, Any]:
         slide_specs = state.get('slide_specs', [])
-        print(f'  Writer — drafting {len(slide_specs)} slide(s) in one batch call...')
-        slides = writer.draft_slides(slide_specs=slide_specs, context=state['document_context'])
+        print(f'  Packet Builder — creating {len(slide_specs)} source-grounded slide packet(s)...')
+        packets = packet_builder.build_packets(slide_specs=slide_specs, context=state['document_context'])
+        return {'slide_packets': packets}
+
+    def direct_bullet_writer_node(state: WorkflowState) -> Dict[str, Any]:
+        packets = state.get('slide_packets', [])
+        print(f'  Direct Bullet Writer — generating {len(packets)} final slide(s) from packets...')
+        slides = bullet_writer.write(packets=packets, slide_specs=state.get('slide_specs', []))
         return {'slides': slides}
 
-    async def reviewer_node(state: WorkflowState) -> Dict[str, Any]:
+    def content_quality_node(state: WorkflowState) -> Dict[str, Any]:
         print(f"\n{'=' * 60}")
-        print(f' Reviewer — Validating paragraphs against Vector DB...')
+        print(f' Content QA — Checking slide substance and title alignment...')
         print(f"{'=' * 60}\n")
-        review = await reviewer.evaluate(state['slides'], state['document_context'], state['lecture_plan'], slide_specs=state.get('slide_specs', []))
-        _print_writer_review(f'Writer Reviewer (1-pass logic check)', review)
-        return {'reviewer_feedback': review}
-
-    def formatter_node(state: WorkflowState) -> Dict[str, Any]:
-        print(f"\n{'=' * 60}")
-        print(f' Formatter — Converting validated text into presentation bullet points...')
-        print(f"{'=' * 60}\n")
-        formatted_slides = formatter.format_slides(state['slides'], state.get('slide_specs', []), state.get('reviewer_feedback'))
-        return {'slides': formatted_slides}
+        repaired_slides = content_quality.repair(state['slides'], state.get('slide_specs', []), state['document_context'], slide_packets=state.get('slide_packets', []))
+        return {'slides': repaired_slides}
 
     workflow.add_node('planner', planner_node)
     workflow.add_node('plan_specer', plan_specer_node)
-    workflow.add_node('writer', writer_node)
-    workflow.add_node('reviewer', reviewer_node)
-    workflow.add_node('formatter', formatter_node)
+    workflow.add_node('packet_builder', packet_builder_node)
+    workflow.add_node('direct_bullet_writer', direct_bullet_writer_node)
+    workflow.add_node('content_quality', content_quality_node)
 
     workflow.set_entry_point('planner')
     workflow.add_edge('planner', 'plan_specer')
-    workflow.add_edge('plan_specer', 'writer')
-    workflow.add_edge('writer', 'reviewer')
-    workflow.add_edge('reviewer', 'formatter')
-    workflow.add_edge('formatter', END)
+    workflow.add_edge('plan_specer', 'packet_builder')
+    workflow.add_edge('packet_builder', 'direct_bullet_writer')
+    workflow.add_edge('direct_bullet_writer', 'content_quality')
+    workflow.add_edge('content_quality', END)
     return workflow.compile()

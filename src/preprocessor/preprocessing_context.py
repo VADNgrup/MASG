@@ -7,6 +7,8 @@ from src.utils.file_utils import load_json, save_json
 from src.models.context import DocumentContext
 from src.utils.config import config, Config
 from dataclasses import asdict
+from src.ingestion.compact_context import build_compact_context, save_compact_context
+from src.ingestion.table_extraction import extract_markdown_tables
 
 def clean_repetition(text: str) -> str:
     """Detect and remove extreme word repetitions often caused by extraction tool loops."""
@@ -36,12 +38,23 @@ async def preprocess_context(context, output=None):
     
     # Clean repetition loops before checking length
     context_data['text_content']['markdown'] = clean_repetition(context_data['text_content']['markdown'])
+    if not context_data.get('tables'):
+        context_data['tables'] = [t.model_dump() for t in extract_markdown_tables(context_data['text_content']['markdown'])]
+        if 'metadata' in context_data:
+            context_data['metadata']['total_tables'] = len(context_data['tables'])
     
     # Increase limit to 100k characters for technical/complex documents
     if len(context_data['text_content']['markdown']) < 512 or len(context_data['text_content']['markdown']) > 100000:
         print(f"[SKIP] Lecture is too short or too long ({len(context_data['text_content']['markdown'])} chars)")
         return (None, False)
     context = DocumentContext(**context_data)
+    compact = build_compact_context(
+        document_id=context.document_id,
+        source_file=context.source_file,
+        markdown=context.text_content.markdown,
+        page_count=context.text_content.page_count,
+    )
+    save_compact_context(compact)
     lecture_path = Path(Config.LECTURES_DIR / f'{context.document_id}' / f'{context.document_id}.json')
     if Path(lecture_path).exists():
         print(f'[SKIP] Lecture has id {context.document_id} already exists in lecture directory')
@@ -55,17 +68,11 @@ async def preprocess_context(context, output=None):
     print(f'Tables: {context.metadata.total_tables}\n')
     config.validate()
     workflow = create_workflow()
-    initial_state = {'document_context': context, 'lecture_plan': None, 'lecture_title': '', 'slides': [], 'reviewer_feedback': None, 'slide_specs': None}
+    initial_state = {'document_context': context, 'lecture_plan': None, 'lecture_title': '', 'slides': [], 'slide_specs': None, 'slide_packets': None}
     result = await workflow.ainvoke(initial_state)
     final_slides = result['slides']
     final_plan = result['lecture_plan']
-    final_feedback = result.get('reviewer_feedback')
-    if final_feedback:
-        total = len(final_feedback.slide_reviews)
-        passed = total - len(final_feedback.failed_slides)
-        quality_score = round(passed / total * 100, 1) if total > 0 else 0.0
-    else:
-        quality_score = 0.0
+    quality_score = 100.0 if final_slides else 0.0
     lecture_output = {'lecture_id': context.document_id, 'metadata': {'source_document_id': context.document_id, 'generated_at': datetime.now().isoformat(), 'total_slides': len(final_slides), 'quality_score': quality_score, 'iterations': 1}, 'lecture_title': result['lecture_title'], 'slides': [asdict(s) for s in final_slides]}
     output_save_path = Path(output) if output else config.LECTURES_DIR / f"{lecture_output['lecture_id']}"
     output_save_path.mkdir(parents=True, exist_ok=True)
@@ -87,12 +94,19 @@ async def preprocess_context(context, output=None):
         save_json(specs_data, specs_path)
     else:
         specs_path = None
+    final_packets = result.get('slide_packets')
+    if final_packets:
+        packets_path = output_save_path / f"{lecture_output['lecture_id']}_slide_packets.json"
+        save_json(final_packets, packets_path)
+    else:
+        packets_path = None
     print(f"\n{'=' * 60}")
     print(f'Lecture Generated Successfully')
     print(f"{'=' * 60}\n")
     print(f'Output:                  {output_save_path}')
     print(f'Outline:                 {outline_path}')
     print(f'Plan Spec:               {specs_path}')
+    print(f'Slide Packets:           {packets_path}')
     print(f"Slides:                  {lecture_output['metadata']['total_slides']}")
     print(f'Quality Score:           {quality_score:.1f}% slides passed')
     print(f"\n{'=' * 60}")

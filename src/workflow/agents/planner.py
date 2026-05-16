@@ -2,6 +2,7 @@ from src.utils.llm import chat
 from typing import Dict, Any, List
 import re
 from src.models.context import DocumentContext
+from src.ingestion.compact_context import ensure_compact_context, render_compact_context
 
 class PlannerAgent:
 
@@ -11,6 +12,8 @@ class PlannerAgent:
     def create_outline(self, context: DocumentContext, feedback: str=None) -> Dict[str, Any]:
         full_text = context.text_content.markdown
         text_length = len(full_text)
+        compact = ensure_compact_context(context)
+        compact_text = render_compact_context(compact, max_chars=14000)
         print('Length of document: ', text_length)
         if text_length < 4000:
             target_main_sections = '2'
@@ -18,14 +21,14 @@ class PlannerAgent:
         elif text_length < 8000:
             target_main_sections = '2'
             max_total_headings = '8'
-        elif text_length < 15000:
+        elif text_length < 12000:
             target_main_sections = '3'
             max_total_headings = '10'
         else:
             target_main_sections = '4'
             max_total_headings = '12'
         print('target_main_sections', target_main_sections, 'max_total_headings', max_total_headings)
-        tables_assets_info = f'# Avaliable Table \n {context.tables}\n # Avaliable Image \n {context.assets.images}'
+        assets_info = compact.get("asset_manifest", [])[:80]
         feedback_block = ''
         if feedback:
             feedback_block = f'\nREVISION FEEDBACK FROM PREVIOUS OUTLINE REVIEW:\n{feedback}\n\nApply all the suggestions above when generating this revised outline.\n'
@@ -45,8 +48,8 @@ class PlannerAgent:
             "- A MEDIUM document (5000-15000 chars) should produce 6-10 slides.\n"
             "- A LONG document (> 15000 chars) should produce 8-12 slides.\n"
             "- NEVER inflate a short document into many slides. Consolidate related ideas.\n\n"
-            f"FULL DOCUMENT TEXT:\n{full_text}\n"
-            f"AVAILABLE TABLES AND IMAGES:\n{tables_assets_info}\n"
+            f"COMPACT DOCUMENT MAP:\n{compact_text}\n"
+            f"AVAILABLE TABLES AND IMAGES:\n{assets_info}\n"
             f"{feedback_block}\n\n"
             "# RULES\n"
             "- Same language as the document\n"
@@ -55,6 +58,11 @@ class PlannerAgent:
             "- Do NOT add content absent from the source document\n"
             "- Do NOT include the lecture topic name as a heading\n"
             "- NEVER split one topic into \"Part 1\" and \"Part 2\". If content is related, keep it in ONE heading.\n"
+            "- Build the outline as a teachable narrative, not a loose topic list.\n"
+            "- Prefer this order when the document supports it: motivation/background → core model → worked example data → formulation → solution method → numerical result → interpretation → software/tool workflow → conclusion.\n"
+            "- A heading about a numerical result must be followed by, or include, interpretation of what the numbers mean.\n"
+            "- A software/tool heading must only appear after the relevant model or solution method has been introduced.\n"
+            "- If the source has a conclusion or final summary, reserve the final heading for a conclusion/recap unless the heading budget is too small.\n"
             "- CRITICAL FOR STEM/MATH DOCUMENTS: Worked examples, case studies, numerical problems with specific data "
             "(tables, constraints, solutions) are the MOST IMPORTANT parts. They MUST have their own dedicated section(s).\n"
             "- CRITICAL FOR ALL DOCUMENTS: If the source names specific tools, software, brands, or real-world examples, "

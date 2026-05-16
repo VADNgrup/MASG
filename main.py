@@ -5,6 +5,7 @@ from src.preprocessor.preprocessing_context import preprocess_context
 from src.multimodal.multimodal_processing import multimodal_processing
 from src.generator.slide_gen import run_pipeline as slide_gen
 from src.utils.config import Config
+from src.utils.llm import end_llm_run, set_llm_phase, start_llm_run
 import os
 import argparse
 import asyncio
@@ -13,23 +14,46 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(
 def gen_slide(document_path, lecture_title, speaker_information):
     print('Start time:', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
     start_time = time.time()
-    parsed_context_path = extract_file(document_path)
-    t1 = time.time()
-    print(f'[timer] extract_file: {t1 - start_time:.2f}s')
-    (lecture_path, len_condition) = asyncio.run(preprocess_context(parsed_context_path))
-    t2 = time.time()
-    print(f'[timer] preprocess_context: {t2 - t1:.2f}s')
-    if len_condition == False:
-        return
-    multimodal_processing(lecture_path)
-    t3 = time.time()
-    print(f'[timer] multimodal: {t3 - t2:.2f}s')
-    slide_gen(lecture_path, lecture_title, speaker_information)
-    t4 = time.time()
-    print(f'[timer] slidegen: {t4 - t3:.2f}s')
-    end_time = t4
-    print('End time:', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
-    return end_time - start_time
+    document_id = os.path.splitext(os.path.basename(document_path))[0]
+    run_id = start_llm_run(document_id=document_id, output_id=document_id)
+    lecture_path = None
+    status = 'completed'
+    try:
+        set_llm_phase('extract_file')
+        parsed_context_path = extract_file(document_path)
+        t1 = time.time()
+        print(f'[timer] extract_file: {t1 - start_time:.2f}s')
+        set_llm_phase('preprocess_context')
+        (lecture_path, len_condition) = asyncio.run(preprocess_context(parsed_context_path))
+        t2 = time.time()
+        print(f'[timer] preprocess_context: {t2 - t1:.2f}s')
+        if len_condition == False:
+            status = 'skipped'
+            return
+        set_llm_phase('multimodal')
+        multimodal_processing(lecture_path)
+        t3 = time.time()
+        print(f'[timer] multimodal: {t3 - t2:.2f}s')
+        set_llm_phase('slidegen')
+        slide_gen(lecture_path, lecture_title, speaker_information)
+        t4 = time.time()
+        print(f'[timer] slidegen: {t4 - t3:.2f}s')
+        end_time = t4
+        print('End time:', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
+        return end_time - start_time
+    except Exception:
+        status = 'failed'
+        raise
+    finally:
+        summary = end_llm_run(status=status, output_path=str(lecture_path) if lecture_path else None)
+        if summary.get('run_id') == run_id:
+            print(
+                '[llm summary] '
+                f"calls={summary.get('total_calls', 0)} "
+                f"total_tokens={summary.get('total_tokens', 0)} "
+                f"avg_tokens_per_call={summary.get('avg_total_tokens_per_call', 0)} "
+                f"path={summary.get('summary_path', '')}"
+            )
 
 def main():
     parser = argparse.ArgumentParser(description='End-to-End Lecture Slide Generation Slide from a document/old lecture slides')

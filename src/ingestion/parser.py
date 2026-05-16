@@ -1,37 +1,17 @@
 import os
-os.environ['TORCH_DEVICE'] = 'cpu'
-os.environ['MARKER_DEVICE'] = 'cpu'
-os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
-
-from src.utils.file_utils import ensure_dir
-import re
+import fitz
+import base64
+import requests
+import json
 import logging
-from PIL import Image
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+from tqdm import tqdm
 from src.utils.config import config
-from src.utils.llm import vision_chat, b64_image
-from io import BytesIO
-from src.ingestion.table_filter import TableFilter
-from src.ingestion.image_filter import ImageFilter
-from src.ingestion.vision_model import VisionCaptionGenerator
-from marker.converters.pdf import PdfConverter
-from marker.models import create_model_dict
-from marker.output import text_from_rendered
-from marker.config.parser import ConfigParser
-from marker.converters.table import TableConverter
-from marker.renderers.markdown import MarkdownRenderer
-from marker.schema import BlockTypes
-from marker.schema.blocks import Table
-from marker.schema.document import Document
-import json
-import base64
-import fitz
+
 _log = logging.getLogger(__name__)
-IMAGE_RESOLUTION_SCALE = 2.0
 
 class ParsedContent:
-
     def __init__(self):
         self.full_text: str = ''
         self.tables: List[Dict[str, Any]] = []
@@ -39,195 +19,161 @@ class ParsedContent:
         self.page_count: int = 0
 
 class DocumentParser:
+    def __init__(self, pdf_path):
+        self.pdf_path = Path(pdf_path) if isinstance(pdf_path, str) else pdf_path
+        self.doc = fitz.open(str(self.pdf_path))
+        self.model_url = config.VLM_BASE_URL
+        if self.model_url and not self.model_url.endswith("/chat/completions"):
+            self.model_url = f"{self.model_url.rstrip('/')}/chat/completions"
+        
+        self.model_key = config.VLM_API_KEY
+        self.model_name = config.VLM_MODEL_NAME
 
-    def __init__(self, pdf_path: Path):
-        config_dict = {'output_format': 'markdown', 'use_llm': False}
-        parser = ConfigParser(config_dict)
-        converter = PdfConverter(config=parser.generate_config_dict(), artifact_dict=create_model_dict())
-        self.pdf_path = pdf_path
-        self.doc = fitz.open(self.pdf_path)
-        rendered = converter(self.pdf_path)
-        (self.full_text, _, self.images) = text_from_rendered(rendered)
-        self.table_filter = TableFilter()
+    def _encode_image(self, img_bytes):
+        return base64.b64encode(img_bytes).decode('utf-8')
 
-    def parse_document(self, document_id: str='') -> ParsedContent:
+    def parse_document(self, document_id: str = '') -> ParsedContent:
         content = ParsedContent()
-        content.full_text = self.extract_texts()
-        content.tables = self.extract_tables(document_id)
-        content.images = self.extract_figures()
         content.page_count = len(self.doc)
+        
+        assets_images_dir = config.ASSETS_DIR / document_id / 'images'
+        assets_images_dir.mkdir(parents=True, exist_ok=True)
+
+        full_markdown_parts = []
+        all_extracted_images = []
+
+        print(f"\n--- Starting VLM Conversion: {self.pdf_path.name} ---")
+
+        for i in tqdm(range(content.page_count), desc="Processing Pages"):
+            page = self.doc.load_page(i)
+            
+            text_blocks = page.get_text("dict")["blocks"]
+            page_map = []
+            for b in text_blocks:
+                if b["type"] == 0:
+                    text_content = ""
+                    for line in b["lines"]:
+                        for span in line["spans"]:
+                            text_content += span["text"]
+                        text_content += "\n"
+                    if text_content.strip():
+                        page_map.append({
+                            "type": "text",
+                            "content": text_content.strip(),
+                            "bbox": b["bbox"]
+                        })
+
+            image_info_list = page.get_images(full=True)
+            for img_idx, img in enumerate(image_info_list):
+                xref = img[0]
+                rects = page.get_image_rects(xref)
+                if not rects: continue
+                
+                base_image = self.doc.extract_image(xref)
+                img_ext = base_image["ext"]
+                img_filename = f"page_{i+1}_img_{img_idx+1}.{img_ext}"
+                img_path = assets_images_dir / img_filename
+                
+                if rects[0].width < 20 or rects[0].height < 20:
+                    continue
+
+                with open(img_path, "wb") as f_img:
+                    f_img.write(base_image["image"])
+                
+                rel_img_path = f"assets/{document_id}/images/{img_filename}"
+                
+                page_map.append({
+                    "type": "image",
+                    "content": rel_img_path,
+                    "bbox": rects[0]
+                })
+                
+                all_extracted_images.append({
+                    'image_id': f"img_{len(all_extracted_images) + 1:03d}",
+                    'file_path': rel_img_path,
+                    'caption': '', 
+                    'reference_context': '',
+                    'metadata': {
+                        'width': int(rects[0].width),
+                        'height': int(rects[0].height),
+                        'format': img_ext,
+                        'file_size_kb': len(base_image["image"]) / 1024
+                    }
+                })
+
+            page_map.sort(key=lambda x: x["bbox"][1])
+
+            layout_map_str = ""
+            for idx, item in enumerate(page_map):
+                if item["type"] == "text":
+                    layout_map_str += f"\n[BLOCK {idx} - TEXT]\n{item['content']}\n"
+                else:
+                    layout_map_str += f"\n[BLOCK {idx} - IMAGE: {item['content']}]\n"
+
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            b64_img = self._encode_image(pix.tobytes("png"))
+
+            page_markdown = self._call_vlm(layout_map_str, b64_img)
+            full_markdown_parts.append(f"<!-- PAGE {i+1} -->\n\n{page_markdown}")
+
+        content.full_text = "\n\n---\n\n".join(full_markdown_parts)
+        content.images = all_extracted_images
+        content.tables = [] 
+        
         self.doc.close()
         return content
 
-    def extract_texts(self) -> str:
-        return self.full_text
+    def _call_vlm(self, layout_map, b64_image) -> str:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.model_key}"
+        }
 
-    def extract_tables(self, document_id: str='') -> List[Dict[str, Any]]:
-        tables = []
-        table_page_information = self.get_table_page_information()
-        table_image_paths = {}
-        if document_id:
-            table_image_paths = self.save_table_images(table_page_information, document_id)
-        table_index = 0
-        for table_page in table_page_information:
-            table_markdown = table_page['table']
-            table_caption = table_page['caption']
-            should_visualize = self.table_filter.should_visualize_table(table_markdown, table_caption)
-            table_id = f'table_{table_index + 1:03d}'
-            tables.append({'table_id': table_id, 'markdown': table_markdown, 'table_caption': table_caption, 'should_visualize': should_visualize, 'image_table_path': table_image_paths.get(table_index)})
-            table_index += 1
-        return tables
+        prompt = (
+            "You are a professional document converter. I have provided a 'Layout Map' of a PDF page with sorted blocks.\n\n"
+            "STRICT FORMATTING RULES:\n"
+            "1. Output ONLY Markdown content. No conversational filler.\n"
+            "2. For [BLOCK X - TEXT]: \n"
+            "   - Convert to high-quality Markdown.\n"
+            "   - Use LaTeX ($$ ... $$) for ALL mathematical formulas and variables.\n"
+            "   - Use proper Markdown headers (#, ##, ###) for titles.\n"
+            "   - Reconstruct tables using Markdown table syntax.\n"
+            "3. For [BLOCK X - IMAGE: assets/...]: \n"
+            "   - STEP 1: Look at the surrounding [TEXT] blocks in the Layout Map to see how the document refers to this image (look for 'Figure X', 'Table Y', or descriptive sentences nearby).\n"
+            "   - STEP 2: Analyze the visual content of the image and read any text inside it.\n"
+            "   - STEP 3: Generate a HIGHLY CONTEXTUAL caption that aligns with the document's text and the visual evidence.\n"
+            "   - Insert it as: ![Contextual Caption](assets/...)\n"
+            "   - Also add a visible caption below it: *Figure: Contextual Caption*\n"
+            "   - IMPORTANT: USE THE EXACT FILENAME AND EXTENSION PROVIDED. NEVER CHANGE IT.\n"
+            "4. Follow the EXACT sequence of blocks from the Layout Map.\n\n"
+            f"LAYOUT MAP:\n{layout_map}"
+        )
 
-    def extract_figures(self) -> List[Dict[str, Any]]:
-        images = []
-        image_page_information = self.get_image_page_information(self.images)
-        image_index = 0
-        for image_page in image_page_information:
-            image_with_number = re.search('\\S+\\s+\\d+', image_page['caption'])
-            if image_with_number:
-                image_with_number = image_with_number.group()
-                escaped = re.escape(image_with_number)
-                flexible = escaped.replace('\\ ', '\\s+')
-                pattern = re.compile(flexible, re.IGNORECASE)
-                matched_lines = []
-                for line in self.full_text.splitlines():
-                    if pattern.search(line):
-                        stripped = line.strip()
-                        if stripped:
-                            matched_lines.append(stripped)
-                reference_context = '\n'.join(matched_lines)
-            else:
-                reference_context = ''
-            img_bytes = BytesIO()
-            img = image_page['image']
-            img.save(img_bytes, format='PNG')
-            images.append({'image_index': image_index, 'image_bytes': img_bytes.getvalue(), 'page_number': image_page['page'], 'raw_name': image_page['raw_name'], 'relevant_caption': image_page['caption'], 'reference_context': reference_context})
-            image_index += 1
-        return images
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}}
+                    ]
+                }
+            ],
+            "temperature": 0.1
+        }
 
-    def get_image_page_information(self, images) -> List[Dict[str, Any]]:
-        image_page_information = []
-        for (key, value) in images.items():
-            page_index = re.search('page_(\\d+)', key)
-            image_page = {'page': page_index.group(1), 'raw_name': key, 'image': value}
-            image_page_information.append(image_page)
-        image_page_count = {}
-        for image_page in image_page_information:
-            page = image_page['page']
-            image_page_count[page] = image_page_count.get(page, 0) + 1
-        page_captions: Dict[str, List[str]] = {}
-        for (page, count) in image_page_count.items():
-            page_captions[page] = self.get_caption(int(page), count, type_search='image')
-        page_index_tracker: Dict[str, int] = {}
-        for image_page in image_page_information:
-            page = image_page['page']
-            idx = page_index_tracker.get(page, 0)
-            image_page['caption'] = page_captions[page][idx]
-            page_index_tracker[page] = idx + 1
-        full_text = self.extract_texts()
-        text_lines = full_text.splitlines()
-        vision_generator = VisionCaptionGenerator()
-        for image_page in image_page_information:
-            if image_page['caption'].strip().lower() == 'no caption':
-                raw_name = image_page['raw_name']
-                target_line_idx = None
-                for (i, line) in enumerate(text_lines):
-                    if raw_name in line:
-                        target_line_idx = i
-                        break
-                if target_line_idx is not None:
-                    start = max(0, target_line_idx - 15)
-                    end = min(len(text_lines), target_line_idx + 15 + 1)
-                    context = '\n'.join(text_lines[start:end])
-                else:
-                    context = ''
-                img_bytes_io = BytesIO()
-                img = image_page['image']
-                img.save(img_bytes_io, format='PNG')
-                img_bytes = img_bytes_io.getvalue()
-                image_page['caption'] = vision_generator.generate_caption(img_bytes, context)
-        return image_page_information
-
-    def save_table_images(self, table_page_information: List[Dict[str, Any]], document_id: str) -> Dict[int, str]:
-        from src.utils.config import config as app_config
-        image_dir = app_config.ASSETS_DIR / document_id / 'images'
-        ensure_dir(image_dir)
-        table_image_paths: Dict[int, str] = {}
-        for (idx, table_page) in enumerate(table_page_information):
-            bbox = table_page.get('bbox')
-            if bbox is None:
-                continue
-            page_index = table_page['page']
-            page = self.doc.load_page(page_index)
-            clip_rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
-            pix = page.get_pixmap(dpi=150, clip=clip_rect)
-            file_name = f'table_{idx + 1:03d}.png'
-            file_path = image_dir / file_name
-            pix.save(str(file_path))
-            relative_path = str(file_path.relative_to(app_config.BASE_DIR))
-            table_image_paths[idx] = relative_path
-        return table_image_paths
-
-    def get_table_page_information(self) -> List[Dict[str, Any]]:
-        config_parser = ConfigParser({})
-        converter = TableConverter(artifact_dict=create_model_dict(), config=config_parser.generate_config_dict())
-        document = converter.build_document(self.pdf_path)
-        renderer = MarkdownRenderer()
-        markdown_output = renderer(document)
-        tables = document.contained_blocks((BlockTypes.Table,))
-        tables_content = markdown_output.markdown.split('\n\n')
-        table_page_information = []
-        for i in range(len(tables)):
-            bbox = tables[i].polygon.bbox if hasattr(tables[i], 'polygon') and tables[i].polygon else None
-            table_page = {'page': tables[i].page_id, 'table': tables_content[i], 'bbox': bbox}
-            table_page_information.append(table_page)
-        table_page_count = {}
-        for table_page in table_page_information:
-            page = table_page['page']
-            table_page_count[page] = table_page_count.get(page, 0) + 1
-        page_captions: Dict[str, List[str]] = {}
-        for (page, count) in table_page_count.items():
-            page_captions[page] = self.get_caption(int(page), count, type_search='table')
-        page_index_tracker: Dict[str, int] = {}
-        for table_page in table_page_information:
-            page = table_page['page']
-            idx = page_index_tracker.get(page, 0)
-            table_page['caption'] = page_captions[page][idx]
-            page_index_tracker[page] = idx + 1
-        full_text = self.extract_texts()
-        text_lines = full_text.splitlines()
-        vision_generator = VisionCaptionGenerator()
-        for table_page in table_page_information:
-            if table_page['caption'].strip().lower() == 'no caption':
-                table_markdown_content = table_page['table']
-                first_table_line = table_markdown_content.strip().splitlines()[0] if table_markdown_content.strip() else ''
-                target_line_idx = None
-                for (i, line) in enumerate(text_lines):
-                    if first_table_line and first_table_line in line:
-                        target_line_idx = i
-                        break
-                if target_line_idx is not None:
-                    start = max(0, target_line_idx - 15)
-                    end = min(len(text_lines), target_line_idx + 15 + 1)
-                    context = '\n'.join(text_lines[start:end])
-                else:
-                    context = ''
-                table_page['caption'] = vision_generator.generate_table_caption(table_markdown_content, context)
-        return table_page_information
-
-    def get_caption(self, page_id, object_number, type_search: str='image') -> List[str]:
-        page = self.doc.load_page(page_id)
-        pix = page.get_pixmap(dpi=200)
-        image_bytes = pix.tobytes('png')
-        prompt = f'This page contains {object_number} {type_search}. Extract the caption for each {type_search}, if available. Return a JSON array of exactly {object_number} strings, one caption per {type_search}, in the order they appear on the page. If a {type_search} has no caption, use "No Caption" as the value. Do not include any explanation, only output the JSON array. Example output (if the 2nd {type_search} has no caption): ["Caption of first {type_search}", "No Caption", "Caption of third {type_search}"]'
-        raw_content = vision_chat(messages=[{'role': 'user', 'content': [{'type': 'text', 'text': prompt}, b64_image(image_bytes)]}], temperature=0.2)
-        match = re.search('\\[.*\\]', raw_content, re.DOTALL)
-        captions = []
-        if match:
-            try:
-                captions = json.loads(match.group())
-            except json.JSONDecodeError:
-                captions = []
-        captions = captions[:object_number]
-        captions += ['No Caption'] * (object_number - len(captions))
-        return captions
+        try:
+            response = requests.post(self.model_url, headers=headers, json=payload, timeout=180)
+            response.raise_for_status()
+            resp_data = response.json()
+            content = resp_data['choices'][0]['message']['content']
+            
+            if content.startswith("```markdown"): content = content[11:]
+            if content.startswith("```"): content = content[3:]
+            if content.endswith("```"): content = content[:-3]
+            
+            return content.strip()
+        except Exception as e:
+            _log.error(f"Error calling VLM: {e}")
+            return f"Error processing page. Details: {str(e)}"

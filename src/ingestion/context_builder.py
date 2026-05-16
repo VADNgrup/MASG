@@ -6,6 +6,7 @@ from src.models.asset import AssetCollection, ImageAsset
 from src.ingestion.parser import ParsedContent
 from src.utils.file_utils import save_json
 from src.utils.config import config
+from src.ingestion.table_extraction import extract_markdown_tables
 
 class ContextWindowBuilder:
 
@@ -16,6 +17,8 @@ class ContextWindowBuilder:
 
     def build_context(self, parsed_content: ParsedContent, tables_markdown: List[TableData], images: List[ImageAsset]) -> DocumentContext:
         full_text = parsed_content.full_text
+        if not tables_markdown:
+            tables_markdown = extract_markdown_tables(full_text)
         text_content = TextContent(markdown=full_text, page_count=parsed_content.page_count)
         asset_collection = AssetCollection(images=images)
         processing_time = time.time() - self.start_time
