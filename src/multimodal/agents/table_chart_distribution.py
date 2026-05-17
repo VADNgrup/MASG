@@ -49,7 +49,6 @@ class TableChartDistribution:
                     best_ctx_table = ctx_table
                     best_ctx_id = ctx_id
             if best_ctx_table and best_score > 0:
-                # Use image_table_path (original screenshot) instead of generated charts
                 image_path = best_ctx_table.get('image_table_path')
                 distributions.append({
                     'slide_number': slide_number, 

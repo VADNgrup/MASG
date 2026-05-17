@@ -64,18 +64,27 @@ class DocumentParser:
                         })
 
             image_info_list = page.get_images(full=True)
+            page_rect = page.rect
+            page_area = max(page_rect.width * page_rect.height, 1)
             for img_idx, img in enumerate(image_info_list):
                 xref = img[0]
                 rects = page.get_image_rects(xref)
                 if not rects: continue
+                rect = max(rects, key=lambda r: r.width * r.height)
+                if self._is_small_or_decorative_image(rect, page_area):
+                    _log.info(
+                        'Skipping small/decorative image on page %d: %.1fx%.1f (area %.4f)',
+                        i + 1,
+                        rect.width,
+                        rect.height,
+                        rect.width * rect.height / page_area,
+                    )
+                    continue
                 
                 base_image = self.doc.extract_image(xref)
                 img_ext = base_image["ext"]
                 img_filename = f"page_{i+1}_img_{img_idx+1}.{img_ext}"
                 img_path = assets_images_dir / img_filename
-                
-                if rects[0].width < 20 or rects[0].height < 20:
-                    continue
 
                 with open(img_path, "wb") as f_img:
                     f_img.write(base_image["image"])
@@ -85,7 +94,7 @@ class DocumentParser:
                 page_map.append({
                     "type": "image",
                     "content": rel_img_path,
-                    "bbox": rects[0]
+                    "bbox": rect
                 })
                 
                 all_extracted_images.append({
@@ -94,8 +103,8 @@ class DocumentParser:
                     'caption': '', 
                     'reference_context': '',
                     'metadata': {
-                        'width': int(rects[0].width),
-                        'height': int(rects[0].height),
+                        'width': int(rect.width),
+                        'height': int(rect.height),
                         'format': img_ext,
                         'file_size_kb': len(base_image["image"]) / 1024
                     }
@@ -122,6 +131,20 @@ class DocumentParser:
         
         self.doc.close()
         return content
+
+    @staticmethod
+    def _is_small_or_decorative_image(rect, page_area: float) -> bool:
+        width = float(rect.width)
+        height = float(rect.height)
+        if width < config.MIN_EXTRACT_IMAGE_WIDTH or height < config.MIN_EXTRACT_IMAGE_HEIGHT:
+            return True
+        image_area = width * height
+        if image_area / page_area < config.MIN_EXTRACT_IMAGE_AREA_RATIO:
+            return True
+        aspect = width / height if height else 0
+        if aspect < config.MIN_EXTRACT_IMAGE_ASPECT_RATIO or aspect > config.MAX_EXTRACT_IMAGE_ASPECT_RATIO:
+            return True
+        return False
 
     def _call_vlm(self, layout_map, b64_image) -> str:
         headers = {

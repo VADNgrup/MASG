@@ -44,6 +44,15 @@ def parse_full_slides(output_lecture_path: str) -> str:
         table_map.setdefault(sn, []).append(tbl['table_caption'])
     total_slides = lecture_json['metadata']['total_slides']
     parts = []
+    meta = lecture_json.get('metadata', {})
+    context_lines = [
+        f"Presentation title: {lecture_json.get('lecture_title', output_lecture_path.stem)}",
+        f"Source document: {meta.get('source_file') or meta.get('source_document_id') or output_lecture_path.stem}",
+        f"Generated at: {meta.get('generated_at', '')}",
+    ]
+    if meta.get('speaker_information'):
+        context_lines.append(f"Speaker: {meta.get('speaker_information')}")
+    parts.append('\n'.join(context_lines))
     for slide_entry in lecture_json['slides']:
         slide_meta = slide_entry['slide']
         slide_number = slide_meta['slide_number']

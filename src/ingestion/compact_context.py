@@ -31,7 +31,7 @@ def build_compact_context(document_id: str, source_file: str, markdown: str, pag
     page_cards = [_page_card(page_num, page_md) for page_num, page_md in pages]
     sections = _section_map(page_cards)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "document_id": document_id,
         "source_file": source_file,
         "page_count": page_count,
@@ -43,7 +43,7 @@ def build_compact_context(document_id: str, source_file: str, markdown: str, pag
 
 def ensure_compact_context(context) -> Dict[str, Any]:
     compact = load_compact_context(context.document_id)
-    if compact is not None and compact.get("schema_version") == 2:
+    if compact is not None and compact.get("schema_version") == 3:
         return compact
     compact = build_compact_context(
         document_id=context.document_id,
@@ -169,7 +169,7 @@ def _document_summary(page_cards: List[Dict[str, Any]]) -> str:
 def _extract_numbered_items(page_md: str) -> List[Dict[str, Any]]:
     text = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", page_md)
     text = re.sub(r"\*(?:Figure|Table|Fig\.?|Bảng|Hình)[:\s]+[^*]+\*", " ", text, flags=re.IGNORECASE)
-    pattern = re.compile(r"(?ms)(?:^|\n)\s*(\d{1,2})\.\s+(.+?)(?=(?:\n\s*\d{1,2}\.\s+)|\n\s*!\[|\n\s*---|\Z)")
+    pattern = re.compile(r"(?ms)(?:^|\n|\s)(\d{1,2})\.\s+(.+?)(?=(?:\n|\s)\d{1,2}\.\s+|\n\s*!\[|\n\s*---|\Z)")
     items = []
     for number, body in pattern.findall(text):
         clean = _squash(body)

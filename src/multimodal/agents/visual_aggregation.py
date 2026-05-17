@@ -15,7 +15,8 @@ class VisualAggregation:
         assets = context_data.get('assets', {})
         images = assets.get('images', [])
         images = self._enrich_images_from_markdown(images, context_data.get('text_content', {}).get('markdown', ''))
-        result = {'tables': tables, 'images': images, 'source_document_id': source_document_id, 'total_tables': len(tables), 'total_images': len(images)}
+        page_count = context_data.get('text_content', {}).get('page_count') or context_data.get('metadata', {}).get('page_count')
+        result = {'tables': tables, 'images': images, 'source_document_id': source_document_id, 'total_tables': len(tables), 'total_images': len(images), 'page_count': page_count}
         return result
 
     def _enrich_images_from_markdown(self, images: List[Dict[str, Any]], markdown: str) -> List[Dict[str, Any]]:

@@ -21,9 +21,18 @@ class Config:
     ASSETS_DIR = DATA_DIR / 'assets'
     CONTEXT_DIR = DATA_DIR / 'context'
     LECTURES_DIR = DATA_DIR / 'lectures'
+    RESOURCE_DIR = BASE_DIR / 'src' / 'resources'
     THEME_PATH = DATA_DIR / 'theme' / 'theme.json'
     VISION_MAX_TOKENS = 2000
     VISION_TEMPERATURE = 0.3
+    IMAGE_MATCH_THRESHOLD = float(os.getenv('IMAGE_MATCH_THRESHOLD', '0.18'))
+    IMAGE_MATCH_MAX_IMAGES_PER_SLIDE = int(os.getenv('IMAGE_MATCH_MAX_IMAGES_PER_SLIDE', '2'))
+    IMAGE_MATCH_STOPWORDS_PATH = RESOURCE_DIR / 'multimodal_stopwords.txt'
+    MIN_EXTRACT_IMAGE_WIDTH = 80
+    MIN_EXTRACT_IMAGE_HEIGHT = 60
+    MIN_EXTRACT_IMAGE_AREA_RATIO = 0.01
+    MIN_EXTRACT_IMAGE_ASPECT_RATIO = 0.2
+    MAX_EXTRACT_IMAGE_ASPECT_RATIO = 6.0
     @classmethod
     def get_log_path(cls):
         sanitized_model = (cls.LLM_MODEL_NAME or 'default').replace('/', '_').replace(':', '_')

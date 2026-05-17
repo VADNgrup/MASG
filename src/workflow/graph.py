@@ -51,8 +51,13 @@ def create_workflow() -> StateGraph:
         print(f"\n{'=' * 60}")
         print(f' Content QA — Checking slide substance and title alignment...')
         print(f"{'=' * 60}\n")
-        repaired_slides = content_quality.repair(state['slides'], state.get('slide_specs', []), state['document_context'], slide_packets=state.get('slide_packets', []))
-        return {'slides': repaired_slides}
+        repaired_slides, qa_report = content_quality.repair_with_report(
+            state['slides'],
+            state.get('slide_specs', []),
+            state['document_context'],
+            slide_packets=state.get('slide_packets', []),
+        )
+        return {'slides': repaired_slides, 'qa_report': qa_report}
 
     workflow.add_node('planner', planner_node)
     workflow.add_node('plan_specer', plan_specer_node)

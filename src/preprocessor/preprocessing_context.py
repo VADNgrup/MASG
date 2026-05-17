@@ -68,12 +68,14 @@ async def preprocess_context(context, output=None):
     print(f'Tables: {context.metadata.total_tables}\n')
     config.validate()
     workflow = create_workflow()
-    initial_state = {'document_context': context, 'lecture_plan': None, 'lecture_title': '', 'slides': [], 'slide_specs': None, 'slide_packets': None}
+    initial_state = {'document_context': context, 'lecture_plan': None, 'lecture_title': '', 'slides': [], 'slide_specs': None, 'slide_packets': None, 'qa_report': None}
     result = await workflow.ainvoke(initial_state)
     final_slides = result['slides']
     final_plan = result['lecture_plan']
+    qa_report = result.get('qa_report') or {}
+    warning_count = len(qa_report.get('advisory_issues', {})) + len(qa_report.get('soft_issues', {}))
     quality_score = 100.0 if final_slides else 0.0
-    lecture_output = {'lecture_id': context.document_id, 'metadata': {'source_document_id': context.document_id, 'generated_at': datetime.now().isoformat(), 'total_slides': len(final_slides), 'quality_score': quality_score, 'iterations': 1}, 'lecture_title': result['lecture_title'], 'slides': [asdict(s) for s in final_slides]}
+    lecture_output = {'lecture_id': context.document_id, 'metadata': {'source_document_id': context.document_id, 'source_file': context.source_file, 'generated_at': datetime.now().isoformat(), 'total_slides': len(final_slides), 'quality_score': quality_score, 'iterations': 1, 'qa_status': qa_report.get('status', 'unknown'), 'qa_warning_count': warning_count}, 'lecture_title': result['lecture_title'], 'slides': [asdict(s) for s in final_slides]}
     output_save_path = Path(output) if output else config.LECTURES_DIR / f"{lecture_output['lecture_id']}"
     output_save_path.mkdir(parents=True, exist_ok=True)
     lecture_json_path = output_save_path / f"{lecture_output['lecture_id']}.json"
@@ -100,6 +102,8 @@ async def preprocess_context(context, output=None):
         save_json(final_packets, packets_path)
     else:
         packets_path = None
+    qa_report_path = output_save_path / f"{lecture_output['lecture_id']}_qa_report.json"
+    save_json(qa_report, qa_report_path)
     print(f"\n{'=' * 60}")
     print(f'Lecture Generated Successfully')
     print(f"{'=' * 60}\n")
@@ -107,6 +111,7 @@ async def preprocess_context(context, output=None):
     print(f'Outline:                 {outline_path}')
     print(f'Plan Spec:               {specs_path}')
     print(f'Slide Packets:           {packets_path}')
+    print(f'QA Report:               {qa_report_path}')
     print(f"Slides:                  {lecture_output['metadata']['total_slides']}")
     print(f'Quality Score:           {quality_score:.1f}% slides passed')
     print(f"\n{'=' * 60}")

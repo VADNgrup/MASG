@@ -60,7 +60,7 @@ def run_pipeline(lecture_json_path: str, lecture_title: str | None=None, speaker
         print(f"\n{'=' * 60}")
         print(f'End Phase 4: Generated Slide in {md_path}')
         print(f"{'=' * 60}\n")
-    _package_output(lecture_id=lecture_id, slidev_dir=slidev_dir, lecture_json_path=json_path)
+    _package_output(lecture_id=lecture_id, slidev_dir=slidev_dir, lecture_json_path=json_path, lecture_title=title, speaker_information=speaker_information)
 
 def _export_pdf(lecture_id: str, slidev_dir: Path) -> None:
     cmd = f'slidev export "{lecture_id}.md"'
@@ -73,7 +73,7 @@ def _export_pdf(lecture_id: str, slidev_dir: Path) -> None:
         raise RuntimeError(f'slidev export failed with return code {result.returncode}.\n{error_msg}')
     logger.info('[slide_gen] PDF export complete.')
 
-def _package_output(lecture_id: str, slidev_dir: Path, lecture_json_path: Path) -> None:
+def _package_output(lecture_id: str, slidev_dir: Path, lecture_json_path: Path, lecture_title: str='', speaker_information: str='') -> None:
     from src.utils.config import Config
     model_name = (Config.LLM_MODEL_NAME or 'unknown_model').replace('/', '_')
     out_dir = _PROJECT_ROOT / 'output' / lecture_id / model_name
@@ -88,7 +88,15 @@ def _package_output(lecture_id: str, slidev_dir: Path, lecture_json_path: Path) 
     shutil.move(str(pdf_src), pdf_dst)
     print(f'[package_output] PDF moved → {pdf_dst}')
     json_dst = out_dir / lecture_json_path.name
-    shutil.copy2(lecture_json_path, json_dst)
+    with open(lecture_json_path, encoding='utf-8') as f:
+        lecture_json = json.load(f)
+    lecture_json.setdefault('metadata', {})
+    if speaker_information:
+        lecture_json['metadata']['speaker_information'] = speaker_information
+    if lecture_title:
+        lecture_json['metadata']['presentation_title'] = lecture_title
+    with open(json_dst, 'w', encoding='utf-8') as f:
+        json.dump(lecture_json, f, ensure_ascii=False, indent=2)
     print(f'[package_output] JSON copied → {json_dst}')
     for suffix in ('_table_distribution', '_image_distribution'):
         sibling = lecture_json_path.parent / f'{lecture_id}{suffix}.json'

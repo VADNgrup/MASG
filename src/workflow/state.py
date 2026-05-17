@@ -9,3 +9,4 @@ class WorkflowState(TypedDict):
     slides: List[SlideContent]
     slide_specs: Optional[List[Slide]]
     slide_packets: Optional[List[Dict[str, Any]]]
+    qa_report: Optional[Dict[str, Any]]

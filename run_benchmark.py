@@ -1,24 +1,60 @@
-import os
-import time
+import argparse
+import shutil
+import subprocess
 from src.utils.config import Config
 
-def run_benchmark():
+def _clear_path(path):
+    if path.exists():
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    path.mkdir(parents=True, exist_ok=True)
+
+def clear_benchmark_state():
+    paths = [
+        Config.CONTEXT_DIR,
+        Config.LECTURES_DIR,
+        Config.ASSETS_DIR,
+        Config.OUTPUT_DIR,
+        Config.BASE_DIR / 'logs',
+        Config.DATA_DIR / 'media',
+    ]
+    print('\n[CLEAN] Removing previous benchmark artifacts...')
+    for path in paths:
+        _clear_path(path)
+        print(f'[CLEAN] reset {path}')
+
+def run_benchmark(clean=True, limit=None):
     print('=' * 60)
     print('STARTING BENCHMARK PIPELINE')
     print('=' * 60)
+    if clean:
+        clear_benchmark_state()
     print("\n[1/2] GENERATING SLIDES FOR ALL DOCUMENTS IN 'data/raw/'...")
-    ret_gen = os.system('python -m main')
+    gen_cmd = ['python', '-m', 'main']
+    if limit is not None:
+        gen_cmd.extend(['--limit', str(limit)])
+    ret_gen = subprocess.run(gen_cmd).returncode
     if ret_gen != 0:
         print('\nWarning: Some slides failed to generate. Proceeding to evaluation for completed tasks.')
     model_name = (Config.LLM_MODEL_NAME or 'unknown_model').replace('/', '_')
     print('\n[2/2] EVALUATING WITH LLM-AS-A-JUDGE (PPTEVAL)...')
     print(f'Target Directory Model: {model_name}\n')
-    ret_eval = os.system(f'python -m src.evaluation.eval --model {model_name}')
+    ret_eval = subprocess.run(['python', '-m', 'src.evaluation.eval', '--model', model_name]).returncode
     print('\n' + '=' * 60)
     if ret_eval == 0:
         print('BENCHMARK COMPLETED SUCCESSFULLY')
     else:
         print('BENCHMARK FINISHED WITH ERRORS (EVALUATION FAILED)')
     print('=' * 60)
+
+def _build_parser():
+    parser = argparse.ArgumentParser(description='Run a clean benchmark from raw PDFs to evaluation metrics.')
+    parser.add_argument('--no-clean', action='store_true', help='Keep existing generated artifacts before running.')
+    parser.add_argument('--limit', type=int, default=None, help='Limit the number of PDFs processed from data/raw.')
+    return parser
+
 if __name__ == '__main__':
-    run_benchmark()
+    args = _build_parser().parse_args()
+    run_benchmark(clean=not args.no_clean, limit=args.limit)

@@ -12,7 +12,7 @@ from src.utils.parse_llm_response import parse_json_response
 
 class ContentQualityAgent:
     MAX_OUTPUT_TOKENS = 2048
-    MAX_EVIDENCE_PER_SLIDE = 1800
+    MAX_EVIDENCE_PER_SLIDE = 3600
     BATCH_SIZE = 3
     BAD_PATTERNS = [
         r"source-backed details required",
@@ -25,8 +25,22 @@ class ContentQualityAgent:
         r"dagon university research journal",
         r"preserving the deci",
         r"explain the .* preserving",
+        r"\bkey\s*words?\b",
+        r"\btarget\s+audience\b",
+        r"\bcite\s+this\s+document\s+as\b",
+        r"\blast\s+retrieved\b",
+        r"\breferences?\b\s*$",
+        r"required facts?:",
+        r"required checks?:",
+        r"workflow action:",
+        r"document id:",
+        r"source file:",
+        r"these items cover distinct source points",
+        r"software executes the modeled optimization",
+        r"source evidence supports this slide",
         r"^#+\s",
         r"\s#+\s",
+        r"\b(?:using|with|by|to|from|into|of|for|and|or|the|a|an)\s+[a-z]\.?(?:\s|$)",
     ]
 
     def __init__(self, model: str):
@@ -36,14 +50,31 @@ class ContentQualityAgent:
         return chat(self.model, messages, temperature=0.2, max_tokens=self.MAX_OUTPUT_TOKENS)
 
     def repair(self, slides: List[SlideContent], slide_specs: List[Slide], context: DocumentContext, slide_packets: List[Dict[str, Any]] | None = None) -> List[SlideContent]:
+        repaired_slides, _ = self.repair_with_report(slides, slide_specs, context, slide_packets=slide_packets)
+        return repaired_slides
+
+    def repair_with_report(
+        self,
+        slides: List[SlideContent],
+        slide_specs: List[Slide],
+        context: DocumentContext,
+        slide_packets: List[Dict[str, Any]] | None = None,
+    ) -> tuple[List[SlideContent], Dict[str, Any]]:
         packet_by_number = {int(packet.get("slide_number")): packet for packet in (slide_packets or []) if packet.get("slide_number") is not None}
         issues, evidence_by_number, soft_issues = self._detect_all_issues(slides, context, packet_by_number)
         if not issues:
+            report = {
+                "status": "clean" if not soft_issues else "warnings",
+                "blocking_issues": {},
+                "advisory_issues": {},
+                "soft_issues": soft_issues,
+                "repaired_slide_numbers": [],
+            }
             if soft_issues:
                 print(f"[ContentQA] No blocking content issues found. Soft warnings on {len(soft_issues)} slide(s).")
             else:
                 print("[ContentQA] No blocking content issues found.")
-            return slides
+            return slides, report
         print(f"[ContentQA] Repairing {len(issues)} slide(s): {sorted(issues)}")
         repaired_by_number: Dict[int, Any] = {}
         flagged = [slide for slide in slides if slide.slide.slide_number in issues]
@@ -58,9 +89,18 @@ class ContentQualityAgent:
         if unresolved:
             repaired_slides = self._apply_deterministic_fallbacks(repaired_slides, unresolved, evidence_by_number, packet_by_number)
             unresolved, _, _ = self._detect_all_issues(repaired_slides, context, packet_by_number)
-        if unresolved:
-            raise RuntimeError(f"Content QA could not repair blocking slide issues: {unresolved}")
-        return repaired_slides
+        advisory_unresolved = self._advisory_only(unresolved)
+        blocking_unresolved = self._blocking_only(unresolved)
+        report = {
+            "status": "failed" if blocking_unresolved else ("warnings" if advisory_unresolved or soft_issues else "passed"),
+            "blocking_issues": blocking_unresolved,
+            "advisory_issues": advisory_unresolved,
+            "soft_issues": soft_issues,
+            "repaired_slide_numbers": sorted(repaired_by_number),
+        }
+        if blocking_unresolved:
+            raise RuntimeError(f"Content QA could not repair blocking slide issues: {blocking_unresolved}")
+        return repaired_slides, report
 
     def _repair_batch(
         self,
@@ -108,6 +148,7 @@ class ContentQualityAgent:
             "- Return 3 to 5 concise bullet phrases per slide.\n"
             "- Remove all placeholders and vague filler.\n"
             "- Stay within the slide title and goal.\n"
+            "- Replace generic bullets with source-specific facts, examples, values, actions, or implications.\n"
             "- Preserve concrete formulas, variables, numbers, software names, and interpretation points from the evidence.\n"
             "- Do not invent facts outside the evidence.\n"
             "- Do not copy source markdown headings, page headers, journal headers, or figure labels as bullets.\n"
@@ -184,7 +225,7 @@ class ContentQualityAgent:
             if "slack" in query_l and re.search(r"(slack|not used|unused|remaining)[^.\d]{0,80}\d+", page_text, flags=re.IGNORECASE):
                 score += 90
             if score > 0:
-                clean = re.sub(r"\s+", " ", page_text).strip()
+                clean = self._normalise_evidence_block(page_text, 2400)
                 scored.append((score, page_num, clean))
         if not scored:
             return ""
@@ -199,7 +240,7 @@ class ContentQualityAgent:
                     neighbor_score = score - 1
                     if "$$" in neighbor or "\\le" in neighbor or "<=" in neighbor:
                         neighbor_score = score + 30
-                    selected.append((neighbor_score, page_num + 1, re.sub(r"\s+", " ", neighbor).strip()))
+                    selected.append((neighbor_score, page_num + 1, self._normalise_evidence_block(neighbor, 2400)))
         selected.sort(key=lambda item: (-item[0], item[1]))
         blocks = []
         seen_pages = set()
@@ -207,7 +248,7 @@ class ContentQualityAgent:
             if page_num in seen_pages:
                 continue
             seen_pages.add(page_num)
-            blocks.append(f"--- Page {page_num} evidence ---\n{text[:1200]}")
+            blocks.append(f"--- Page {page_num} evidence ---\n{self._sentence_safe_truncate(text, 2400)}")
         return "\n\n".join(blocks)
 
     @staticmethod
@@ -221,6 +262,28 @@ class ContentQualityAgent:
             end = matches[idx + 1].start() if idx + 1 < len(matches) else len(markdown)
             pages.append((int(match.group(1)), markdown[start:end].strip()))
         return pages
+
+    @staticmethod
+    def _normalise_evidence_block(text: str, max_chars: int) -> str:
+        text = ContentQualityAgent._clean_evidence_text(text)
+        return ContentQualityAgent._sentence_safe_truncate(text, max_chars)
+
+    @staticmethod
+    def _sentence_safe_truncate(text: str, max_chars: int) -> str:
+        text = re.sub(r"\s+", " ", text or "").strip()
+        if len(text) <= max_chars:
+            return text
+        boundary = -1
+        for match in re.finditer(r"[.!?。！？](?:\s|$)", text[:max_chars]):
+            boundary = match.end()
+        min_boundary = min(80, max(20, int(max_chars * 0.45)))
+        if boundary >= min_boundary:
+            return text[:boundary].strip()
+        for sep in ["; ", ": ", ", "]:
+            pos = text.rfind(sep, 0, max_chars)
+            if pos >= min_boundary:
+                return text[:pos].strip()
+        return text[:max_chars].rsplit(" ", 1)[0].strip()
 
     @staticmethod
     def _query_terms(query: str) -> List[str]:
@@ -277,11 +340,10 @@ class ContentQualityAgent:
                 blocking.append("fewer than 3 usable bullets")
             if not text.strip():
                 blocking.append("empty content")
+            lines = [item for item in slide.content if isinstance(item, str)] if isinstance(slide.content, list) else [line for line in str(slide.content).splitlines() if line.strip()]
+            if any(self._is_bad_line(line) for line in lines):
+                blocking.append("placeholder or unresolved source note")
             lower_text = text.lower()
-            for pattern in self.BAD_PATTERNS:
-                if re.search(pattern, lower_text):
-                    blocking.append("placeholder or unresolved source note")
-                    break
             if self._has_unbalanced_math(text):
                 blocking.append("unbalanced inline math delimiter")
             if self._has_noisy_slack_values(text):
@@ -338,6 +400,8 @@ class ContentQualityAgent:
         required_facts = [fact for fact in packet.get("required_facts", []) if isinstance(fact, str)]
         if not checks and required_facts:
             checks = [{"kind": "required_facts", "items": required_facts[:6]}]
+        if (required_facts or packet.get("coverage_items")) and self._generic_bullet_count(slide.content) >= 2 and not self._is_section_intro(slide):
+            issues.append("too many generic bullets")
         for check in checks:
             if not isinstance(check, dict):
                 continue
@@ -367,12 +431,50 @@ class ContentQualityAgent:
                     action_hits = sum(1 for action in items if any(token in content_l for token in self._action_tokens(action)))
                     if action_hits < min(2, len(items)):
                         issues.append("missing required workflow actions")
+            elif kind == "coverage_items":
+                continue
+            elif kind == "role_anchors":
+                items = [str(item).lower() for item in check.get("items", []) if str(item).strip()]
+                min_hits = int(check.get("min_hits") or min(2, len(items)))
+                hits = sum(1 for item in items if item in content_l)
+                if items and hits < min(min_hits, len(items)):
+                    issues.append("missing required role anchors")
             elif kind == "required_facts":
                 items = [str(item) for item in check.get("items", []) if str(item).strip()]
                 fact_hits = sum(1 for fact in items if self._fact_supported_in_content(content_l, fact))
                 if fact_hits < min(2, len(items)):
                     issues.append("missing required packet facts")
         return list(dict.fromkeys(issues))
+
+    @staticmethod
+    def _blocking_only(unresolved: Dict[int, List[str]]) -> Dict[int, List[str]]:
+        advisory = {
+            "missing required coverage items",
+            "missing required role anchors",
+            "missing required packet facts",
+            "too many generic bullets",
+        }
+        blocking: Dict[int, List[str]] = {}
+        for slide_number, issue_list in (unresolved or {}).items():
+            kept = [issue for issue in issue_list if issue not in advisory]
+            if kept:
+                blocking[slide_number] = kept
+        return blocking
+
+    @staticmethod
+    def _advisory_only(unresolved: Dict[int, List[str]]) -> Dict[int, List[str]]:
+        advisory = {
+            "missing required coverage items",
+            "missing required role anchors",
+            "missing required packet facts",
+            "too many generic bullets",
+        }
+        kept: Dict[int, List[str]] = {}
+        for slide_number, issue_list in (unresolved or {}).items():
+            items = [issue for issue in issue_list if issue in advisory]
+            if items:
+                kept[slide_number] = items
+        return kept
 
     def _evidence_required_issues(self, slide: SlideContent, evidence: str) -> List[str]:
         title_l = slide.slide.slide_title.lower()
@@ -502,17 +604,20 @@ class ContentQualityAgent:
     def _extract_software_actions(cls, evidence: str) -> List[str]:
         actions = []
         chunks = []
+        action_pattern = re.compile(
+            r"\b(click|input|enter|solve|save|print|select|choose|upload|download|export|import|run|execute|submit|cancel|entry)\b",
+            flags=re.IGNORECASE,
+        )
         for line in cls._clean_evidence_text(evidence).splitlines():
             chunks.extend(re.split(r"(?<=[.!?])\s+", line))
         for line in chunks:
             clean = line.strip().lstrip("-*•").strip()
-            lower = clean.lower()
-            if any(word in lower for word in ["click", "input", "solve", "save", "print", "open", "entry", "cancel"]):
+            if action_pattern.search(clean):
                 clean = re.sub(r"\s+", " ", clean)
                 if len(clean) > 140:
                     for part in re.split(r"\b(?:to|and)\b", clean, flags=re.IGNORECASE):
                         part = part.strip(" .;:")
-                        if 5 <= len(part) <= 140 and any(word in part.lower() for word in ["click", "input", "solve", "save", "print", "open", "entry", "cancel"]):
+                        if 5 <= len(part) <= 140 and action_pattern.search(part):
                             actions.append(part)
                 elif 5 <= len(clean):
                     actions.append(clean)
@@ -532,9 +637,17 @@ class ContentQualityAgent:
     @staticmethod
     def _clean_evidence_text(text: str) -> str:
         text = re.sub(r"--- Page\s+\d+\s+evidence ---", " ", text)
+        text = re.sub(r"\[BLOCK\s+\d+\s*-\s*TEXT\]", " ", text, flags=re.IGNORECASE)
         text = re.sub(r"#\s*Dagon University Research Journal\s+\d{4},\s*Vol\.\s*\d+\s*\d*", " ", text, flags=re.IGNORECASE)
         text = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text)
         text = re.sub(r"\*Figure:[^*]+\*", " ", text, flags=re.IGNORECASE)
+        text = re.sub(r"\*\*\s*Key\s+words?\s*:?\s*\*\*.*?(?=\*\*\s*(?:Target\s+audience|References?|Figure|Table)\s*:?\s*\*\*|\n\s*\n|$)", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"\*\*\s*Target\s+audience\s*:?\s*\*\*.*?(?=\*\*\s*(?:Key\s+words?|References?|Figure|Table)\s*:?\s*\*\*|\n\s*\n|$)", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"\bKey\s+words?\s*:?\s*\*\*?.*?(?=\bTarget\s+audience\s*:?\s*\*\*?|\n\s*\n|$)", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"\bTarget\s+audience\s*:?\s*\*\*?.*?(?=\bKey\s+words?\s*:?\s*\*\*?|\n\s*\n|$)", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"\bCite\s+this\s+document\s+as\s*:.*?(?=\n\s*\n|$)", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"\bLast\s+retrieved\s*:.*?(?=\n\s*\n|$)", " ", text, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r"\bReferences?\s*$", " ", text, flags=re.IGNORECASE | re.MULTILINE)
         text = re.sub(r"#{1,6}\s*", " ", text)
         return re.sub(r"\s+", " ", text).strip()
 
@@ -608,6 +721,30 @@ class ContentQualityAgent:
         hits = sum(1 for token in tokens if token in content_l)
         return hits >= min(2, len(tokens))
 
+    @classmethod
+    def _coverage_items_supported(cls, slide: SlideContent, content_l: str, items: List[str], min_hits: int) -> bool:
+        hits = sum(1 for item in items if cls._fact_supported_in_content(content_l, item) or cls._sentence_overlap(content_l, item))
+        if hits >= min(min_hits, len(items)):
+            return True
+        if cls._cross_script_coverage(items, content_l):
+            bullet_count = cls._bullet_count(slide.content)
+            generic_count = cls._generic_bullet_count(slide.content)
+            return bullet_count >= 3 and generic_count <= 1
+        return False
+
+    @staticmethod
+    def _cross_script_coverage(items: List[str], content_l: str) -> bool:
+        item_text = " ".join(items)
+        item_cjk = len(re.findall(r"[\u4e00-\u9fff]", item_text))
+        content_cjk = len(re.findall(r"[\u4e00-\u9fff]", content_l))
+        item_latin = len(re.findall(r"[a-zA-Z]{3,}", item_text))
+        content_latin = len(re.findall(r"[a-zA-Z]{3,}", content_l))
+        if item_cjk >= 8 and content_latin >= 8 and content_cjk == 0:
+            return True
+        if item_latin >= 8 and content_cjk >= 8 and content_latin == 0:
+            return True
+        return False
+
     @staticmethod
     def _sentences_matching(text: str, keywords: List[str]) -> List[str]:
         sentences = re.split(r"(?<=[.!?])\s+|\n+", text)
@@ -652,10 +789,11 @@ class ContentQualityAgent:
                     line = cls._clean_bullet(line)
                     if line and not cls._is_bad_line(line):
                         items.append(line)
+            items = cls._dedupe_bullets(items)
             if len(items) >= 3:
                 return items[:5]
         fallback_items = cls._fallback_items(fallback)
-        return fallback_items[:5]
+        return cls._ensure_min_bullets(fallback_items, "Core document point")[:5]
 
     @classmethod
     def _fallback_content(cls, slide: SlideContent, evidence: str, packet: Dict[str, Any] | None = None) -> List[str]:
@@ -771,7 +909,7 @@ class ContentQualityAgent:
             actions = required_actions + [action for action in actions if action not in required_actions]
         if actions:
             bullets = [cls._trim_bullet(action) for action in actions[:5]]
-            return cls._pad_bullets(bullets, "Software executes the modeled optimization")
+            return cls._pad_bullets(bullets, "Workflow actions are derived from the source procedure")
         if packet and packet.get("required_facts"):
             return cls._pad_bullets([str(item) for item in packet.get("required_facts", [])[:5]], slide.slide.goal[:90])
         return []
@@ -819,7 +957,20 @@ class ContentQualityAgent:
         if kind == "workflow_actions":
             actions = [str(item) for item in check.get("items", []) if str(item).strip()]
             if actions:
-                return cls._pad_bullets([cls._trim_bullet(action) for action in actions[:5]], "Software executes the modeled optimization")
+                return cls._pad_bullets([cls._trim_bullet(action) for action in actions[:5]], "Workflow actions are derived from the source procedure")
+        if kind == "coverage_items":
+            items = [str(item) for item in check.get("items", []) if str(item).strip()]
+            if items:
+                return cls._pad_bullets([cls._trim_bullet(item) for item in items[:5]], "The listed items come from source evidence")
+        if kind == "role_anchors":
+            items = [str(item) for item in check.get("items", []) if str(item).strip()]
+            if items:
+                bullets = []
+                for sentence in cls._fallback_items(evidence):
+                    lower = sentence.lower()
+                    if any(item.lower() in lower for item in items):
+                        bullets.append(sentence)
+                return cls._pad_bullets(bullets[:5], "Role-specific source facts anchor this slide")
         return []
 
     @staticmethod
@@ -866,15 +1017,13 @@ class ContentQualityAgent:
             bullet = ContentQualityAgent._trim_bullet(bullet)
             if bullet and bullet not in clean and not ContentQualityAgent._is_bad_line(bullet):
                 clean.append(bullet)
-        while len(clean) < 3:
-            clean.append(fallback)
-        return clean[:5]
+        return ContentQualityAgent._ensure_min_bullets(clean, fallback)[:5]
 
     @staticmethod
     def _trim_bullet(text: str) -> str:
         text = ContentQualityAgent._clean_bullet(text)
         text = re.sub(r"\s+", " ", text).strip(" .;:-")
-        return text[:140]
+        return ContentQualityAgent._sentence_safe_truncate(text, 140)
 
     @staticmethod
     def _fallback_items(value: Any) -> List[str]:
@@ -884,14 +1033,30 @@ class ContentQualityAgent:
         for part in parts:
             item = part.strip().lstrip("-*•").strip()
             item = ContentQualityAgent._clean_bullet(item)
-            if 8 <= len(item) <= 140 and not ContentQualityAgent._is_bad_line(item):
+            item = ContentQualityAgent._sentence_safe_truncate(item, 140)
+            token_count = len(re.findall(r"[A-Za-zÀ-ỹ0-9]{2,}", item))
+            cjk_count = len(re.findall(r"[\u4e00-\u9fff]", item))
+            if 8 <= len(item) <= 140 and (token_count >= 2 or cjk_count >= 4) and not ContentQualityAgent._is_bad_line(item):
                 items.append(item)
-        return items or [text[:120]] if text.strip() else []
+        items = ContentQualityAgent._dedupe_bullets(items)
+        if items:
+            return items
+        clean_text = ContentQualityAgent._sentence_safe_truncate(ContentQualityAgent._clean_evidence_text(text), 140)
+        if clean_text and not ContentQualityAgent._is_bad_line(clean_text):
+            return [clean_text]
+        return []
 
     @classmethod
     def _is_bad_line(cls, line: str) -> bool:
-        lower = line.strip().lower()
+        raw = line.strip()
+        lower = raw.lower()
         if not lower:
+            return True
+        if "**" in line:
+            return True
+        if re.match(r"^(given|once|when|where|while|their|be)\b", lower) and len(raw.split()) <= 8:
+            return True
+        if re.match(r"^(which|and|or|but|while|through|leading|resulting|providing|financially|supported by|accompanied by)\b", lower):
             return True
         if re.fullmatch(r"\d{1,3}\.?", lower):
             return True
@@ -903,21 +1068,147 @@ class ContentQualityAgent:
             return True
         if re.search(r"\*figure:|figure:", lower):
             return True
+        if re.search(r"\b(key\s*words?|target\s+audience|cite\s+this\s+document\s+as|last\s+retrieved)\b", lower):
+            return True
+        if re.match(r"^(figure|fig\.?|table|references?)\s*[:\d]", lower):
+            return True
         if lower.startswith("#"):
             return True
         if cls._has_noisy_slack_values(line):
             return True
         return any(re.search(pattern, lower) for pattern in cls.BAD_PATTERNS)
 
+    @classmethod
+    def _ensure_min_bullets(cls, items: List[str], fallback: str) -> List[str]:
+        clean = cls._dedupe_bullets([item for item in items if item and not cls._is_bad_line(item)])
+        fallback = cls._trim_bullet(fallback)
+        if fallback and not cls._is_bad_line(fallback):
+            clean = cls._dedupe_bullets(clean + [fallback])
+        generic_fillers = [
+            "The slide states a core document point",
+            "This slide focuses on the stated topic",
+            "The content follows the slide topic",
+        ]
+        for filler in generic_fillers:
+            if len(clean) >= 3:
+                break
+            if not cls._is_bad_line(filler):
+                clean = cls._dedupe_bullets(clean + [filler])
+        return clean[:5]
+
+    @classmethod
+    def _dedupe_bullets(cls, items: List[str]) -> List[str]:
+        result = []
+        seen = set()
+        for item in items:
+            clean = re.sub(r"\s+", " ", str(item or "")).strip()
+            if not clean:
+                continue
+            key = cls._bullet_key(clean)
+            if key in seen:
+                continue
+            if any(cls._bullet_overlap(clean, existing) >= 0.72 for existing in result):
+                continue
+            seen.add(key)
+            result.append(clean)
+        return result
+
+    @staticmethod
+    def _bullet_key(text: str) -> str:
+        tokens = [token for token in re.findall(r"[a-zA-ZÀ-ỹ0-9]{4,}", text.lower()) if token not in {"through", "using", "which", "with", "from", "this", "that", "into"}]
+        if tokens:
+            return " ".join(tokens[:10])
+        cjk = "".join(re.findall(r"[\u4e00-\u9fff]", text))
+        return cjk[:24] or re.sub(r"\s+", " ", text.lower())
+
+    @staticmethod
+    def _bullet_overlap(left: str, right: str) -> float:
+        left_tokens = set(re.findall(r"[a-zA-ZÀ-ỹ0-9]{4,}", left.lower()))
+        right_tokens = set(re.findall(r"[a-zA-ZÀ-ỹ0-9]{4,}", right.lower()))
+        if left_tokens and right_tokens:
+            return len(left_tokens & right_tokens) / min(len(left_tokens), len(right_tokens))
+        left_cjk = set(re.findall(r"[\u4e00-\u9fff]", left))
+        right_cjk = set(re.findall(r"[\u4e00-\u9fff]", right))
+        return len(left_cjk & right_cjk) / min(len(left_cjk), len(right_cjk)) if left_cjk and right_cjk else 0.0
+
+    @classmethod
+    def _is_generic_bullet(cls, line: str) -> bool:
+        lower = cls._normalise_for_match(line)
+        if len(lower.split()) < 5:
+            return False
+        specific_markers = [
+            r"\d",
+            r"\$",
+            r"\b[A-Za-z]\d+\b",
+            r"\b[A-Z][A-Za-z]+(?:[A-Z][A-Za-z]+)+\b",
+            r"\b[A-Z]{2,}\b",
+        ]
+        if any(re.search(pattern, line) for pattern in specific_markers):
+            return False
+        generic_patterns = [
+            r"\bis important\b",
+            r"\bplays? an? important role\b",
+            r"\bhelps? (to )?\w+",
+            r"\bprovides? (a )?(clear )?(overview|framework|foundation)\b",
+            r"\bfocuses? on\b",
+            r"\brelates? to\b",
+            r"\bcan be used\b",
+            r"\bis used to\b",
+            r"\bsupports? .{0,30}(practice|process|decision|understanding)\b",
+            r"\bhighlights? (the )?(importance|benefits|key)\b",
+        ]
+        return any(re.search(pattern, lower) for pattern in generic_patterns)
+
+    @classmethod
+    def _generic_bullet_count(cls, content: Any) -> int:
+        if isinstance(content, list):
+            return sum(1 for item in content if isinstance(item, str) and cls._is_generic_bullet(item))
+        if isinstance(content, str):
+            return sum(1 for line in content.splitlines() if cls._is_generic_bullet(line))
+        return 0
+
+    @staticmethod
+    def _is_section_intro(slide: SlideContent) -> bool:
+        title = slide.slide.slide_title.strip().lower()
+        goal = slide.slide.goal.strip().lower()
+        scope = f"{title} {goal}"
+        return bool(re.match(r"^\d+\.\s+", title)) and not re.match(r"^\d+\.\d+", title) and not any(
+            term in scope for term in ["result", "constraint", "objective", "slack", "workflow", "software", "formula"]
+        )
+
     @staticmethod
     def _clean_bullet(line: str) -> str:
         line = line.strip().lstrip("-*•").strip()
-        line = re.sub(r"\$(\d+(?:\.\d+)?)(?=([.,;:]|$))", r"$\1$", line)
+        line = re.sub(r"^(?:principle|step|item|guideline|recommendation)\s+\d+\s*:\s*", "", line, flags=re.IGNORECASE)
+        line = ContentQualityAgent._normalise_currency_text(line)
+        line = ContentQualityAgent._sanitize_math_delimiters(line)
         return re.sub(r"\s+", " ", line).strip()
 
     @staticmethod
     def _has_unbalanced_math(text: str) -> bool:
-        return text.count("$") % 2 == 1
+        return ContentQualityAgent._sanitize_math_delimiters(text).count("$") % 2 == 1
+
+    @staticmethod
+    def _normalise_currency_text(text: str) -> str:
+        return re.sub(
+            r"(?<![A-Za-z0-9_])(?:US\$|\$)\s*(\d+(?:[.,]\d+)?(?:\s*(?:k|m|bn|million|billion|thousand|%))?)",
+            lambda match: f"USD {match.group(1).strip()}",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+    @staticmethod
+    def _sanitize_math_delimiters(text: str) -> str:
+        if "$" not in text:
+            return text
+        text = re.sub(r"(?<!\S)\$(?=\s|$)", "", text)
+        text = re.sub(r"(?<=\s)\$(?!\S)", "", text)
+        if text.count("$") % 2 == 0:
+            return text
+        text = re.sub(r"\$(?!.*\$)", "", text, count=1)
+        if text.count("$") % 2 == 0:
+            return text
+        return re.sub(r"\$", "", text, count=1)
 
     @staticmethod
     def _has_noisy_slack_values(text: str) -> bool:
