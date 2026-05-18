@@ -147,19 +147,9 @@ class SlidePickMerge:
         mgr = self._mgr
         if len(contents) > 15:
             contents = [item for item in contents if re.match('^\\d+\\.\\s+\\S', item) and item.split('.')[0].strip().isdigit()]
-        total_chars = sum((len(s) for s in contents))
-        if total_chars < 400:
-            self._slide_counter += 1
-            self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': contents, 'heading': 'Outline'})
-            return mgr.toc_layout(contents, heading='Outline')
-        (left, right) = self._toc_two_col_split(contents)
         self._slide_counter += 1
-        slide1 = mgr.toc_layout(left, heading='Outline')
-        self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': left, 'heading': 'Outline'})
-        self._slide_counter += 1
-        slide2 = mgr.toc_layout(right, heading='Outline')
-        self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': right, 'heading': 'Outline'})
-        return slide1 + '\n' + slide2
+        self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': contents, 'heading': 'Outline'})
+        return mgr.toc_layout(contents, heading='Outline')
 
     def _pick_image_layout(self, slide_num: int, title: str, contents: List[str], img_url: str, img_path: str, img2_url: Optional[str]=None, img2_path: Optional[str]=None, caption: Optional[str]=None, caption2: Optional[str]=None) -> str:
         mgr = self._mgr

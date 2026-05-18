@@ -187,20 +187,32 @@ footer *,
         def _strip_number_prefix(item: str) -> str:
             return __import__('re').sub(r'^\s*\d+(?:\.\d+)*\.\s*', '', str(item or '')).strip()
 
-        items_html = '\n'.join(
-            f'<li style="margin: 0 0 0.85rem 0; line-height: 1.25;">{_strip_number_prefix(item)}</li>'
-            for item in toc_content
-        )
+        # If there are many items, we use a 2-column grid to look neat and clean on a single slide!
+        use_two_cols = len(toc_content) > 6 or sum(len(item) for item in toc_content) > 300
+        
+        if use_two_cols:
+            list_style = "display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem 2.5rem; font-size: 1.05rem; line-height: 1.3; padding-left: 1.4rem; margin: 0.5rem 0 0 0;"
+            items_html = '\n'.join(
+                f'<li style="margin: 0; line-height: 1.3;">{_strip_number_prefix(item)}</li>'
+                for item in toc_content
+            )
+        else:
+            list_style = "font-size: 1.25rem; line-height: 1.35; padding-left: 1.4rem; margin: 0.6rem 0 0 0;"
+            items_html = '\n'.join(
+                f'<li style="margin: 0 0 0.85rem 0; line-height: 1.35;">{_strip_number_prefix(item)}</li>'
+                for item in toc_content
+            )
+
         title_html = self._h1(heading) if heading else ''
         parts = [
             '\n\n',
             '<div style="height: 100%; display: flex; align-items: flex-start; justify-content: center;">\n',
-            '  <div style="width: min(88%, 1100px); margin-top: 1.2rem;">\n',
+            '  <div style="width: min(88%, 1100px); margin-top: 1.4rem;">\n',
         ]
         if title_html:
             parts.append(f'    {title_html}\n')
         parts.extend([
-            '    <ol style="font-size: 1.2rem; line-height: 1.25; padding-left: 1.4rem; margin: 0.5rem 0 0 0;">\n',
+            f'    <ol style="{list_style}">\n',
             f'      {items_html}\n',
             '    </ol>\n',
             '  </div>\n',
