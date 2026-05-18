@@ -58,8 +58,7 @@ class ImageDistribution:
             else:
                 image_description = self._clean_text(caption)
             if not image_description:
-                print(f'    [skip] Image has no caption/context: {file_path}')
-                continue
+                image_description = "illustrative figure document diagram image"
             image_pool.append({'image_id': image_id, 'file_path': resolved_file_path, 'caption': caption, 'reference_context': reference_context, 'metadata': metadata, 'image_description': image_description, 'page_number': self._infer_page_number(file_path), 'tokens': self._tokens(image_description)})
             print(f'    [desc] {image_id}: {image_description[:80]}...')
         return image_pool
@@ -122,13 +121,24 @@ class ImageDistribution:
                 if page_score <= 0:
                     continue
                 text_sim = self._token_similarity(img.get('tokens', set()), slide.get('tokens', set()))
+                
+                # Dynamic page-match guarantee:
+                # If the image resides on the exact same page as the slide (page_score == 1.0),
+                # we provide a baseline text similarity boost (0.20) to guarantee it bypasses the threshold,
+                # ensuring that relevant figures are preserved even if captions lack keyword overlap.
+                effective_text_sim = text_sim
+                if page_score == 1.0:
+                    effective_text_sim = max(0.20, text_sim)
+                elif page_score == 0.65:
+                    effective_text_sim = max(0.12, text_sim)
+                    
                 spread_penalty = 0.55 ** slide_image_count.get(slide_num, 0)
-                img_slide_sim = text_sim * page_score * spread_penalty
+                img_slide_sim = effective_text_sim * page_score * spread_penalty
                 if img_slide_sim > best_score:
                     best_score = img_slide_sim
                     best_slide_number = slide_num
             if best_slide_number is not None and best_score > self.threshold:
-                distributions.append({'slide_number': best_slide_number, 'image_path': img['file_path'], 'score': round(best_score, 4), 'source': 'existing', 'caption': self._shorten_caption(img.get('caption', ''))})
+                distributions.append({'slide_number': best_slide_number, 'image_path': img['file_path'], 'score': round(best_score, 4), 'source': 'existing', 'caption': self._best_caption(img)})
                 used_images.add(img_name)
                 slide_image_count[best_slide_number] = slide_image_count.get(best_slide_number, 0) + 1
                 print(f"    [match] {img['image_id']} → slide {best_slide_number} (score={best_score:.4f})")
@@ -196,6 +206,39 @@ class ImageDistribution:
         if not caption or len(caption.split()) <= max_words:
             return caption
         return ' '.join(caption.split()[:max_words]) + '...'
+
+    def _best_caption(self, img: Dict[str, Any]) -> str:
+        candidates = [
+            img.get('caption', ''),
+            img.get('reference_context', ''),
+            img.get('image_description', ''),
+        ]
+        for candidate in candidates:
+            clean = self._clean_caption(candidate)
+            if clean:
+                return self._shorten_caption(clean)
+        return ''
+
+    @staticmethod
+    def _clean_caption(text: str) -> str:
+        clean = re.sub(r'\s+', ' ', text or '').strip()
+        clean = re.sub(r'!\[[^\]]*\]\([^)]+\)', ' ', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'#{1,6}\s*', ' ', clean)
+        clean = re.sub(r'\*+\s*(?:figure|fig\.?|table|hình|bảng)\s*:\s*', ' ', clean, flags=re.IGNORECASE)
+        clean = clean.replace('*', ' ')
+        clean = re.sub(r'<!--\s*PAGE\s+\d+\s*-->', ' ', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'\b[a-zA-Z0-9_\-/]+\.(?:png|jpe?g|webp)\b', ' ', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'/assets/\S+|\bassets/\S+', ' ', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'\s+', ' ', clean).strip(' -:;,.')
+        if not clean:
+            return ''
+        if '/' in clean and len(clean.split()) <= 4:
+            return ''
+        if any(token in clean for token in ['![', '](', '##', '# ']):
+            return ''
+        if len(clean.split()) > 12:
+            clean = ' '.join(clean.split()[:12])
+        return clean
 
     def _tokens(self, text: str) -> Set[str]:
         words = re.findall(r'[A-Za-zÀ-ỹ0-9]{2,}', (text or '').lower())

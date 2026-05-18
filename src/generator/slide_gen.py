@@ -42,13 +42,13 @@ def run_pipeline(lecture_json_path: str, lecture_title: str | None=None, speaker
     md_path = slidev_dir / f'{lecture_id}.md'
     model_name = (Config.LLM_MODEL_NAME or 'unknown_model').replace('/', '_')
     out_pdf_path = _PROJECT_ROOT / 'output' / lecture_id / model_name / f'{lecture_id}-export.pdf'
+    rebuild_needed = True
     if out_pdf_path.exists():
-        print(f'[slide_gen] Output PDF already exists, skipping build & improve: {out_pdf_path}')
-        print(f"\n{'=' * 60}")
-        print(f'End Phase 4: Slide already packaged at {out_pdf_path}')
-        print(f"{'=' * 60}\n")
-        return
-    else:
+        input_mtime = json_path.stat().st_mtime
+        md_mtime = md_path.stat().st_mtime if md_path.exists() else 0
+        pdf_mtime = out_pdf_path.stat().st_mtime
+        rebuild_needed = max(input_mtime, md_mtime) > pdf_mtime
+    if rebuild_needed:
         print('[slide_gen] === Step 1: Building slide layout ===')
         if not title:
             title = json.load(json_path)['lecture_title']
@@ -60,6 +60,12 @@ def run_pipeline(lecture_json_path: str, lecture_title: str | None=None, speaker
         print(f"\n{'=' * 60}")
         print(f'End Phase 4: Generated Slide in {md_path}')
         print(f"{'=' * 60}\n")
+    else:
+        print(f'[slide_gen] Output PDF already exists and is up to date: {out_pdf_path}')
+        print(f"\n{'=' * 60}")
+        print(f'End Phase 4: Slide already packaged at {out_pdf_path}')
+        print(f"{'=' * 60}\n")
+        return
     _package_output(lecture_id=lecture_id, slidev_dir=slidev_dir, lecture_json_path=json_path, lecture_title=title, speaker_information=speaker_information)
 
 def _export_pdf(lecture_id: str, slidev_dir: Path) -> None:

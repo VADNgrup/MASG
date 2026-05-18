@@ -25,7 +25,7 @@ def clear_benchmark_state():
         _clear_path(path)
         print(f'[CLEAN] reset {path}')
 
-def run_benchmark(clean=True, limit=None):
+def run_benchmark(clean=True, limit=None, speaker=None, title=None):
     print('=' * 60)
     print('STARTING BENCHMARK PIPELINE')
     print('=' * 60)
@@ -35,6 +35,11 @@ def run_benchmark(clean=True, limit=None):
     gen_cmd = ['python', '-m', 'main']
     if limit is not None:
         gen_cmd.extend(['--limit', str(limit)])
+    if speaker is not None:
+        gen_cmd.extend(['--speaker_information', speaker])
+    if title is not None:
+        gen_cmd.extend(['--lecture_title', title])
+        
     ret_gen = subprocess.run(gen_cmd).returncode
     if ret_gen != 0:
         print('\nWarning: Some slides failed to generate. Proceeding to evaluation for completed tasks.')
@@ -53,8 +58,10 @@ def _build_parser():
     parser = argparse.ArgumentParser(description='Run a clean benchmark from raw PDFs to evaluation metrics.')
     parser.add_argument('--no-clean', action='store_true', help='Keep existing generated artifacts before running.')
     parser.add_argument('--limit', type=int, default=None, help='Limit the number of PDFs processed from data/raw.')
+    parser.add_argument('--speaker', type=str, default=None, help='Speaker information to pass to the slides.')
+    parser.add_argument('--title', type=str, default=None, help='Override lecture title for the slides.')
     return parser
 
 if __name__ == '__main__':
     args = _build_parser().parse_args()
-    run_benchmark(clean=not args.no_clean, limit=args.limit)
+    run_benchmark(clean=not args.no_clean, limit=args.limit, speaker=args.speaker, title=args.title)

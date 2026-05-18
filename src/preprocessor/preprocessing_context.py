@@ -1,5 +1,6 @@
 import asyncio
 import argparse
+import re
 from pathlib import Path
 from datetime import datetime
 from src.workflow.graph import create_workflow
@@ -11,24 +12,14 @@ from src.ingestion.compact_context import build_compact_context, save_compact_co
 from src.ingestion.table_extraction import extract_markdown_tables
 
 def clean_repetition(text: str) -> str:
-    """Detect and remove extreme word repetitions often caused by extraction tool loops."""
-    words = text.split()
-    if not words: return text
-    cleaned = []
-    i = 0
-    while i < len(words):
-        word = words[i]
-        j = i + 1
-        count = 1
-        while j < len(words) and words[j] == word:
-            count += 1
-            j += 1
-        cleaned.append(word)
-        if count > 3: # If a word repeats more than 3 times consecutively, it's likely a loop
-            i = j
-        else:
-            i += 1
-    return " ".join(cleaned)
+    """Remove pathological repeated tokens without destroying line structure."""
+    if not text:
+        return text
+    cleaned_lines = []
+    for line in text.splitlines():
+        cleaned = re.sub(r"\b(\w+)(?:\s+\1){3,}\b", r"\1", line, flags=re.IGNORECASE)
+        cleaned_lines.append(cleaned)
+    return "\n".join(cleaned_lines)
 
 async def preprocess_context(context, output=None):
     print(f"\n{'=' * 60}")
@@ -53,19 +44,28 @@ async def preprocess_context(context, output=None):
         source_file=context.source_file,
         markdown=context.text_content.markdown,
         page_count=context.text_content.page_count,
+        page_insights=[item.model_dump() if hasattr(item, "model_dump") else item for item in getattr(context, "page_insights", [])],
     )
     save_compact_context(compact)
     lecture_path = Path(Config.LECTURES_DIR / f'{context.document_id}' / f'{context.document_id}.json')
+    context_path = Path(Config.CONTEXT_DIR / f'{context.document_id}.json')
+    outline_path = Path(Config.LECTURES_DIR / f'{context.document_id}' / f'{context.document_id}_outline.md')
+    if Path(lecture_path).exists() and outline_path.exists():
+        lecture_mtime = min(lecture_path.stat().st_mtime, outline_path.stat().st_mtime)
+        context_mtime = max(context_path.stat().st_mtime if context_path.exists() else 0, Path(Config.CONTEXT_DIR / f'{context.document_id}_compact.json').stat().st_mtime)
+        if lecture_mtime >= context_mtime:
+            print(f'[SKIP] Lecture has id {context.document_id} already exists in lecture directory')
+            print(f"\n{'=' * 60}")
+            print(f'End Phase 2: Generated Lecture')
+            print(f"\n{'=' * 60}")
+            return (lecture_path, True)
     if Path(lecture_path).exists():
-        print(f'[SKIP] Lecture has id {context.document_id} already exists in lecture directory')
-        print(f"\n{'=' * 60}")
-        print(f'End Phase 2: Generated Lecture')
-        print(f"\n{'=' * 60}")
-        return (lecture_path, True)
-    print(f'Source: {context.source_file}')
-    print(f'Pages: {context.text_content.page_count}')
-    print(f'Images: {context.metadata.total_images}')
-    print(f'Tables: {context.metadata.total_tables}\n')
+        print(f'[REBUILD] Lecture exists but source context is newer. Rebuilding...')
+    else:
+        print(f'Source: {context.source_file}')
+        print(f'Pages: {context.text_content.page_count}')
+        print(f'Images: {context.metadata.total_images}')
+        print(f'Tables: {context.metadata.total_tables}\n')
     config.validate()
     workflow = create_workflow()
     initial_state = {'document_context': context, 'lecture_plan': None, 'lecture_title': '', 'slides': [], 'slide_specs': None, 'slide_packets': None, 'qa_report': None}
@@ -76,6 +76,7 @@ async def preprocess_context(context, output=None):
     warning_count = len(qa_report.get('advisory_issues', {})) + len(qa_report.get('soft_issues', {}))
     quality_score = 100.0 if final_slides else 0.0
     lecture_output = {'lecture_id': context.document_id, 'metadata': {'source_document_id': context.document_id, 'source_file': context.source_file, 'generated_at': datetime.now().isoformat(), 'total_slides': len(final_slides), 'quality_score': quality_score, 'iterations': 1, 'qa_status': qa_report.get('status', 'unknown'), 'qa_warning_count': warning_count}, 'lecture_title': result['lecture_title'], 'slides': [asdict(s) for s in final_slides]}
+    lecture_output['metadata']['document_language'] = compact.get('document_language', 'en')
     output_save_path = Path(output) if output else config.LECTURES_DIR / f"{lecture_output['lecture_id']}"
     output_save_path.mkdir(parents=True, exist_ok=True)
     lecture_json_path = output_save_path / f"{lecture_output['lecture_id']}.json"

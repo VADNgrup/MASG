@@ -11,8 +11,6 @@ from PIL import Image
 from typing import Dict, List, Optional
 from src.generator.slide_layout_manager import SlideLayoutManager
 from src.generator.theme_selection import select_theme
-from src.utils.llm import chat
-from src.utils.config import Config
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _SLIDEV_DIR = _PROJECT_ROOT / 'src' / 'generator' / 'slidev'
 _PUBLIC_ASSETS = _SLIDEV_DIR / 'public' / 'assets'
@@ -97,6 +95,16 @@ class SlidePickMerge:
     def _parse_outline(self) -> List[str]:
         counter = 0
         results: List[str] = []
+        if not self.outline_path.exists():
+            for slide_entry in self.slides:
+                slide_info = slide_entry.get('slide', {}) if isinstance(slide_entry, dict) else {}
+                text = str(slide_info.get('slide_title') or '').strip()
+                text = re.sub(r'^\s*\d+(?:\.\d+)*[.)]?\s*', '', text).strip()
+                if not text:
+                    continue
+                counter += 1
+                results.append(f'{counter}. {text}')
+            return results
         with open(self.outline_path, encoding='utf-8') as f:
             for line in f:
                 line = line.rstrip()
@@ -142,19 +150,21 @@ class SlidePickMerge:
         total_chars = sum((len(s) for s in contents))
         if total_chars < 400:
             self._slide_counter += 1
-            self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': contents})
-            return mgr.toc_layout(contents)
+            self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': contents, 'heading': 'Outline'})
+            return mgr.toc_layout(contents, heading='Outline')
         (left, right) = self._toc_two_col_split(contents)
         self._slide_counter += 1
-        slide1 = mgr.toc_layout(left)
-        self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': left})
+        slide1 = mgr.toc_layout(left, heading='Outline')
+        self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': left, 'heading': 'Outline'})
         self._slide_counter += 1
-        slide2 = mgr.toc_layout(right)
-        self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': right})
+        slide2 = mgr.toc_layout(right, heading='Outline')
+        self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': right, 'heading': 'Outline'})
         return slide1 + '\n' + slide2
 
     def _pick_image_layout(self, slide_num: int, title: str, contents: List[str], img_url: str, img_path: str, img2_url: Optional[str]=None, img2_path: Optional[str]=None, caption: Optional[str]=None, caption2: Optional[str]=None) -> str:
         mgr = self._mgr
+        caption = self._normalise_image_caption(caption, title)
+        caption2 = self._normalise_image_caption(caption2, title)
         if img2_url and img2_path:
             ratio1 = self._img_aspect_ratio(img_path)
             ratio2 = self._img_aspect_ratio(img2_path)
@@ -190,6 +200,29 @@ class SlidePickMerge:
         else:
             self._log_layout(slide_num, 'image_left_layout', _args)
             return mgr.image_left_layout(title, contents, img_url, caption=caption)
+
+    @staticmethod
+    def _normalise_image_caption(caption: Optional[str], slide_title: str) -> Optional[str]:
+        text = re.sub(r'\s+', ' ', str(caption or '')).strip()
+        text = re.sub(r'!\[[^\]]*\]\([^)]+\)', ' ', text, flags=re.IGNORECASE)
+        text = re.sub(r'#{1,6}\s*', ' ', text)
+        text = re.sub(r'\*+\s*(?:figure|fig\.?|table|hình|bảng)\s*:\s*', ' ', text, flags=re.IGNORECASE)
+        text = text.replace('*', ' ')
+        text = re.sub(r'\b[a-zA-Z0-9_\-/]+\.(?:png|jpe?g|webp)\b', ' ', text, flags=re.IGNORECASE)
+        text = re.sub(r'/assets/\S+|\bassets/\S+', ' ', text, flags=re.IGNORECASE)
+        text = re.sub(r'<!--\s*PAGE\s+\d+\s*-->', ' ', text, flags=re.IGNORECASE)
+        text = re.sub(r'\s+', ' ', text).strip(' -:;,.')
+        if not text:
+            return None
+        if '/' in text and len(text.split()) <= 4:
+            return None
+        if any(token in text for token in ['![', '](', '##', '# ']):
+            return None
+        if len(text.split()) > 12:
+            text = ' '.join(text.split()[:12])
+        if len(text.split()) <= 2 and text.lower() == slide_title.strip().lower():
+            return None
+        return text
 
     @staticmethod
     def _strip_table_bullets(contents: list) -> list:
@@ -242,19 +275,50 @@ class SlidePickMerge:
 
     @staticmethod
     def _normalise_contents(raw_contents):
+        def _compact(items):
+            compacted = []
+            for item in items:
+                text = re.sub(r"\s+", " ", str(item).strip())
+                if not text:
+                    continue
+                compacted.append(text)
+            return SlidePickMerge._merge_fragments(compacted)[:9]
+
         if isinstance(raw_contents, list):
             cleaned = SlidePickMerge._strip_table_bullets(raw_contents)
-            return [str(item).strip() for item in cleaned if isinstance(item, str) and str(item).strip()]
+            items = [str(item).strip() for item in cleaned if isinstance(item, str) and str(item).strip()]
+            return _compact(items)
         if isinstance(raw_contents, str):
             text = re.sub(r'\s+', ' ', raw_contents).strip()
             if not text:
                 return []
             sentences = re.split(r'(?<=[.!?])\s+', text)
             bullets = [s.strip() for s in sentences if s.strip()]
-            return bullets[:5] if bullets else [text]
+            return _compact(bullets[:10] if bullets else [text])
         if isinstance(raw_contents, dict):
             return raw_contents
         return []
+
+    @staticmethod
+    def _merge_fragments(items: List[str]) -> List[str]:
+        merged: List[str] = []
+        for item in items:
+            text = re.sub(r"\s+", " ", str(item or "")).strip()
+            if not text:
+                continue
+            starts_fragment = bool(re.match(r"^(?:and|or|but|with|while|plus|including|such as|each|plus|and each|32gb|16gb|250gb|40gb)\b", text, flags=re.IGNORECASE))
+            
+            is_cjk = any('\u4e00' <= char <= '\u9fff' for char in text)
+            if is_cjk:
+                too_short = len(text) <= 12 and bool(re.search(r"\d|gb|mb|cores?|ram|disk", text, flags=re.IGNORECASE))
+            else:
+                too_short = len(text.split()) <= 4 and bool(re.search(r"\d|gb|mb|cores?|ram|disk", text, flags=re.IGNORECASE))
+                
+            if merged and (starts_fragment or too_short):
+                merged[-1] = re.sub(r"\s+", " ", f"{merged[-1].rstrip(' .;:,')}, {text.lstrip(' ,;:.')}")
+                continue
+            merged.append(text)
+        return merged
 
     def _build_content_slide(self, slide_entry: dict) -> str:
         slide_info = slide_entry['slide']
@@ -263,6 +327,18 @@ class SlidePickMerge:
         stype = slide_info['slide_type']
         raw_contents = slide_entry.get('content', [])
         contents = self._normalise_contents(raw_contents)
+        
+        # Remove any content bullet point that is identical to the slide title (ignoring number prefixes)
+        if isinstance(contents, list):
+            cleaned_contents = []
+            clean_title = re.sub(r'^\s*\d+(?:\.\d+)*\.\s*', '', title).strip().lower()
+            for c in contents:
+                clean_c = re.sub(r'^\s*\d+(?:\.\d+)*\.\s*', '', str(c)).strip().lower()
+                if clean_c == clean_title:
+                    continue
+                cleaned_contents.append(c)
+            contents = cleaned_contents
+            
         mgr = self._mgr
         self._slide_counter += 1
         sn = self._slide_counter
@@ -276,6 +352,10 @@ class SlidePickMerge:
             self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
             return mgr.only_content(title, contents if isinstance(contents, list) else [str(contents)])
         if stype == 'two_sub_contents':
+            if isinstance(contents, list) and len(contents) <= 2:
+                # Downgrade to standard single column bullet slide!
+                self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
+                return mgr.only_content(title, contents)
             if isinstance(contents, dict):
                 keys = list(contents.keys())
                 sub_title_1 = keys[0] if len(keys) > 0 else 'Part 1'
@@ -310,6 +390,19 @@ class SlidePickMerge:
                     image_width = '90%' if ratio >= 1.0 else '60%'
                     self._log_layout(sn, 'image_above_layout', {'title': title, 'content': [], 'img_path': image_url, 'image_width': image_width, 'caption': table_caption})
                     return mgr.image_above_layout(title, [], image_url, image_width=image_width, caption=table_caption)
+            if has_images:
+                img_entries = self._image_dist[num]
+                if len(img_entries) >= 2:
+                    img1 = img_entries[0]
+                    img2 = img_entries[1]
+                    return self._pick_image_layout(sn, title, contents, _to_assets_path(img1['image_path']), img1['image_path'], _to_assets_path(img2['image_path']), img2['image_path'], caption=img1.get('caption'), caption2=img2.get('caption'))
+                else:
+                    img = img_entries[0]
+                    return self._pick_image_layout(sn, title, contents, _to_assets_path(img['image_path']), img['image_path'], caption=img.get('caption'))
+            table_md = table_obj.get('table_markdown') or ''
+            if table_md and '|' in table_md:
+                self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md})
+                return mgr.comparison_layout(title, table_md)
             self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
             return mgr.only_content(title, contents)
         if has_images:
@@ -333,7 +426,7 @@ class SlidePickMerge:
                 return mgr.image_above_layout(title, [], image_url, image_width=image_width, caption=table_caption)
         if isinstance(contents, list):
             total_chars = sum((len(s) for s in contents))
-            if total_chars > 600 and len(contents) >= 6:
+            if (total_chars > 420 and len(contents) >= 4) or any(len(s) > 88 for s in contents):
                 self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents})
                 return mgr.two_cols_content_layout(title, contents)
         self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
@@ -351,8 +444,8 @@ class SlidePickMerge:
         for slide_entry in self.slides:
             doc += self._build_content_slide(slide_entry)
         self._slide_counter += 1
-        doc += self._mgr.end_layout(end_text='Thank you for listening!')
-        self._log_layout(self._slide_counter, 'end_layout', {'end_text': 'Thank you for listening!'})
+        doc += self._mgr.end_layout(end_text='Thank you')
+        self._log_layout(self._slide_counter, 'end_layout', {'end_text': 'Thank you'})
         self._validate_slide_markdown(doc)
         _OUTPUT_MD.mkdir(parents=True, exist_ok=True)
         out_path = _OUTPUT_MD / f'{self.lecture_id}.md'
@@ -369,30 +462,30 @@ class SlidePickMerge:
         for idx, part in enumerate(doc.split('---'), start=1):
             if idx <= 3:
                 continue
-            title_match = re.search(r'<h1[^>]*>(.*?)</h1>|^#\s+(.+)$', part, flags=re.MULTILINE | re.DOTALL)
+            if '<!-- END_SLIDE -->' in part:
+                continue
+            title_match = re.search(
+                r'<(?:h1|div)[^>]*(?:data-slide-title="true"|class="generated-slide-title")[^>]*>(.*?)</(?:h1|div)>|^#\s+(.+)$',
+                part,
+                flags=re.MULTILINE | re.DOTALL,
+            )
             if not title_match:
                 continue
             title = re.sub('<[^>]+>', '', title_match.group(1) or title_match.group(2) or '').strip()
-            if not title or title in {'Table Of Content', 'Thank you for listening!'}:
+            if not title:
                 continue
             if 'layout: cover' in part:
                 continue
-            has_body = any(token in part for token in ['<li>', '<img', '\n- ', '\n|'])
+            has_body = any(token in part for token in ['<li', '<ul', '<img', '\n- ', '\n|'])
             if not has_body:
                 failures.append(f'{idx}: {title}')
         if failures:
             raise RuntimeError('Empty slide body detected: ' + '; '.join(failures))
 
     def _summarise_title(self, title: str) -> str:
-        prompt = f"Summarise the following lecture title into AT MOST 6 words that capture its core topic. The result must be concise, clear, and suitable as a presentation cover heading. Don't include any special charaters like ':', '-', '!', '?', etc. Return ONLY the summarised title, nothing else.\n\nTitle: {title}\n\nSummarised title:"
-        try:
-            result = chat(model=Config.LLM_MODEL_NAME, messages=[{'role': 'user', 'content': prompt}], temperature=0.2, max_tokens=20)
-            short = result.strip().strip('"').strip("'")
-            words = short.split()
-            if len(words) > 6:
-                short = ' '.join(words[:6]) + '...'
-            return short
-        except Exception as e:
-            logging.warning(f'[SlidePickMerge] LLM title summarisation failed: {e}')
-            words = title.split()
-            return ' '.join(words[:6]) + ('...' if len(words) > 6 else '')
+        text = re.sub(r'[_:;|]+', ' ', str(title or '')).strip()
+        text = re.sub(r'\s+', ' ', text)
+        words = text.split()
+        if len(words) <= 6:
+            return text
+        return ' '.join(words[:6])

@@ -71,7 +71,7 @@ class PlanSpecerAgent:
 
     def _build_prompt(self, numbered_outline: str, evidence_text: str, context: DocumentContext) -> str:
         schema_example = '{\n  "slide_title": "<title from the heading, preserving its number prefix>",\n  "slide_type": "<one of: content, have_table, have_formula, comparison, two_sub_contents>",\n  "goal": "<1-2 sentence goal describing what this slide should convey>",\n  "table": {"table_markdown": "<markdown table string>", "table_caption": "<caption>"} or null,\n  "latex_block_formula": "<LaTeX block formula string>" or null\n}'
-        return f'\n# ROLE\nYou are a lecture slide specification architect.\n\n# TASK\nGiven the FULL numbered lecture outline and relevant retrieved source evidence, produce a JSON array\nof slide specifications — one object per heading line (both major `1.` and sub `1.1`, `1.1.1`, etc.).\nEvery heading in the outline MUST have exactly ONE corresponding JSON object.\n\n# INPUT\n## Full Numbered Outline\n{numbered_outline}\n\n## Retrieved Source Evidence\n{evidence_text}\n\n## Tables extracted from document\n{context.tables}\n\n# IMPORTANT CONSTRAINTS\n1. `slide_type` must be one of: "content", "have_table", "have_formula", "comparison", "two_sub_contents".\n2. Use "have_table" ONLY if the source evidence contains a table supporting this slide.\n   If so, include `table` with the markdown and caption. Otherwise set `table` to null.\n   2.1. Prioritize extracting the tables mentioned in the evidence.\n   2.2. Only tables with more than 2 rows and 2 columns. Smaller tables → use "content".\n3. Use "have_formula" ONLY if the source evidence contains a block-level formula for this slide.\n   If so, include `latex_block_formula`. Otherwise set it to null.\n4. Use "comparison": `goal` must describe the two comparable entities briefly.\n5. Use "two_sub_contents": `goal` must describe the two distinct sub-topics shown side by side.\n6. Default to "content" when none of the above special types apply.\n\n# CRITICAL\n- `slide_title` MUST preserve the numbering prefix EXACTLY as it appears in the outline\n  (e.g. "1. Introduction", "1.1 Background", "2.1.3 Survey Design").\n- The output array MUST contain one entry for EVERY line in the outline above — no omissions.\n\n# EXAMPLE\n[\n  {{\n    "slide_title": "1. Introduction",\n    "slide_type": "content",\n    "goal": "Introduce the topic and motivate the study.",\n    "table": null,\n    "latex_block_formula": null\n  }},\n  {{\n    "slide_title": "1.1 Background",\n    "slide_type": "content",\n    "goal": "Describe the historical and theoretical background.",\n    "table": null,\n    "latex_block_formula": null\n  }},\n  {{\n    "slide_title": "2. Methods",\n    "slide_type": "have_table",\n    "goal": "Summarise the methodology used.",\n    "table": {{\n      "table_markdown": "| Col1 | Col2 |\\n|------|------|\\n| Val1 | Val2 |",\n      "table_caption": "Overview of methods"\n    }},\n    "latex_block_formula": null\n  }}\n]\n\n# OUTPUT FORMAT\nReturn ONLY a valid JSON array. Each element must follow this schema:\n[{schema_example}]\n'
+        return f'\n# ROLE\nYou are a lecture slide specification architect.\n\n# TASK\nGiven the FULL numbered lecture outline and relevant retrieved source evidence, produce a JSON array\nof slide specifications — one object per heading line (both major `1.` and sub `1.1`, `1.1.1`, etc.).\nEvery heading in the outline MUST have exactly ONE corresponding JSON object.\n\n# INPUT\n## Full Numbered Outline\n{numbered_outline}\n\n## Retrieved Source Evidence\n{evidence_text}\n\n## Tables extracted from document\n{context.tables}\n\n# IMPORTANT CONSTRAINTS\n1. `slide_type` must be one of: "content", "have_table", "have_formula", "comparison", "two_sub_contents".\n2. Use "have_table" ONLY if the source evidence contains a table supporting this slide.\n   If so, include `table` with the markdown and caption. Otherwise set `table` to null.\n   2.1. Prioritize extracting the tables mentioned in the evidence.\n   2.2. Only tables with more than 2 rows and 2 columns. Smaller tables → use "content".\n3. Use "have_formula" ONLY if the source evidence contains a block-level formula for this slide.\n   If so, include `latex_block_formula`. Otherwise set it to null.\n4. Use "comparison": `goal` must describe the two comparable entities briefly.\n5. Use "two_sub_contents": `goal` must describe the two distinct sub-topics shown side by side.\n6. Default to "content" when none of the above special types apply.\n\n# CRITICAL\n- `slide_title` MUST preserve the numbering prefix EXACTLY as it appears in the outline\n  (e.g. "1. Introduction", "1.1 Background", "2.1.3 Survey Design").\n- `goal` MUST stay in the SAME language as `slide_title`.\n- The output array MUST contain one entry for EVERY line in the outline above — no omissions.\n\n# EXAMPLE\n[\n  {{\n    "slide_title": "1. Introduction",\n    "slide_type": "content",\n    "goal": "Introduce the topic and motivate the study.",\n    "table": null,\n    "latex_block_formula": null\n  }},\n  {{\n    "slide_title": "1.1 Background",\n    "slide_type": "content",\n    "goal": "Describe the historical and theoretical background.",\n    "table": null,\n    "latex_block_formula": null\n  }},\n  {{\n    "slide_title": "2. Methods",\n    "slide_type": "have_table",\n    "goal": "Summarise the methodology used.",\n    "table": {{\n      "table_markdown": "| Col1 | Col2 |\\n|------|------|\\n| Val1 | Val2 |",\n      "table_caption": "Overview of methods"\n    }},\n    "latex_block_formula": null\n  }}\n]\n\n# OUTPUT FORMAT\nReturn ONLY a valid JSON array. Each element must follow this schema:\n[{schema_example}]\n'
 
     def _retrieve_outline_evidence(self, context: DocumentContext, expected_titles: List[str]) -> str:
         compact = ensure_compact_context(context)
@@ -167,7 +167,9 @@ class PlanSpecerAgent:
         table = None
         if table_data and isinstance(table_data, dict):
             table = Table(table_markdown=table_data.get('table_markdown', ''), table_caption=table_data.get('table_caption', ''))
-        return Slide(slide_title=d.get('slide_title', ''), slide_type=slide_type, goal=d.get('goal', ''), table=table, latex_block_formula=d.get('latex_block_formula'))
+        title = d.get('slide_title', '')
+        goal = PlanSpecerAgent._normalise_goal_language(d.get('goal', ''), title)
+        return Slide(slide_title=title, slide_type=slide_type, goal=goal, table=table, latex_block_formula=d.get('latex_block_formula'))
 
     def specify(self, outline_md: str, context: DocumentContext) -> List[Slide]:
         numbered_outline = self.outline_md_to_number(outline_md)
@@ -178,7 +180,14 @@ class PlanSpecerAgent:
         for attempt in range(1, self.MAX_RETRIES + 1):
             print(f'[PlanSpecer] Attempt {attempt}/{self.MAX_RETRIES} — calling LLM for full outline...')
             prompt = self._build_prompt(numbered_outline, evidence_text, context)
-            raw_content = self._chat([{'role': 'user', 'content': prompt}])
+            try:
+                raw_content = self._chat([{'role': 'user', 'content': prompt}])
+            except Exception as e:
+                print(f'[PlanSpecer] LLM call failed on attempt {attempt}: {e}')
+                if attempt < self.MAX_RETRIES:
+                    print('[PlanSpecer] Retrying...')
+                    continue
+                break
             try:
                 raw_specs = self._parse_json_response(raw_content)
             except Exception as e:
@@ -226,12 +235,12 @@ class PlanSpecerAgent:
         aligned = []
         usable_specs = [spec for spec in raw_specs if isinstance(spec, dict)]
         if len(usable_specs) < len(expected_titles):
-            return usable_specs
+            return self._normalise_specs(usable_specs)
         for title, spec in zip(expected_titles, usable_specs):
             spec = dict(spec)
             spec['slide_title'] = title
             aligned.append(spec)
-        return aligned
+        return self._normalise_specs(aligned)
 
     def _fallback_specs(self, expected_titles: List[str]) -> List[Dict]:
         return [self._fallback_spec(title) for title in expected_titles]
@@ -239,23 +248,7 @@ class PlanSpecerAgent:
     @staticmethod
     def _fallback_spec(title: str) -> Dict[str, Any]:
         clean_title = re.sub(r'^\\d[\\d.]*\\s*', '', title).strip()
-        lower = clean_title.lower()
-        if 'software' in lower or 'prolp' in lower or 'input' in lower or 'saving' in lower:
-            goal = f"Explain the software workflow for {clean_title}, naming the tool and the concrete input, solve, save, or print actions from the source."
-        elif 'slack' in lower:
-            goal = f"Interpret slack for {clean_title}, including the unused resource amount and why the constraint is not binding."
-        elif 'graph' in lower or 'feasible' in lower:
-            goal = f"Explain the graphical method for {clean_title}, connecting constraints, feasible region, and candidate optimal points."
-        elif 'objective' in lower:
-            goal = f"Explain the objective function for {clean_title}, preserving variables, coefficients, and optimization direction from the source."
-        elif 'constraint' in lower:
-            goal = f"Explain the constraints for {clean_title}, preserving resource limits, inequalities, and what each constraint represents."
-        elif 'optimal' in lower or 'result' in lower or 'solution' in lower:
-            goal = f"Explain the optimal solution for {clean_title}, preserving the decision variable values, objective value, and practical meaning."
-        elif 'model' in lower or 'formulat' in lower:
-            goal = f"Explain the model formulation for {clean_title}, preserving decision variables, objective, constraints, and non-negativity conditions."
-        else:
-            goal = f"Explain the concrete source facts for {clean_title or title}, preserving names, numbers, examples, and teaching connection to nearby slides."
+        goal = clean_title or title
         return {
             "slide_title": title,
             "slide_type": "content",
@@ -263,6 +256,20 @@ class PlanSpecerAgent:
             "table": None,
             "latex_block_formula": None,
         }
+
+    @classmethod
+    def _normalise_specs(cls, specs: List[Dict]) -> List[Dict]:
+        normalised = []
+        for spec in specs:
+            spec = dict(spec)
+            spec['goal'] = cls._normalise_goal_language(spec.get('goal', ''), spec.get('slide_title', ''))
+            normalised.append(spec)
+        return normalised
+
+    @staticmethod
+    def _normalise_goal_language(goal: str, slide_title: str) -> str:
+        clean_title = re.sub(r'^\d+(?:\.\d+)*[.)]?\s*', '', str(slide_title or '')).strip()
+        return clean_title or re.sub(r'\s+', ' ', str(goal or '')).strip()
 
     def _build_slide_list(self, raw_specs: List[Dict]) -> List[Slide]:
         all_specs = [self._dict_to_slide(d) for d in raw_specs]

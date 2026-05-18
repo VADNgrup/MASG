@@ -21,6 +21,16 @@ class ProcessingMetadata(BaseModel):
     total_tables: int
     processing_time_seconds: float
 
+
+class PageInsight(BaseModel):
+    page: int
+    page_role: str = "content"
+    page_title: str = ""
+    must_have_points: List[str] = Field(default_factory=list)
+    support_points: List[str] = Field(default_factory=list)
+    noise_points: List[str] = Field(default_factory=list)
+    confidence: float = 0.0
+
 class DocumentContext(BaseModel):
     document_id: str
     source_file: str
@@ -28,4 +38,5 @@ class DocumentContext(BaseModel):
     text_content: TextContent
     tables: List[TableData] = Field(default_factory=list)
     assets: AssetCollection = Field(default_factory=AssetCollection)
+    page_insights: List[PageInsight] = Field(default_factory=list)
     metadata: ProcessingMetadata

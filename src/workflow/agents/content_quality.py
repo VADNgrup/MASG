@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 from src.ingestion.compact_context import ensure_compact_context, render_compact_context
 from src.models.context import DocumentContext
 from src.models.slide import Slide, SlideContent
+from src.utils.language_utils import dominant_script
 from src.utils.llm import chat
 from src.utils.parse_llm_response import parse_json_response
 
@@ -69,6 +70,7 @@ class ContentQualityAgent:
                 "advisory_issues": {},
                 "soft_issues": soft_issues,
                 "repaired_slide_numbers": [],
+                "metrics": self._quality_metrics(slides, packet_by_number),
             }
             if soft_issues:
                 print(f"[ContentQA] No blocking content issues found. Soft warnings on {len(soft_issues)} slide(s).")
@@ -84,6 +86,8 @@ class ContentQualityAgent:
         for slide in slides:
             content = repaired_by_number.get(slide.slide.slide_number, slide.content)
             content = self._normalise_content(content, slide.content)
+            if isinstance(content, list):
+                content = self._drop_title_echoes(content, slide.slide.slide_title)
             repaired_slides.append(SlideContent(slide=slide.slide, content=content))
         unresolved, _, _ = self._detect_all_issues(repaired_slides, context, packet_by_number)
         if unresolved:
@@ -97,6 +101,7 @@ class ContentQualityAgent:
             "advisory_issues": advisory_unresolved,
             "soft_issues": soft_issues,
             "repaired_slide_numbers": sorted(repaired_by_number),
+            "metrics": self._quality_metrics(repaired_slides, packet_by_number),
         }
         if blocking_unresolved:
             raise RuntimeError(f"Content QA could not repair blocking slide issues: {blocking_unresolved}")
@@ -144,8 +149,16 @@ class ContentQualityAgent:
             "You are a strict lecture content QA editor.\n\n"
             "# TASK\n"
             "Rewrite only the flagged slide contents so each slide is faithful to its source evidence, matches its title, and is ready for oral presentation.\n\n"
+            "# EVAL-ALIGNED TARGETS\n"
+            "- Each slide should feel focused, substantial, and easy for an audience to follow.\n"
+            "- Avoid under-filled slides with too little information unless the visual itself carries the message.\n"
+            "- When a table or structured visual is attached, make the bullets explain its key takeaway.\n"
+            "- Text and visuals should complement each other rather than feeling unrelated.\n\n"
             "# RULES\n"
-            "- Return 3 to 5 concise bullet phrases per slide.\n"
+            "- Return 4 to 8 concise bullet phrases per slide when the source is rich.\n"
+            "- Keep the repaired bullets in the SAME language as the slide title and source evidence. Do not translate.\n"
+            "- Keep each bullet slide-friendly: ideally one short sentence or clause, usually no more than about 150 characters.\n"
+            "- If a source fact is too dense, split it into shorter bullets instead of keeping one long line.\n"
             "- Remove all placeholders and vague filler.\n"
             "- Stay within the slide title and goal.\n"
             "- Replace generic bullets with source-specific facts, examples, values, actions, or implications.\n"
@@ -402,6 +415,12 @@ class ContentQualityAgent:
             checks = [{"kind": "required_facts", "items": required_facts[:6]}]
         if (required_facts or packet.get("coverage_items")) and self._generic_bullet_count(slide.content) >= 2 and not self._is_section_intro(slide):
             issues.append("too many generic bullets")
+        if self._focus_clarity_score(slide, packet) < 0.28:
+            issues.append("unclear slide focus")
+        if self._information_density_score(slide, packet) < 0.34:
+            issues.append("low information density")
+        if self._visual_integration_score(slide, packet) < 0.25:
+            issues.append("visual aid not integrated")
         for check in checks:
             if not isinstance(check, dict):
                 continue
@@ -433,6 +452,12 @@ class ContentQualityAgent:
                         issues.append("missing required workflow actions")
             elif kind == "coverage_items":
                 continue
+            elif kind == "source_coverage":
+                items = [str(item) for item in check.get("items", []) if str(item).strip()]
+                min_hits = int(check.get("min_hits") or min(3, len(items)))
+                hits = sum(1 for fact in items if self._fact_supported_in_content(content_l, fact))
+                if items and hits < min(min_hits, len(items)):
+                    issues.append("low source coverage")
             elif kind == "role_anchors":
                 items = [str(item).lower() for item in check.get("items", []) if str(item).strip()]
                 min_hits = int(check.get("min_hits") or min(2, len(items)))
@@ -444,15 +469,24 @@ class ContentQualityAgent:
                 fact_hits = sum(1 for fact in items if self._fact_supported_in_content(content_l, fact))
                 if fact_hits < min(2, len(items)):
                     issues.append("missing required packet facts")
+        purity = self._topic_purity_score(slide, packet)
+        if purity < 0.22:
+            issues.append("low topic purity")
         return list(dict.fromkeys(issues))
 
     @staticmethod
     def _blocking_only(unresolved: Dict[int, List[str]]) -> Dict[int, List[str]]:
         advisory = {
+            "fewer than 3 usable bullets",
             "missing required coverage items",
             "missing required role anchors",
             "missing required packet facts",
             "too many generic bullets",
+            "low source coverage",
+            "low topic purity",
+            "low information density",
+            "visual aid not integrated",
+            "unclear slide focus",
         }
         blocking: Dict[int, List[str]] = {}
         for slide_number, issue_list in (unresolved or {}).items():
@@ -464,10 +498,16 @@ class ContentQualityAgent:
     @staticmethod
     def _advisory_only(unresolved: Dict[int, List[str]]) -> Dict[int, List[str]]:
         advisory = {
+            "fewer than 3 usable bullets",
             "missing required coverage items",
             "missing required role anchors",
             "missing required packet facts",
             "too many generic bullets",
+            "low source coverage",
+            "low topic purity",
+            "low information density",
+            "visual aid not integrated",
+            "unclear slide focus",
         }
         kept: Dict[int, List[str]] = {}
         for slide_number, issue_list in (unresolved or {}).items():
@@ -506,6 +546,89 @@ class ContentQualityAgent:
             if action_hits < min(2, len(evidence_actions)):
                 issues.append("missing software workflow actions")
         return issues
+
+    def _topic_purity_score(self, slide: SlideContent, packet: Dict[str, Any] | None) -> float:
+        title_terms = set(self._query_terms(slide.slide.slide_title.lower()))
+        content_terms = set(self._query_terms(self._flatten(slide.content).lower()))
+        if not title_terms or not content_terms:
+            return 1.0
+        overlap = len(title_terms & content_terms) / max(1, min(len(title_terms), len(content_terms)))
+        packet_score = 0.0
+        if packet and packet.get("source_alignment", {}).get("topic_purity") is not None:
+            packet_score = float(packet["source_alignment"]["topic_purity"])
+        return max(overlap, packet_score)
+
+    def _quality_metrics(self, slides: List[SlideContent], packet_by_number: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
+        topic_scores: List[float] = []
+        coverage_scores: List[float] = []
+        focus_scores: List[float] = []
+        density_scores: List[float] = []
+        visual_scores: List[float] = []
+        for slide in slides:
+            packet = packet_by_number.get(slide.slide.slide_number)
+            topic_scores.append(self._topic_purity_score(slide, packet))
+            coverage_scores.append(self._source_coverage_score(slide, packet))
+            focus_scores.append(self._focus_clarity_score(slide, packet))
+            density_scores.append(self._information_density_score(slide, packet))
+            visual_scores.append(self._visual_integration_score(slide, packet))
+        return {
+            "topic_purity_mean": round(sum(topic_scores) / max(1, len(topic_scores)), 3),
+            "source_coverage_mean": round(sum(coverage_scores) / max(1, len(coverage_scores)), 3),
+            "focus_clarity_mean": round(sum(focus_scores) / max(1, len(focus_scores)), 3),
+            "information_density_mean": round(sum(density_scores) / max(1, len(density_scores)), 3),
+            "visual_integration_mean": round(sum(visual_scores) / max(1, len(visual_scores)), 3),
+        }
+
+    def _focus_clarity_score(self, slide: SlideContent, packet: Dict[str, Any] | None) -> float:
+        title_terms = set(self._query_terms(slide.slide.slide_title.lower()))
+        content_terms = set(self._query_terms(self._flatten(slide.content).lower()))
+        if not title_terms or not content_terms:
+            return 1.0
+        overlap = len(title_terms & content_terms) / max(1, min(len(title_terms), len(content_terms)))
+        generic_penalty = 0.18 if self._generic_bullet_count(slide.content) >= 2 else 0.0
+        packet_score = float(packet.get("source_alignment", {}).get("topic_purity", 0.0)) if packet else 0.0
+        return max(0.0, min(1.0, max(overlap, packet_score) - generic_penalty))
+
+    def _information_density_score(self, slide: SlideContent, packet: Dict[str, Any] | None) -> float:
+        bullet_count = self._bullet_count(slide.content)
+        text = self._flatten(slide.content)
+        char_count = len(re.sub(r"\s+", " ", text).strip())
+        has_structured_visual = bool(packet and (packet.get("table") or packet.get("latex_block_formula")))
+        target_bullets = 3 if has_structured_visual else 4
+        bullet_score = min(1.0, bullet_count / max(1, target_bullets))
+        char_target = 120 if has_structured_visual else 180
+        char_score = min(1.0, char_count / max(1, char_target))
+        return max(0.0, min(1.0, (bullet_score * 0.6) + (char_score * 0.4)))
+
+    def _visual_integration_score(self, slide: SlideContent, packet: Dict[str, Any] | None) -> float:
+        if not packet:
+            return 1.0
+        table = packet.get("table") or {}
+        has_formula = bool(packet.get("latex_block_formula"))
+        if not table and not has_formula:
+            return 1.0
+        raw_content = self._flatten(slide.content)
+        content_l = self._normalise_for_match(raw_content)
+        if not content_l:
+            return 0.0
+        if has_formula:
+            return 1.0 if ("$" in raw_content or "=" in raw_content or re.search(r"\d", raw_content)) else 0.0
+        caption_terms = set(self._query_terms(str(table.get("table_caption") or slide.slide.slide_title).lower()))
+        content_terms = set(self._query_terms(content_l))
+        overlap = len(caption_terms & content_terms) / max(1, min(len(caption_terms), len(content_terms))) if caption_terms and content_terms else 0.0
+        if re.search(r"\d", raw_content):
+            overlap = max(overlap, 0.45)
+        return max(0.0, min(1.0, overlap))
+
+    def _source_coverage_score(self, slide: SlideContent, packet: Dict[str, Any] | None) -> float:
+        if not packet:
+            return 1.0
+        required = [fact for fact in packet.get("required_facts", []) if isinstance(fact, str)]
+        if not required:
+            return 1.0
+        content_l = self._normalise_for_match(self._flatten(slide.content))
+        hits = sum(1 for fact in required[:6] if self._fact_supported_in_content(content_l, fact))
+        return hits / max(1, min(3, len(required[:6])))
 
     @staticmethod
     def _normalise_for_match(text: str) -> str:
@@ -789,11 +912,75 @@ class ContentQualityAgent:
                     line = cls._clean_bullet(line)
                     if line and not cls._is_bad_line(line):
                         items.append(line)
-            items = cls._dedupe_bullets(items)
+            items = cls._compact_slide_bullets(cls._dedupe_bullets(items))
+            items = cls._filter_script_mismatch(items, fallback if isinstance(fallback, str) else "")
             if len(items) >= 3:
                 return items[:5]
         fallback_items = cls._fallback_items(fallback)
-        return cls._ensure_min_bullets(fallback_items, "Core document point")[:5]
+        fallback_seed = fallback if isinstance(fallback, str) and fallback.strip() else ""
+        return cls._compact_slide_bullets(cls._ensure_min_bullets(fallback_items, fallback_seed))[:5]
+
+    @classmethod
+    def _filter_script_mismatch(cls, items: List[str], reference_text: str) -> List[str]:
+        ref_script = dominant_script(reference_text)
+        if ref_script in {"unknown", "latin"}:
+            return items
+        if len(items) <= 1:
+            return items
+        aligned = [item for item in items if dominant_script(item) == ref_script]
+        return aligned if len(aligned) >= 2 else items
+
+    @staticmethod
+    def _compact_slide_bullets(items: List[str], max_chars: int = 150) -> List[str]:
+        compacted: List[str] = []
+        for item in items:
+            text = re.sub(r"\s+", " ", str(item or "")).strip()
+            if not text:
+                continue
+            if len(text) <= max_chars:
+                compacted.append(text)
+                continue
+            parts = re.split(
+                r"(?<=[.;!?])\s+|\s+[—-]\s+|;\s+|:\s+|,\s+(?=[A-ZÀ-Ỹ0-9])|\s*\((?=[^)]{12,}\))",
+                text,
+            )
+            kept = False
+            for part in parts:
+                part = re.sub(r"\s+", " ", part).strip(" ;,-()")
+                if 16 <= len(part) <= max_chars:
+                    compacted.append(part)
+                    kept = True
+                if len(compacted) >= 10:
+                    break
+            if kept:
+                continue
+            compacted.append(text)
+        return ContentQualityAgent._merge_fragments(compacted)
+
+    @staticmethod
+    def _merge_fragments(items: List[str]) -> List[str]:
+        merged: List[str] = []
+        for item in items:
+            text = re.sub(r"\s+", " ", str(item or "")).strip()
+            if not text:
+                continue
+            fragment = bool(re.match(r"^(?:and|or|but|with|while|including|such as|each|32gb|16gb|250gb|40gb)\b", text, flags=re.IGNORECASE))
+            if merged and (fragment or (len(text.split()) <= 4 and re.search(r"\d|gb|mb|cores?|ram|disk", text, flags=re.IGNORECASE))):
+                merged[-1] = f"{merged[-1].rstrip(' .;:,')}, {text.lstrip(' ,;:.')}"
+                continue
+            merged.append(text)
+        return merged
+
+    @staticmethod
+    def _dominant_script(text: str) -> str:
+        counts = {
+            "latin": len(re.findall(r"[A-Za-zÀ-ỹ]", text or "")),
+            "cjk": len(re.findall(r"[\u4e00-\u9fff]", text or "")),
+            "cyrillic": len(re.findall(r"[\u0400-\u04FF]", text or "")),
+            "arabic": len(re.findall(r"[\u0600-\u06FF]", text or "")),
+        }
+        script, score = max(counts.items(), key=lambda item: item[1])
+        return script if score > 0 else "other"
 
     @classmethod
     def _fallback_content(cls, slide: SlideContent, evidence: str, packet: Dict[str, Any] | None = None) -> List[str]:
@@ -810,9 +997,26 @@ class ContentQualityAgent:
             ranked.append((score, item))
         ranked.sort(key=lambda pair: (-pair[0], len(pair[1])))
         bullets = [item for _, item in ranked[:5]]
-        while len(bullets) < 3:
-            bullets.append(slide.slide.goal[:90])
-        return bullets[:5]
+        return cls._drop_title_echoes(bullets, slide.slide.slide_title)[:5]
+
+    @staticmethod
+    def _drop_title_echoes(items: List[str], slide_title: str) -> List[str]:
+        clean_title = re.sub(r"^\d+(?:\.\d+)*[.)]?\s*", "", str(slide_title or "")).strip().lower()
+        title_terms = {
+            term for term in re.findall(r"[A-Za-zÀ-ỹ][A-Za-zÀ-ỹ0-9_/-]{2,}", clean_title)
+            if term not in {"overview", "summary", "content", "section"}
+        }
+        result = []
+        for item in items:
+            clean = re.sub(r"^\d+(?:\.\d+)*[.)]?\s*", "", str(item or "")).strip()
+            lower = clean.lower().strip(".")
+            if clean_title and lower == clean_title:
+                continue
+            item_terms = set(re.findall(r"[A-Za-zÀ-ỹ][A-Za-zÀ-ỹ0-9_/-]{2,}", lower))
+            if title_terms and item_terms and item_terms <= title_terms and len(item_terms) >= 3:
+                continue
+            result.append(item)
+        return result or items
 
     @classmethod
     def _apply_deterministic_fallbacks(
@@ -911,7 +1115,8 @@ class ContentQualityAgent:
             bullets = [cls._trim_bullet(action) for action in actions[:5]]
             return cls._pad_bullets(bullets, "Workflow actions are derived from the source procedure")
         if packet and packet.get("required_facts"):
-            return cls._pad_bullets([str(item) for item in packet.get("required_facts", [])[:5]], slide.slide.goal[:90])
+            title_seed = re.sub(r"^\d+(?:\.\d+)*[.)]?\s*", "", slide.slide.slide_title).strip()
+            return cls._pad_bullets([str(item) for item in packet.get("required_facts", [])[:5]], title_seed[:90] or "Source-backed summary")
         return []
 
     @classmethod
@@ -1084,16 +1289,6 @@ class ContentQualityAgent:
         fallback = cls._trim_bullet(fallback)
         if fallback and not cls._is_bad_line(fallback):
             clean = cls._dedupe_bullets(clean + [fallback])
-        generic_fillers = [
-            "The slide states a core document point",
-            "This slide focuses on the stated topic",
-            "The content follows the slide topic",
-        ]
-        for filler in generic_fillers:
-            if len(clean) >= 3:
-                break
-            if not cls._is_bad_line(filler):
-                clean = cls._dedupe_bullets(clean + [filler])
         return clean[:5]
 
     @classmethod

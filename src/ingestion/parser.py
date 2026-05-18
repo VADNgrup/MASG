@@ -3,7 +3,9 @@ import fitz
 import base64
 import requests
 import json
+import ast
 import logging
+import re
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from tqdm import tqdm
@@ -16,6 +18,7 @@ class ParsedContent:
         self.full_text: str = ''
         self.tables: List[Dict[str, Any]] = []
         self.images: List[Dict[str, Any]] = []
+        self.page_insights: List[Dict[str, Any]] = []
         self.page_count: int = 0
 
 class DocumentParser:
@@ -124,6 +127,8 @@ class DocumentParser:
 
             page_markdown = self._call_vlm(layout_map_str, b64_img)
             full_markdown_parts.append(f"<!-- PAGE {i+1} -->\n\n{page_markdown}")
+            page_insight = self._call_page_insight_vlm(layout_map_str, page_markdown, b64_img, i + 1)
+            content.page_insights.append(page_insight)
 
         content.full_text = "\n\n---\n\n".join(full_markdown_parts)
         content.images = all_extracted_images
@@ -199,4 +204,129 @@ class DocumentParser:
             return content.strip()
         except Exception as e:
             _log.error(f"Error calling VLM: {e}")
-            return f"Error processing page. Details: {str(e)}"
+            return self._fallback_markdown_from_layout(layout_map)
+
+    def _call_page_insight_vlm(self, layout_map: str, page_markdown: str, b64_image: str, page_num: int) -> Dict[str, Any]:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.model_key}"
+        }
+        prompt = (
+            "You are analyzing a PDF page for presentation planning.\n"
+            "Look at the page image, the layout map, and the reconstructed markdown.\n"
+            "Decide what information on this page is most important to preserve in a slide deck.\n\n"
+            "IMPORTANT: Write page_title, must_have_points, support_points, and noise_points in the SAME language as the main visible page content.\n"
+            "Return ONLY JSON with this schema:\n"
+            "{\n"
+            '  "page": <int>,\n'
+            '  "page_role": "cover|overview|content|appendix|references|metadata",\n'
+            '  "page_title": "<short title of the most important content on the page>",\n'
+            '  "must_have_points": ["point 1", "point 2"],\n'
+            '  "support_points": ["supporting detail"],\n'
+            '  "noise_points": ["metadata or decorative content that should not become slide titles"],\n'
+            '  "confidence": <float 0..1>\n'
+            "}\n\n"
+            "Rules:\n"
+            "- Focus on presentation-worthy meaning, not literal OCR only.\n"
+            "- For references or citation pages, mark citation lines as noise or support unless they reveal a clear theme.\n"
+            "- For table-heavy pages, identify the rows or findings that actually matter, not headers or isolated numbers.\n"
+            "- Keep must-have points short and concrete.\n\n"
+            f"PAGE NUMBER: {page_num}\n\n"
+            f"LAYOUT MAP:\n{layout_map}\n\n"
+            f"RECONSTRUCTED MARKDOWN:\n{page_markdown}\n"
+        )
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_image}"}}
+                    ]
+                }
+            ],
+            "temperature": 0.1
+        }
+        try:
+            response = requests.post(self.model_url, headers=headers, json=payload, timeout=180)
+            response.raise_for_status()
+            content = response.json()['choices'][0]['message']['content']
+            return self._parse_page_insight(content, page_num)
+        except Exception as e:
+            _log.warning(f"Error calling page insight VLM on page {page_num}: {e}")
+            return self._fallback_page_insight(page_markdown, page_num)
+
+    @staticmethod
+    def _parse_page_insight(content: str, page_num: int) -> Dict[str, Any]:
+        text = (content or "").strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+        parsed: Dict[str, Any] = {}
+        for loader in (json.loads, ast.literal_eval):
+            try:
+                candidate = loader(text)
+                if isinstance(candidate, dict):
+                    parsed = candidate
+                    break
+            except Exception:
+                continue
+        if not parsed:
+            return DocumentParser._fallback_page_insight("", page_num)
+        return {
+            "page": int(parsed.get("page") or page_num),
+            "page_role": str(parsed.get("page_role") or "content").strip() or "content",
+            "page_title": str(parsed.get("page_title") or "").strip(),
+            "must_have_points": [str(item).strip() for item in parsed.get("must_have_points", []) if str(item).strip()][:8],
+            "support_points": [str(item).strip() for item in parsed.get("support_points", []) if str(item).strip()][:8],
+            "noise_points": [str(item).strip() for item in parsed.get("noise_points", []) if str(item).strip()][:8],
+            "confidence": float(parsed.get("confidence") or 0.0),
+        }
+
+    @staticmethod
+    def _fallback_page_insight(page_markdown: str, page_num: int) -> Dict[str, Any]:
+        headings = re.findall(r"^#{1,4}\s+(.+)$", page_markdown or "", flags=re.MULTILINE)
+        bullets = re.findall(r"^\s*[-*]\s+(.+)$", page_markdown or "", flags=re.MULTILINE)
+        numbered = re.findall(r"^\s*\d{1,2}[.)]\s+(.+)$", page_markdown or "", flags=re.MULTILINE)
+        title = headings[0].strip()[:120] if headings else ""
+        must_have = []
+        for item in headings[1:4] + bullets[:4] + numbered[:4]:
+            text = " ".join(str(item).split())
+            if len(text) >= 12:
+                must_have.append(text[:180])
+        return {
+            "page": page_num,
+            "page_role": "content",
+            "page_title": title,
+            "must_have_points": must_have[:6],
+            "support_points": [],
+            "noise_points": [],
+            "confidence": 0.2,
+        }
+
+    @staticmethod
+    def _fallback_markdown_from_layout(layout_map: str) -> str:
+        chunks: List[str] = []
+        current_heading = None
+        for raw_line in (layout_map or "").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("[BLOCK"):
+                continue
+            clean = re.sub(r"\s+", " ", line).strip()
+            if not clean:
+                continue
+            if len(clean) <= 80 and clean.upper() == clean and re.search(r"[A-ZÀ-Ỹ]", clean):
+                current_heading = clean.title()
+                chunks.append(f"# {current_heading}")
+            elif re.match(r"^\d{1,2}[.)]\s+", clean):
+                chunks.append(clean)
+            elif len(clean) <= 160 and clean.endswith(":"):
+                chunks.append(f"## {clean[:-1]}")
+            else:
+                chunks.append(clean)
+        return "\n\n".join(chunks[:120]).strip() or "# Extracted Page\n\nContent could not be reconstructed cleanly."

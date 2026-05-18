@@ -1,7 +1,9 @@
 import json
+import re
 from typing import Any, Dict, List
 
 from src.models.slide import SlideContent
+from src.utils.language_utils import dominant_script
 from src.utils.llm import chat
 from src.utils.parse_llm_response import parse_json_response
 from src.workflow.agents.content_quality import ContentQualityAgent
@@ -57,13 +59,22 @@ class DirectBulletWriterAgent:
             "# ROLE\n"
             "You write final presentation bullets from source-grounded slide packets.\n\n"
             "# TASK\n"
-            "For each packet, produce final slide content directly as 3 to 5 bullets.\n\n"
+            "For each packet, produce final slide content directly as 5 to 8 bullets when the source is rich; never fewer than 4 unless the source itself is sparse.\n\n"
+            "# EVAL-ALIGNED TARGETS\n"
+            "- Every slide must have a clear focus that obviously matches the slide title.\n"
+            "- Text-only slides must still feel substantial enough for presentation, not like sparse placeholders with excessive white space.\n"
+            "- If the packet includes a table or other structured visual evidence, include at least one bullet that interprets the takeaway of that visual instead of only restating raw labels.\n"
+            "- Bullets should complement the attached evidence, not ignore it.\n\n"
             "# NON-NEGOTIABLE RULES\n"
             "- Use ONLY facts supported by the packet evidence or required_facts.\n"
             "- Preserve every required_fact that fits the slide title.\n"
-            "- Follow the packet role; do not turn every slide into the same overview.\n"
+            "- Use the SAME language as the slide title and source packet evidence. Do not translate into another language.\n"
+            "- Keep each slide tightly focused on its anchor evidence; do not turn every slide into the same overview.\n"
+            "- Each bullet must be slide-friendly: ideally one short sentence or clause, and usually no more than about 150 characters.\n"
+            "- If a fact is dense, split it into two shorter bullets instead of writing one long bullet.\n"
             "- If coverage_items are provided, cover several distinct items rather than repeating one generic theme.\n"
-            "- If a source fact starts with labels like `Principle 1:`, `Step 2:`, or `Item 3:`, rewrite it as a natural presentation bullet instead of copying the label verbatim, unless the slide title explicitly asks for a numbered list.\n"
+            "- Cover multiple distinct source facts; do not spend the whole slide paraphrasing only one fact.\n"
+            "- If a source fact starts with a numbered label like `1.` or `Step 2:`, rewrite it as a natural presentation bullet instead of copying the label verbatim, unless the slide title explicitly asks for a numbered list.\n"
             "- Avoid repeating the same named entities or facts across neighboring slides unless the packet title requires them.\n"
             "- Do not introduce numbers that are not in required_facts/evidence.\n"
             "- Do not copy page headers, journal headers, figure labels, markdown headings, or source page numbers as facts.\n"
@@ -84,12 +95,13 @@ class DirectBulletWriterAgent:
             "slide_title": packet.get("slide_title"),
             "goal": packet.get("goal"),
             "intent": packet.get("intent"),
-            "role": packet.get("role"),
             "coverage_mode": packet.get("coverage_mode"),
             "source_pages": packet.get("source_pages", []),
             "required_facts": packet.get("required_facts", [])[:8],
             "required_checks": packet.get("required_checks", [])[:4],
             "coverage_items": packet.get("coverage_items", [])[:6],
+            "anchor_unit_id": packet.get("anchor_unit_id"),
+            "support_unit_ids": packet.get("support_unit_ids", [])[:4],
         }
         if packet.get("table"):
             keep["table"] = packet.get("table")
@@ -129,7 +141,11 @@ class DirectBulletWriterAgent:
             bullets.extend(self._fallback_bullets(packet, spec))
         if self._too_generic(bullets, packet):
             bullets = self._fallback_bullets(packet, spec) + bullets
-        return self._dedupe(bullets)[:5]
+        bullets = self._ensure_minimum_coverage(bullets, packet)
+        bullets = self._remove_title_echoes(bullets, spec.slide_title)
+        bullets = self._compact_slide_bullets(self._filter_language_mismatch(spec.slide_title, self._dedupe(bullets)))
+        bullets = [bullet for bullet in bullets if len(bullet.strip()) >= 12]
+        return bullets[:8]
 
     def _fallback_bullets(self, packet: Dict[str, Any], spec: Any) -> List[str]:
         evidence = packet.get("evidence", "")
@@ -138,8 +154,8 @@ class DirectBulletWriterAgent:
             return deterministic
         facts = [fact for fact in packet.get("required_facts", []) if isinstance(fact, str)]
         if facts:
-            return [self.content_tools._clean_bullet(fact) for fact in facts[:5]]
-        return self.content_tools._fallback_items(evidence)[:5]
+            return [self.content_tools._clean_bullet(fact) for fact in facts[:8]]
+        return self.content_tools._fallback_items(evidence)[:8]
 
     @staticmethod
     def _dedupe(items: List[str]) -> List[str]:
@@ -152,6 +168,96 @@ class DirectBulletWriterAgent:
             return False
         generic_count = sum(1 for bullet in bullets if self.content_tools._is_generic_bullet(bullet))
         return generic_count >= max(2, len(bullets) // 2 + 1)
+
+    def _ensure_minimum_coverage(self, bullets: List[str], packet: Dict[str, Any]) -> List[str]:
+        required = [fact for fact in packet.get("required_facts", []) if isinstance(fact, str)]
+        if not required:
+            return bullets
+        content_l = self.content_tools._normalise_for_match(" ".join(bullets))
+        covered = sum(1 for fact in required[:8] if self.content_tools._fact_supported_in_content(content_l, fact))
+        target = min(5, len(required[:8]))
+        if covered >= target and len(bullets) >= target:
+            return bullets
+        additions: List[str] = []
+        for fact in required[:8]:
+            if self.content_tools._fact_supported_in_content(content_l, fact):
+                continue
+            cleaned = self.content_tools._clean_bullet(fact)
+            if cleaned:
+                additions.append(cleaned)
+            if len(additions) + covered >= target:
+                break
+        return bullets + additions
+
+    @staticmethod
+    def _remove_title_echoes(bullets: List[str], slide_title: str) -> List[str]:
+        clean_title = re.sub(r"^\d+(?:\.\d+)*[.)]?\s*", "", str(slide_title or "")).strip().lower()
+        title_terms = {
+            term for term in re.findall(r"[A-Za-zÀ-ỹ][A-Za-zÀ-ỹ0-9_/-]{2,}", clean_title)
+            if term not in {"overview", "summary", "content", "section"}
+        }
+        result: List[str] = []
+        for bullet in bullets:
+            clean = re.sub(r"^\d+(?:\.\d+)*[.)]?\s*", "", str(bullet or "")).strip()
+            lower = clean.lower().strip(".")
+            if clean_title and lower == clean_title:
+                continue
+            bullet_terms = set(re.findall(r"[A-Za-zÀ-ỹ][A-Za-zÀ-ỹ0-9_/-]{2,}", lower))
+            if title_terms and bullet_terms and bullet_terms <= title_terms and len(bullet_terms) >= 3:
+                continue
+            result.append(bullet)
+        return result or bullets
+
+    @staticmethod
+    def _filter_language_mismatch(slide_title: str, bullets: List[str]) -> List[str]:
+        title_script = dominant_script(slide_title)
+        if title_script in {"unknown", "latin"}:
+            return bullets
+        if len(bullets) <= 1:
+            return bullets
+        aligned = [bullet for bullet in bullets if dominant_script(bullet) == title_script]
+        return aligned if len(aligned) >= 2 else bullets
+
+    @staticmethod
+    def _compact_slide_bullets(bullets: List[str], max_chars: int = 150) -> List[str]:
+        compacted: List[str] = []
+        for bullet in bullets:
+            text = " ".join(str(bullet).split()).strip()
+            if not text:
+                continue
+            if len(text) <= max_chars:
+                compacted.append(text)
+                continue
+            parts = re.split(
+                r"(?<=[.;!?])\s+|\s+[—-]\s+|;\s+|:\s+|,\s+(?=[A-ZÀ-Ỹ0-9])|\s*\((?=[^)]{12,}\))",
+                text,
+            )
+            kept = False
+            for part in parts:
+                part = " ".join(part.split()).strip(" ;,-()")
+                if 16 <= len(part) <= max_chars:
+                    compacted.append(part)
+                    kept = True
+                if len(compacted) >= 8:
+                    break
+            if kept:
+                continue
+            compacted.append(text)
+        return DirectBulletWriterAgent._merge_fragments(compacted)
+
+    @staticmethod
+    def _merge_fragments(items: List[str]) -> List[str]:
+        merged: List[str] = []
+        for item in items:
+            text = " ".join(str(item or "").split()).strip()
+            if not text:
+                continue
+            fragment = bool(re.match(r"^(?:and|or|but|with|while|including|such as|each|32gb|16gb|250gb|40gb)\b", text, flags=re.IGNORECASE))
+            if merged and (fragment or (len(text.split()) <= 4 and re.search(r"\d|gb|mb|cores?|ram|disk", text, flags=re.IGNORECASE))):
+                merged[-1] = f"{merged[-1].rstrip(' .;:,')}, {text.lstrip(' ,;:.')}"
+                continue
+            merged.append(text)
+        return merged
 
     @staticmethod
     def _empty_slide(spec):

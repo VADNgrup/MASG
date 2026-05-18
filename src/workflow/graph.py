@@ -21,7 +21,7 @@ def create_workflow() -> StateGraph:
         print(f' Planner — Generating initial outline with goals...')
         print(f"{'=' * 60}\n")
         plan = planner.create_outline(state['document_context'])
-        lecture_title = planner.generate_title(plan['outline'])
+        lecture_title = planner.generate_title(plan['outline'], state['document_context'])
         print(f'\nGenerated lecture title: {lecture_title}\n')
         return {'lecture_plan': plan, 'lecture_title': lecture_title, 'slides': []}
 
