@@ -23,7 +23,7 @@ def _load_lecture_meta(json_path: Path) -> tuple[str, str]:
     title: str = data.get('title') or data.get('lecture_title') or lecture_id
     return (title, lecture_id)
 
-def run_pipeline(lecture_json_path: str, lecture_title: str | None = None, speaker_information: str = '') -> None:
+def run_pipeline(lecture_json_path: str, lecture_title: str | None = None, speaker_information: str = '', institution: str = '') -> None:
     json_path = Path(lecture_json_path).resolve()
     if not json_path.exists():
         raise FileNotFoundError(f'Lecture JSON not found: {json_path}')
@@ -54,7 +54,7 @@ def run_pipeline(lecture_json_path: str, lecture_title: str | None = None, speak
         if not title:
             title = json.load(open(json_path))['lecture_title']
         out_dir.mkdir(parents=True, exist_ok=True)
-        picker = SlidePickMerge(lecture_json_path=str(json_path), lecture_title=title, speaker_information=speaker_information, deck_dir=out_dir)
+        picker = SlidePickMerge(lecture_json_path=str(json_path), lecture_title=title, speaker_information=speaker_information, deck_dir=out_dir, institution=institution)
         picker.build()
         print('[slide_gen] === Step 2: Slide construction complete ===')
 

@@ -119,7 +119,7 @@
       while (lo <= hi) {
         const mid = (lo + hi) >> 1;
         el.style.fontSize = mid + 'px';
-        if (el.scrollHeight <= availH && el.scrollWidth <= availW) {
+        if (el.scrollHeight + 6 <= availH && el.scrollWidth <= availW) {
           best = mid;
           lo = mid + 1;
         } else {
@@ -148,11 +148,12 @@
     el.style.transform = '';
     el.style.transformOrigin = '';
     el.style.justifyContent = '';
-    const availH = el.offsetHeight;
+    const reserve = parseInt(el.dataset.fitReserve || '0', 10);
+    const availH = el.offsetHeight - reserve;
     const contentH = el.scrollHeight;
     if (contentH > availH && availH > 0) {
       el.style.justifyContent = 'flex-start';
-      const scale = Math.max(0.65, availH / contentH);
+      const scale = Math.max(0.55, availH / contentH);
       el.style.transform = `scale(${scale.toFixed(4)})`;
       el.style.transformOrigin = 'top center';
     }
@@ -181,6 +182,7 @@
   } else {
     runAutoFit();
   }
+  document.fonts.ready.then(runAutoFit);
   window.addEventListener('resize', runAutoFit);
 
 })();

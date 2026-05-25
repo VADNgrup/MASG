@@ -47,6 +47,55 @@
     mix-blend-mode: overlay;
   }
 
+  @keyframes blob-morph-a {
+    0%   { border-radius: 60% 40% 55% 45% / 45% 55% 40% 60%; }
+    25%  { border-radius: 45% 55% 65% 35% / 55% 40% 55% 45%; }
+    50%  { border-radius: 50% 50% 40% 60% / 40% 65% 35% 60%; }
+    75%  { border-radius: 55% 45% 50% 50% / 60% 35% 60% 40%; }
+    100% { border-radius: 60% 40% 55% 45% / 45% 55% 40% 60%; }
+  }
+  @keyframes blob-morph-b {
+    0%   { border-radius: 40% 60% 30% 70% / 65% 35% 60% 40%; }
+    25%  { border-radius: 55% 45% 50% 50% / 45% 60% 40% 55%; }
+    50%  { border-radius: 35% 65% 60% 40% / 55% 45% 65% 35%; }
+    75%  { border-radius: 50% 50% 40% 60% / 35% 65% 45% 55%; }
+    100% { border-radius: 40% 60% 30% 70% / 65% 35% 60% 40%; }
+  }
+
+  /* Decorative blob outlines injected on all chrome slides */
+  .blobs {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .blobs::before {
+    content: "";
+    position: absolute;
+    top: -150px;
+    left: -130px;
+    width: 500px;
+    height: 480px;
+    border-radius: 60% 40% 55% 45% / 45% 55% 40% 60%;
+    border: 2px solid var(--accent);
+    opacity: 0.14;
+    animation: blob-morph-a 9s ease-in-out infinite;
+  }
+  .blobs::after {
+    content: "";
+    position: absolute;
+    bottom: -130px;
+    right: -100px;
+    width: 420px;
+    height: 400px;
+    border-radius: 40% 60% 30% 70% / 65% 35% 60% 40%;
+    border: 2px solid var(--accent);
+    opacity: 0.1;
+    animation: blob-morph-b 12s ease-in-out infinite;
+  }
+  .slide.light .blobs::before { opacity: 0.30; }
+  .slide.light .blobs::after  { opacity: 0.20; }
+
   /* Header / footer chrome */
   .chrome-top, .chrome-bot {
     position: absolute;
@@ -55,14 +104,14 @@
     justify-content: space-between;
     align-items: center;
     font-family: var(--font-mono);
-    font-size: 22px;
-    letter-spacing: 0.16em;
+    font-size: 14px;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--dim);
-    z-index: 2;
+    z-index: 10;
   }
-  .chrome-top { top: 56px; }
-  .chrome-bot { bottom: 52px; }
+  .chrome-top { top: 40px; }
+  .chrome-bot { bottom: 36px; }
   .chrome-top .dot, .chrome-bot .dot {
     display: inline-block;
     width: 8px; height: 8px;
@@ -76,11 +125,19 @@
     color: var(--accent);
     opacity: 0.8;
   }
+  .chrome-bot b {
+    font-weight: 700;
+    color: var(--text);
+    opacity: 0.75;
+  }
+  .chrome-bot .pn b { color: var(--accent); opacity: 0.9; }
   /* Light-slide chrome colours */
   .slide.light .chrome-top,
-  .slide.light .chrome-bot { color: rgba(11,13,18,0.4); }
+  .slide.light .chrome-bot { color: rgba(11,13,18,0.55); }
   .slide.light .chrome-top .dot { background: var(--accent); }
   .slide.light .chrome-bot .pn { color: var(--accent); }
+  .slide.light .chrome-bot b { color: rgba(11,13,18,0.85); opacity: 1; }
+  .slide.light .chrome-bot .pn b { color: var(--accent); opacity: 1; }
 
   /* cover */
   .cover .body-wrap {
@@ -142,6 +199,35 @@
     color: var(--dim);
     text-align: right;
     line-height: 1.6;
+  }
+  /* decorative blob outlines on cover */
+  .cover::before {
+    content: "";
+    position: absolute;
+    right: -240px;
+    bottom: -200px;
+    width: 860px;
+    height: 820px;
+    border-radius: 55% 45% 40% 60% / 60% 40% 55% 45%;
+    border: 3px solid var(--accent);
+    opacity: 0.22;
+    z-index: 0;
+    pointer-events: none;
+    animation: blob-morph-b 11s ease-in-out infinite;
+  }
+  .cover::after {
+    content: "";
+    position: absolute;
+    right: -60px;
+    bottom: -100px;
+    width: 520px;
+    height: 500px;
+    border-radius: 40% 60% 65% 35% / 35% 65% 40% 60%;
+    border: 2px solid var(--accent);
+    opacity: 0.13;
+    z-index: 0;
+    pointer-events: none;
+    animation: blob-morph-a 8s ease-in-out infinite 1.5s;
   }
 
   /* agenda */
@@ -496,6 +582,15 @@
     line-height: 1.1;
   }
   .end .end-foot .item .v em { font-style: var(--display-italic, italic); color: var(--accent); }
+  .end .ack {
+    font-family: var(--font-body);
+    font-size: 28px;
+    color: var(--dim);
+    font-style: italic;
+    margin: 20px 0 32px;
+    opacity: 0.8;
+  }
+  .slide.light.end .ack { color: rgba(0,0,0,0.5); }
 
 
   /* section-divider */
@@ -1296,7 +1391,7 @@
     grid-template-columns: 100px 1fr;
     align-items: baseline;
     padding: 22px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.842);
+    border-bottom: 1px solid rgba(255, 255, 255, 1);
     column-gap: 24px;
   }
   .toc .toc-row .n {
@@ -2618,12 +2713,12 @@
     font-family: var(--font-body);
     font-size: 24px;
     line-height: 1.4;
-    color: var(--dim);
+    color: rgba(248,250,252,0.85);
     text-align: center;
     font-weight: 500;
   }
   .slide figcaption b { color: var(--text); }
-  .slide.light figcaption { color: rgba(11,13,18,0.6); }
+  .slide.light figcaption { color: rgba(11,13,18,0.80); }
   .slide.light figcaption b { color: #0b0d12; }
   /* In multi-image layouts, smaller caption */
   .twoimgright figcaption,
@@ -2770,11 +2865,14 @@
   .bullets h2 em { font-style: var(--display-italic, italic); color: var(--accent); }
   .bullets ul {
     list-style: none;
-    padding: 0; margin: 0;
+    padding: 36px 48px; margin: 0;
     display: flex;
     flex-direction: column;
     gap: 28px;
     flex: 1;
+    background: rgba(255,255,255,0.05);
+    border-left: 4px solid var(--accent);
+    border-radius: 0 10px 10px 0;
   }
   .bullets ul li {
     font-size: 30px;
@@ -2791,6 +2889,9 @@
     background: var(--accent);
   }
   .slide.light.bullets ul li { color: #0b0d12; }
+  .slide.light.bullets ul {
+    background: rgba(0,0,0,0.04);
+  }
 
 
   /* cover-split */
@@ -3057,11 +3158,13 @@
     overflow: hidden;
   }
   .slide.light.toc-cards .card {
-    background: rgba(0,0,0,0.04);
-    border-color: rgba(0,0,0,0.10);
+    background: rgba(255,255,255,0.75);
+    border-color: rgba(0,0,0,0.12);
+    border-top: 3px solid var(--accent);
   }
+  .slide.light.toc-cards .card .n { color: var(--accent); }
   .slide.light.toc-cards .card h3 { color: #0b0d12; }
-  .slide.light.toc-cards .card p  { color: rgba(11,13,18,0.65); }
+  .slide.light.toc-cards .card p  { color: rgba(11,13,18,0.80); }
 
 
   /* end-image */

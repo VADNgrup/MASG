@@ -191,13 +191,21 @@ class DeckHTMLLayoutManager:
         )
 
     @staticmethod
-    def _chrome(short_title: str, page_num: int = 0, date: str = "") -> str:
+    def _chrome(short_title: str, page_num: int = 0, date: str = "", presenter: str = "", institution: str = "") -> str:
         label = _e(short_title)
         pn = f"{page_num:02d}" if page_num > 0 else ""
-        dt = _e(date)
+        left_parts = []
+        if date:
+            left_parts.append(f'<b>{_e(date)}</b>')
+        if presenter:
+            left_parts.append(f'<b>Speaker: {_e(presenter)}</b>')
+        if institution:
+            left_parts.append(f'<b>{_e(institution)}</b>')
+        left_html = ' &middot; '.join(left_parts)
+        pn_html = f'<b>{pn}</b>' if pn else ''
         return (
             f'<div class="chrome-top"><span><span class="dot"></span>{label}</span></div>'
-            f'<div class="chrome-bot"><span>{dt}</span><span class="pn">{pn}</span></div>'
+            f'<div class="chrome-bot"><span>{left_html}</span><span class="pn">{pn_html}</span></div>'
         )
 
     @staticmethod
@@ -259,14 +267,18 @@ class DeckHTMLLayoutManager:
         )
 
                                                                                 
-    def end_layout(self, end_text: str = "Thank you") -> str:
+    def end_layout(self, end_text: str = "Thank you", institution: str = "", acknowledgment: str = "") -> str:
         author = _e(self.author)
+        inst_html = f'<div class="item"><div class="k">Institution</div><div class="v">{_e(institution)}</div></div>' if institution else ''
+        ack_html = f'<div class="ack">{_e(acknowledgment)}</div>' if acknowledgment else ''
         return (
             '<section class="slide end">'
             '<div class="body-wrap">'
             f'<h2 data-fit data-fit-lines="1" data-fit-min="120" data-fit-max="320">{_e(end_text)}</h2>'
+            f'{ack_html}'
             '<div class="end-foot">'
             f'<div class="item"><div class="k">Presented by</div><div class="v">{author}</div></div>'
+            f'{inst_html}'
             '<div class="item"><div class="k">Q&amp;A Session</div><div class="v"><em>Open discussion</em></div></div>'
             "</div>"
             "</div>"
@@ -284,8 +296,8 @@ class DeckHTMLLayoutManager:
         items = content if isinstance(content, list) else [str(content)]
         return (
             f'<section class="slide body bullets{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f"{self._ul(items)}"
             "</div>"
             "</section>"
@@ -305,7 +317,7 @@ class DeckHTMLLayoutManager:
         return (
             f'<section class="slide body cmptable{light_cls}">'
             '<div class="body-wrap">'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<div class="tbl-wrap">{table_html}{cap_html}</div>'
             "</div>"
             "</section>"
@@ -334,8 +346,8 @@ class DeckHTMLLayoutManager:
 
         return (
             f'<section class="slide body twocontents{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<div class="pair">{_block(sub_title_1, sub_content_1)}{_block(sub_title_2, sub_content_2)}</div>'
             "</div>"
             "</section>"
@@ -398,7 +410,7 @@ class DeckHTMLLayoutManager:
         return (
             f'<section class="slide body formula{light_cls}">'
             '<div class="body-wrap">'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<div class="eq-wrap"><div class="eq">{eq_blocks}</div></div>'
             f"{self._ul(items) if items else ''}"
             "</div>"
@@ -473,8 +485,8 @@ class DeckHTMLLayoutManager:
         img = self._img_tag(img_path, caption or title)
         return (
             f'<section class="slide body imgabove{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<figure><div class="img-slot">{img}</div>{cap_html}</figure>'
             f"{self._ul(items) if items else ''}"
             "</div>"
@@ -497,8 +509,8 @@ class DeckHTMLLayoutManager:
         img = self._img_tag(img_path, caption or title)
         return (
             f'<section class="slide body imgbelow{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f"{self._ul(items) if items else ''}"
             f'<figure><div class="img-slot">{img}</div>{cap_html}</figure>'
             "</div>"
@@ -590,8 +602,8 @@ class DeckHTMLLayoutManager:
         cap2 = f"<figcaption>{_e(caption2)}</figcaption>" if caption2 else ""
         return (
             f'<section class="slide body twoimgabove{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             '<div class="imgs">'
             f"<figure><div class=\"img-slot\">{img1}</div>{cap1}</figure>"
             f"<figure><div class=\"img-slot\">{img2}</div>{cap2}</figure>"
@@ -620,8 +632,8 @@ class DeckHTMLLayoutManager:
         cap2 = f"<figcaption>{_e(caption2)}</figcaption>" if caption2 else ""
         return (
             f'<section class="slide body twoimgbelow{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f"{self._ul(items) if items else ''}"
             '<div class="imgs">'
             f"<figure><div class=\"img-slot\">{img1}</div>{cap1}</figure>"
@@ -643,8 +655,8 @@ class DeckHTMLLayoutManager:
         left, right = content[:mid], content[mid:]
         return (
             f'<section class="slide body twocols{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<div class="grid">{self._ul(left)}{self._ul(right)}</div>'
             "</div>"
             "</section>"
@@ -672,8 +684,8 @@ class DeckHTMLLayoutManager:
             )
         return (
             f'<section class="slide body steps{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<div class="track">{steps_html}</div>'
             "</div>"
             "</section>"
@@ -702,10 +714,10 @@ class DeckHTMLLayoutManager:
                 "</div>"
                 "</div>"
             )
-        head = f'<div class="head"><h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2></div>'
+        head = f'<div class="head"><h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2></div>'
         return (
             f'<section class="slide body keypoints{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
             f"{head}"
             f'<div class="list">{pts_html}</div>'
             "</div>"
@@ -739,7 +751,7 @@ class DeckHTMLLayoutManager:
         return (
             f'<section class="slide body threecol{light_cls}">'
             '<div class="body-wrap">'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<div class="grid">{cols_html}</div>'
             "</div>"
             "</section>"
@@ -799,7 +811,7 @@ class DeckHTMLLayoutManager:
         return (
             f'<section class="slide body conclcards{light_cls}">'
             '<div class="body-wrap">'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             '<div class="timeline">'
             '<div class="timeline-line"></div>'
             f'<div class="timeline-dots">{dots_html}</div>'
@@ -833,8 +845,8 @@ class DeckHTMLLayoutManager:
             )
         return (
             f'<section class="slide body numconcl{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<div class="list">{rows_html}</div>'
             "</div>"
             "</section>"
@@ -864,7 +876,7 @@ class DeckHTMLLayoutManager:
         return (
             f'<section class="slide body grid2x2{light_cls}">'
             '<div class="body-wrap">'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<div class="cells">{cells_html}</div>'
             "</div>"
             "</section>"
@@ -890,7 +902,7 @@ class DeckHTMLLayoutManager:
         return (
             f'<section class="slide body rquestion{light_cls}">'
             '<div class="body-wrap">'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             '<div class="main-rq">'
             '<div class="lbl">Main RQ</div>'
             f'<div class="q">{_e(main_question)}</div>'
@@ -1024,7 +1036,7 @@ class DeckHTMLLayoutManager:
             '<div class="overlay"></div>'
             '<div class="body-wrap">'
             '<div class="accent-bar"></div>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<p>{_e(body)}</p>'
             "</div>"
             "</section>"
@@ -1109,8 +1121,8 @@ class DeckHTMLLayoutManager:
             li_html += f"<li>{text}{sub_html}</li>"
         return (
             f'<section class="slide body bullets{light_cls}">'
-            '<div class="body-wrap" data-fit-block>'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f"<ul>{li_html}</ul>"
             "</div>"
             "</section>"
@@ -1136,7 +1148,7 @@ class DeckHTMLLayoutManager:
         return (
             f'<section class="slide body cmptable{light_cls}">'
             '<div class="body-wrap">'
-            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
+            f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
             f'<div class="tbl-wrap">{table_html}{cap_html}</div>'
             "</div>"
             "</section>"
@@ -1309,8 +1321,8 @@ class DeckHTMLLayoutManager:
                 title = _e(m.group(2).strip() if m else str(item))
                 desc = ""
             desc_html = (
-                f'<p data-fit data-fit-fill data-fit-scope=".card" '
-                f'data-fit-min="12" data-fit-max="48">{desc}</p>'
+                f'<p data-fit data-fit-scope=".card" data-fit-lines="10" '
+                f'data-fit-min="12" data-fit-max="26">{desc}</p>'
             ) if desc else ""
             cards_html += (
                 f'<div class="card">'

@@ -25,7 +25,7 @@ def clear_benchmark_state():
         _clear_path(path)
         print(f'[CLEAN] reset {path}')
 
-def run_benchmark(clean=True, limit=None, speaker=None, title=None):
+def run_benchmark(clean=True, limit=None, speaker=None, title=None, institution=None):
     print('=' * 60)
     print('STARTING BENCHMARK PIPELINE')
     print('=' * 60)
@@ -39,6 +39,8 @@ def run_benchmark(clean=True, limit=None, speaker=None, title=None):
         gen_cmd.extend(['--speaker_information', speaker])
     if title is not None:
         gen_cmd.extend(['--lecture_title', title])
+    if institution is not None:
+        gen_cmd.extend(['--institution', institution])
         
     ret_gen = subprocess.run(gen_cmd).returncode
     if ret_gen != 0:
@@ -60,8 +62,9 @@ def _build_parser():
     parser.add_argument('--limit', type=int, default=None, help='Limit the number of PDFs processed from data/raw.')
     parser.add_argument('--speaker', type=str, default=None, help='Speaker information to pass to the slides.')
     parser.add_argument('--title', type=str, default=None, help='Override lecture title for the slides.')
+    parser.add_argument('--institution', type=str, default=None, help='Institution/organization of the speaker.')
     return parser
 
 if __name__ == '__main__':
     args = _build_parser().parse_args()
-    run_benchmark(clean=not args.no_clean, limit=args.limit, speaker=args.speaker, title=args.title)
+    run_benchmark(clean=not args.no_clean, limit=args.limit, speaker=args.speaker, title=args.title, institution=args.institution)

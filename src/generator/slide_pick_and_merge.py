@@ -10,15 +10,35 @@ from PIL import Image
 from typing import Dict, List, Optional
 from src.generator.deck_html_layout_manager import DeckHTMLLayoutManager
 from src.generator.theme_selection import select_theme
+from src.utils.config import Config
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+def _extract_institution(markdown: str) -> str:
+    fn_match = re.search(r'(\[\^\d+\]:.*?)(?=\n##|\Z)', markdown, re.DOTALL)
+    search_text = fn_match.group(1) if fn_match else markdown[:3000]
+    for pattern in [
+        r'University\s+of\s+[\w\s]{3,50}',
+        r'[\w\s]{3,40}\s+University',
+        r'Institute\s+of\s+[\w\s]{3,50}',
+        r'[\w\s]{3,40}\s+Institute\s+of\s+Technology',
+        r'College\s+of\s+[\w\s]{3,40}',
+        r'(?:Research\s+)?(?:Center|Centre)\s+(?:for|of)\s+[\w\s]{3,50}',
+    ]:
+        m = re.search(pattern, search_text, re.I)
+        if m:
+            result = m.group(0).strip().rstrip('., ')
+            if len(result) >= 8:
+                return result
+    return ''
 class SlidePickMerge:
 
-    def __init__(self, lecture_json_path: str, lecture_title: str, speaker_information: str, deck_dir: Path | None = None, date: str = ""):
+    def __init__(self, lecture_json_path: str, lecture_title: str, speaker_information: str, deck_dir: Path | None = None, date: str = "", institution: str = ""):
         self.lecture_json_path = Path(lecture_json_path).resolve()
         self.lecture_title = lecture_title
         self.speaker_information = speaker_information
+        self.institution = institution
         import datetime as _dt
-        self.date = date or _dt.date.today().strftime("%B %Y")
+        self.date = date or _dt.date.today().strftime("%d/%m/%Y")
         stem = self.lecture_json_path.stem
         parent = self.lecture_json_path.parent
         self.image_dist_path = parent / f'{stem}_image_distribution.json'
@@ -699,6 +719,19 @@ class SlidePickMerge:
         self._log_layout(sn, 'only_content', {'title': title, 'content': contents, 'light': light})
         return mgr.only_content(title, contents, light=light)
 
+    def _resolve_institution(self) -> str:
+        if self.institution:
+            return self.institution
+        try:
+            ctx_path = Config.CONTEXT_DIR / f'{self.lecture_id}.json'
+            if ctx_path.exists():
+                ctx = json.loads(ctx_path.read_text(encoding='utf-8'))
+                full_text = ctx.get('text_content', {}).get('markdown', '')
+                return _extract_institution(full_text)
+        except Exception:
+            pass
+        return ''
+
     def build(self) -> str:
         self._clear_public_assets()
         self._copy_assets()
@@ -706,6 +739,7 @@ class SlidePickMerge:
         self._content_idx = 0
         self._page_counter = 0
         self._deck_sections = []
+        self._resolved_institution = self._resolve_institution()
         short_title = self._summarise_title(self.lecture_title)
         self._short_title = short_title
         cover = self._mgr.config_and_greeting_slide(short_title=short_title)
@@ -717,8 +751,10 @@ class SlidePickMerge:
         for slide_entry in self.slides:
             self._deck_sections.append(self._inject_chrome(self._build_content_slide(slide_entry)))
         self._slide_counter += 1
-        end_slide = self._mgr.end_layout(end_text='Thank you')
-        self._log_layout(self._slide_counter, 'end_layout', {'end_text': 'Thank you'})
+        institution = self._resolved_institution
+        ack = 'The authors acknowledge all contributors and reviewers of this work.' if institution else ''
+        end_slide = self._mgr.end_layout(end_text='Thank you', institution=institution, acknowledgment=ack)
+        self._log_layout(self._slide_counter, 'end_layout', {'end_text': 'Thank you', 'institution': institution})
         self._deck_sections.append(end_slide)
         html_doc = self._mgr.build_html_document(
             sections=self._deck_sections,
@@ -732,6 +768,13 @@ class SlidePickMerge:
         log_path = self.lecture_json_path.parent / f'{self.lecture_id}_layout_distribution.json'
         with open(log_path, 'w', encoding='utf-8') as f:
             json.dump(self._layout_log, f, ensure_ascii=False, indent=2)
+        self._lecture.setdefault('metadata', {})['presentation_date'] = self.date
+        if self.speaker_information:
+            self._lecture['metadata']['speaker_information'] = self.speaker_information
+        if institution:
+            self._lecture['metadata']['institution'] = institution
+        with open(self.lecture_json_path, 'w', encoding='utf-8') as f:
+            json.dump(self._lecture, f, ensure_ascii=False, indent=2)
         return html_doc
 
     def _summarise_title(self, title: str) -> str:
@@ -740,5 +783,9 @@ class SlidePickMerge:
 
     def _inject_chrome(self, html: str) -> str:
         self._page_counter += 1
-        chrome = DeckHTMLLayoutManager._chrome(self._short_title, self._page_counter, self.date)
-        return html.replace('</section>', chrome + '</section>', 1)
+        chrome = DeckHTMLLayoutManager._chrome(
+            self._short_title, self._page_counter, self.date, self.speaker_information or "",
+            institution=self._resolved_institution,
+        )
+        blobs = '<div class="blobs"></div>'
+        return html.replace('</section>', blobs + chrome + '</section>', 1)

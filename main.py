@@ -11,7 +11,7 @@ import argparse
 import asyncio
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s', datefmt='%H:%M:%S')
 
-def gen_slide(document_path, lecture_title, speaker_information):
+def gen_slide(document_path, lecture_title, speaker_information, institution=''):
     print('Start time:', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
     start_time = time.time()
     document_id = os.path.splitext(os.path.basename(document_path))[0]
@@ -35,7 +35,7 @@ def gen_slide(document_path, lecture_title, speaker_information):
         t3 = time.time()
         print(f'[timer] multimodal: {t3 - t2:.2f}s')
         set_llm_phase('slidegen')
-        slide_gen(lecture_path, lecture_title, speaker_information)
+        slide_gen(lecture_path, lecture_title, speaker_information, institution=institution)
         t4 = time.time()
         print(f'[timer] slidegen: {t4 - t3:.2f}s')
         end_time = t4
@@ -60,12 +60,14 @@ def main():
     parser.add_argument('--document_path', default=None, help='Path to input PDF/Docx file')
     parser.add_argument('--lecture_title', default=None, help='Customized title of the lecture')
     parser.add_argument('--speaker_information', default=None, help='Speaker information')
+    parser.add_argument('--institution', default=None, help='Institution/organization of the speaker')
     parser.add_argument('--limit', help='Limit the number of documents to process')
     args = parser.parse_args()
     default_document_folder = Config.RAW_DIR
     document_path = args.document_path
     lecture_title = args.lecture_title
     speaker_information = args.speaker_information
+    institution = args.institution or ''
     limit = int(args.limit) if args.limit is not None else len(os.listdir(default_document_folder))
     if document_path is None and lecture_title is None:
         document_list = os.listdir(default_document_folder)
@@ -75,7 +77,7 @@ def main():
                 print(f'\nProcessing {count}/{limit}: {document_name} \n')
                 a_document_path = os.path.join(default_document_folder, document_name)
                 try:
-                    time_taken = gen_slide(a_document_path, lecture_title, speaker_information)
+                    time_taken = gen_slide(a_document_path, lecture_title, speaker_information, institution=institution)
                     print(f'[full time taken] {time_taken}s')
                 except Exception as e:
                     print(f'[ERROR] Failed to process {document_name}: {e}')
@@ -85,7 +87,7 @@ def main():
                     continue
     elif document_path:
         print(f'\nProcessing {document_path} \n')
-        time_taken = gen_slide(document_path, lecture_title, speaker_information)
+        time_taken = gen_slide(document_path, lecture_title, speaker_information, institution=institution)
         print(f'[full time taken] {time_taken}s')
     else:
         print("Your arguments is FAILED, let's read my README.md")
