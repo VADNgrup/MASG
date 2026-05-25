@@ -165,10 +165,7 @@ class SlidePickMerge:
             goal = str(slide_info.get('goal', '')).strip()
             if not goal:
                 continue
-            # Trim to first sentence, max ~12 words
-            first = re.split(r'(?<=[.!?])\s+', goal)[0]
-            words = first.split()
-            goals[num] = ' '.join(words[:12]) + ('…' if len(words) > 12 else '')
+            goals[num] = goal
         return goals
 
     def _build_toc_slide(self, contents: List[str]) -> str:
