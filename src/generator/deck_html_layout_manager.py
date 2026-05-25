@@ -417,12 +417,12 @@ class DeckHTMLLayoutManager:
     ) -> str:
         light_cls = " light" if light else ""
         items = content if isinstance(content, list) else []
-        cap_html = f'<div class="cap">{_e(caption)}</div>' if caption else ""
+        cap_html = (f'<figcaption data-fit data-fit-scope="figure" data-fit-lines="2" data-fit-min="14" data-fit-max="22">{_e(caption)}</figcaption>') if caption else ""
         img = self._img_tag(img_path, caption or title)
         return (
             f'<section class="slide body imgleft{light_cls}">'
             '<div class="body-wrap">'
-            f'<div class="img-slot">{img}{cap_html}</div>'
+            f'<figure><div class="img-slot">{img}</div>{cap_html}</figure>'
             '<div class="rhs" data-fit-block>'
             f'<h2 data-fit data-fit-lines="3" data-fit-min="48" data-fit-max="120">{_e(title)}</h2>'
             f"{self._ul(items)}"
@@ -443,7 +443,7 @@ class DeckHTMLLayoutManager:
     ) -> str:
         light_cls = " light" if light else ""
         items = content if isinstance(content, list) else []
-        cap_html = f'<div class="cap">{_e(caption)}</div>' if caption else ""
+        cap_html = (f'<figcaption data-fit data-fit-scope="figure" data-fit-lines="2" data-fit-min="14" data-fit-max="22">{_e(caption)}</figcaption>') if caption else ""
         img = self._img_tag(img_path, caption or title)
         return (
             f'<section class="slide body imgright{light_cls}">'
@@ -452,7 +452,7 @@ class DeckHTMLLayoutManager:
             f'<h2 data-fit data-fit-lines="3" data-fit-min="48" data-fit-max="120">{_e(title)}</h2>'
             f"{self._ul(items)}"
             "</div>"
-            f'<div class="img-slot">{img}{cap_html}</div>'
+            f'<figure><div class="img-slot">{img}</div>{cap_html}</figure>'
             "</div>"
             "</section>"
         )
@@ -469,13 +469,13 @@ class DeckHTMLLayoutManager:
     ) -> str:
         light_cls = " light" if light else ""
         items = content if isinstance(content, list) else []
-        cap_html = f'<div class="cap">{_e(caption)}</div>' if caption else ""
+        cap_html = (f'<figcaption data-fit data-fit-scope="figure" data-fit-lines="2" data-fit-min="14" data-fit-max="22">{_e(caption)}</figcaption>') if caption else ""
         img = self._img_tag(img_path, caption or title)
         return (
             f'<section class="slide body imgabove{light_cls}">'
             '<div class="body-wrap">'
             f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
-            f'<div class="img-slot">{img}{cap_html}</div>'
+            f'<figure><div class="img-slot">{img}</div>{cap_html}</figure>'
             f"{self._ul(items) if items else ''}"
             "</div>"
             "</section>"
@@ -493,14 +493,14 @@ class DeckHTMLLayoutManager:
     ) -> str:
         light_cls = " light" if light else ""
         items = content if isinstance(content, list) else []
-        cap_html = f'<div class="cap">{_e(caption)}</div>' if caption else ""
+        cap_html = (f'<figcaption data-fit data-fit-scope="figure" data-fit-lines="2" data-fit-min="14" data-fit-max="22">{_e(caption)}</figcaption>') if caption else ""
         img = self._img_tag(img_path, caption or title)
         return (
             f'<section class="slide body imgbelow{light_cls}">'
             '<div class="body-wrap">'
             f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="160">{_e(title)}</h2>'
             f"{self._ul(items) if items else ''}"
-            f'<div class="img-slot">{img}{cap_html}</div>'
+            f'<figure><div class="img-slot">{img}</div>{cap_html}</figure>'
             "</div>"
             "</section>"
         )
@@ -1309,13 +1309,13 @@ class DeckHTMLLayoutManager:
                 title = _e(m.group(2).strip() if m else str(item))
                 desc = ""
             desc_html = (
-                f'<p data-fit data-fit-scope=".card" data-fit-lines="20" '
-                f'data-fit-min="14" data-fit-max="24">{desc}</p>'
+                f'<p data-fit data-fit-fill data-fit-scope=".card" '
+                f'data-fit-min="12" data-fit-max="48">{desc}</p>'
             ) if desc else ""
             cards_html += (
                 f'<div class="card">'
                 f'<div class="n">{n_label}</div>'
-                f'<h3 data-fit data-fit-scope=".card" data-fit-lines="3" data-fit-min="18" data-fit-max="56">{title}</h3>'
+                f'<h3 data-fit data-fit-scope=".card" data-fit-lines="3" data-fit-min="16" data-fit-max="40">{title}</h3>'
                 f'{desc_html}'
                 '</div>'
             )
@@ -1323,7 +1323,7 @@ class DeckHTMLLayoutManager:
             f'<section class="slide body toc-cards{light_cls}">'
             '<div class="body-wrap">'
             f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="120">{_e(heading)}</h2>'
-            f'<div class="grid">{cards_html}</div>'
+            f'<div class="grid" data-fit-block>{cards_html}</div>'
             '</div>'
             '</section>'
         )

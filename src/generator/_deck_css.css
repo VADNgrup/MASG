@@ -673,13 +673,23 @@
     color: var(--dim);
     position: relative;
   }
-  .imgleft .img-slot .cap {
-    font-family: var(--font-body);
-    font-size: 24px;
-    color: var(--dim);
-    text-align: center;
-    max-width: 380px;
-    position: relative;
+  .imgleft figure,
+  .imgright figure {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+  }
+  .imgleft figure .img-slot,
+  .imgright figure .img-slot {
+    flex: 1;
+    min-height: 0;
+  }
+  .imgleft figure figcaption,
+  .imgright figure figcaption,
+  .imgabove figure figcaption,
+  .imgbelow figure figcaption {
+    flex-shrink: 0;
   }
   .imgleft .rhs {
     display: flex;
@@ -2224,10 +2234,17 @@
     margin: 0;
   }
   .imgabove h2 em { font-style: var(--display-italic, italic); color: var(--accent); }
-  .imgabove .img-slot {
+  .imgabove figure {
     flex: 1;
     min-height: 0;
     width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .imgabove figure .img-slot {
+    flex: 1;
+    min-height: 0;
   }
   .imgabove ul {
     list-style: none;
@@ -2290,10 +2307,17 @@
     width: 18px; height: 2px;
     background: var(--accent);
   }
-  .imgbelow .img-slot {
+  .imgbelow figure {
     flex: 1;
     min-height: 0;
     width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .imgbelow figure .img-slot {
+    flex: 1;
+    min-height: 0;
   }
 
   /* TWO IMAGE RIGHT — text left, 2 stacked images right */

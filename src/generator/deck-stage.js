@@ -102,6 +102,7 @@
     const minPx = parseInt(el.dataset.fitMin || '16', 10);
     const maxPx = parseInt(el.dataset.fitMax || '400', 10);
     const scopeSel = el.dataset.fitScope;
+    const fillHeight = 'fitFill' in el.dataset;
     const parent = scopeSel
       ? (el.closest(scopeSel) || el.parentElement)
       : (el.closest('.slide') || el.parentElement);
@@ -112,17 +113,32 @@
     const availW = scopeSel ? parent.offsetWidth - padH : parent.offsetWidth - 240;
 
     let lo = minPx, hi = maxPx, best = minPx;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      el.style.fontSize = mid + 'px';
-      const rawLH = getComputedStyle(el).lineHeight;
-      const lh = rawLH === 'normal' ? mid * 1.2 : parseFloat(rawLH);
-      const actualLines = lh > 0 ? Math.ceil(el.scrollHeight / lh) : Infinity;
-      if (el.scrollWidth <= availW && actualLines <= lines) {
-        best = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
+    if (fillHeight) {
+      const availH = el.offsetHeight;
+      if (availH <= 0) { el.style.fontSize = minPx + 'px'; return; }
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        el.style.fontSize = mid + 'px';
+        if (el.scrollHeight <= availH && el.scrollWidth <= availW) {
+          best = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+    } else {
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        el.style.fontSize = mid + 'px';
+        const rawLH = getComputedStyle(el).lineHeight;
+        const lh = rawLH === 'normal' ? mid * 1.2 : parseFloat(rawLH);
+        const actualLines = lh > 0 ? Math.ceil(el.scrollHeight / lh) : Infinity;
+        if (el.scrollWidth <= availW && actualLines <= lines) {
+          best = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
       }
     }
     el.style.fontSize = best + 'px';
