@@ -58,12 +58,13 @@ def run_pipeline(lecture_json_path: str, lecture_title: str | None = None, speak
         picker.build()
         print('[slide_gen] === Step 2: Slide construction complete ===')
 
-        js_src = _PROJECT_ROOT / 'src' / 'generator' / 'deck-stage.js'
-        if js_src.exists():
-            shutil.copy2(js_src, out_dir / 'deck-stage.js')
         print(f"  Open in a browser: file:///{html_path}")
     else:
         print(f'[slide_gen] Deck HTML is up to date: {html_path}')
+
+    js_src = _PROJECT_ROOT / 'src' / 'generator' / 'deck-stage.js'
+    if js_src.exists():
+        shutil.copy2(js_src, out_dir / 'deck-stage.js')
 
     # Always regenerate PPTX — fast (no LLM calls), layout_log is the source of truth
     pptx_needs_rebuild = True

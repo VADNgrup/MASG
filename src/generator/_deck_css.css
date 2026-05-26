@@ -1,3 +1,6 @@
+  deck-stage:not([data-ready]) {
+    visibility: hidden;
+  }
 
   /* theme-tokens */
   deck-stage {
@@ -167,7 +170,7 @@
   .cover h1 {
     font-family: var(--font-display);
     font-weight: 400;
-    font-size: 220px;
+    font-size: 60px;
     line-height: 0.96;
     letter-spacing: -0.035em;
     margin: 0;
@@ -1274,7 +1277,7 @@
 
   /* light-modifier */
   .slide.light {
-    background: #f5f3ee;
+    background: var(--light-bg, #f5f3ee);
     color: #0b0d12;
     --accent: var(--accent-light);
   }
@@ -1384,6 +1387,7 @@
     grid-template-columns: 1fr 1fr;
     gap: 4px 80px;
     flex: 1;
+    min-height: 0;
     align-content: start;
   }
   .toc .toc-row {
@@ -2867,6 +2871,9 @@
     list-style: none;
     padding: 36px 48px; margin: 0;
     display: flex;
+    flex: 1;
+    min-height: 0;
+    font-size: 30px;
     flex-direction: column;
     gap: 28px;
     flex: 1;
@@ -2875,7 +2882,7 @@
     border-radius: 0 10px 10px 0;
   }
   .bullets ul li {
-    font-size: 30px;
+    font-size: 1em;
     line-height: 1.5;
     color: var(--text);
     padding-left: 44px;
@@ -3121,18 +3128,17 @@
     gap: 24px;
     flex: 1;
     min-height: 0;
-    align-content: stretch;
+    align-content: start;
   }
   .toc-cards .card {
     background: rgba(255,255,255,0.06);
     border: 1px solid rgba(255,255,255,0.10);
     border-radius: 12px;
-    padding: 36px 40px;
+    padding: 32px 36px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
     overflow: hidden;
-    min-height: 0;
   }
   .toc-cards .card .n {
     font-family: var(--font-mono);
@@ -3142,19 +3148,18 @@
   }
   .toc-cards .card h3 {
     font-family: var(--font-display);
-    font-weight: 400;
-    font-size: 56px;
-    line-height: 1.15;
+    font-weight: 700;
+    font-size: 32px;
+    line-height: 1.2;
     letter-spacing: -0.01em;
     margin: 0;
+    overflow: hidden;
   }
   .toc-cards .card p {
-    font-size: 24px;
+    font-size: 22px;
     line-height: 1.5;
     color: rgba(255,255,255,0.70);
     margin: 0;
-    flex: 1;
-    min-height: 0;
     overflow: hidden;
   }
   .slide.light.toc-cards .card {

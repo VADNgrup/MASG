@@ -193,18 +193,17 @@ class SlidePickMerge:
         if len(contents) > 15:
             contents = [item for item in contents if re.match('^\\d+\\.\\s+\\S', item) and item.split('.')[0].strip().isdigit()]
         self._slide_counter += 1
-        light = random.random() < 0.5
         heading = 'Outline'
         candidates = ['toc', 'toc_vertical', 'toc_described']
         if 3 <= len(contents) <= 6:
             candidates.append('toc_cards')
         variant = random.choice(candidates)
         if variant == 'toc_vertical':
-            self._log_layout(self._slide_counter, 'toc_vertical_layout', {'toc_content': contents, 'heading': heading, 'light': light})
-            return mgr.toc_vertical_layout(contents, heading=heading, light=light)
+            self._log_layout(self._slide_counter, 'toc_vertical_layout', {'toc_content': contents, 'heading': heading})
+            return mgr.toc_vertical_layout(contents, heading=heading)
         if variant == 'toc_described':
-            self._log_layout(self._slide_counter, 'toc_described_layout', {'toc_content': contents, 'heading': heading, 'light': light})
-            return mgr.toc_described_layout(contents, heading=heading, light=light)
+            self._log_layout(self._slide_counter, 'toc_described_layout', {'toc_content': contents, 'heading': heading})
+            return mgr.toc_described_layout(contents, heading=heading)
         if variant == 'toc_cards':
             goals = self._get_section_goals()
             card_items = []
@@ -213,12 +212,12 @@ class SlidePickMerge:
                 num = int(m.group(1)) if m else 0
                 title_text = m.group(2).strip() if m else str(item)
                 card_items.append({'n': str(num).zfill(2), 'title': title_text, 'description': goals.get(num, '')})
-            self._log_layout(self._slide_counter, 'toc_cards_layout', {'toc_content': card_items, 'heading': heading, 'light': light})
-            return mgr.toc_cards_layout(card_items, heading=heading, light=light)
-        self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': contents, 'heading': heading, 'light': light})
-        return mgr.toc_layout(contents, heading=heading, light=light)
+            self._log_layout(self._slide_counter, 'toc_cards_layout', {'toc_content': card_items, 'heading': heading})
+            return mgr.toc_cards_layout(card_items, heading=heading)
+        self._log_layout(self._slide_counter, 'toc_layout', {'toc_content': contents, 'heading': heading})
+        return mgr.toc_layout(contents, heading=heading)
 
-    def _pick_image_layout(self, slide_num: int, title: str, contents: List[str], img_url: str, img_path: str, img2_url: Optional[str]=None, img2_path: Optional[str]=None, caption: Optional[str]=None, caption2: Optional[str]=None, light: bool = False) -> str:
+    def _pick_image_layout(self, slide_num: int, title: str, contents: List[str], img_url: str, img_path: str, img2_url: Optional[str]=None, img2_path: Optional[str]=None, caption: Optional[str]=None, caption2: Optional[str]=None) -> str:
         mgr = self._mgr
         caption = self._normalise_image_caption(caption, title)
         caption2 = self._normalise_image_caption(caption2, title)
@@ -227,36 +226,36 @@ class SlidePickMerge:
             ratio2 = self._img_aspect_ratio(img2_path)
             both_landscape = ratio1 >= 1.77 and ratio2 >= 1.77
             if both_landscape:
-                _args = {'title': title, 'content': contents, 'img1_path': img_url, 'img2_path': img2_url, 'caption1': caption, 'caption2': caption2, 'light': light}
+                _args = {'title': title, 'content': contents, 'img1_path': img_url, 'img2_path': img2_url, 'caption1': caption, 'caption2': caption2}
                 if random.random() < 0.5:
                     self._log_layout(slide_num, 'two_image_above_layout', _args)
-                    return mgr.two_image_above_layout(title, contents, img_url, img2_url, caption1=caption, caption2=caption2, light=light)
+                    return mgr.two_image_above_layout(title, contents, img_url, img2_url, caption1=caption, caption2=caption2)
                 else:
                     self._log_layout(slide_num, 'two_image_below_layout', _args)
-                    return mgr.two_image_below_layout(title, contents, img_url, img2_url, caption1=caption, caption2=caption2, light=light)
+                    return mgr.two_image_below_layout(title, contents, img_url, img2_url, caption1=caption, caption2=caption2)
             else:
-                _args = {'title': title, 'content': contents, 'img1_path': img_url, 'img2_path': img2_url, 'image_width': '30%', 'caption1': caption, 'caption2': caption2, 'light': light}
+                _args = {'title': title, 'content': contents, 'img1_path': img_url, 'img2_path': img2_url, 'image_width': '30%', 'caption1': caption, 'caption2': caption2}
                 if random.random() < 0.5:
                     self._log_layout(slide_num, 'two_image_right_layout', _args)
-                    return mgr.two_image_right_layout(title, contents, img_url, img2_url, caption1=caption, caption2=caption2, light=light)
+                    return mgr.two_image_right_layout(title, contents, img_url, img2_url, caption1=caption, caption2=caption2)
                 else:
                     self._log_layout(slide_num, 'two_image_left_layout', _args)
-                    return mgr.two_image_left_layout(title, contents, img_url, img2_url, caption1=caption, caption2=caption2, light=light)
+                    return mgr.two_image_left_layout(title, contents, img_url, img2_url, caption1=caption, caption2=caption2)
         ratio = self._img_aspect_ratio(img_path)
-        _args = {'title': title, 'content': contents, 'img_path': img_url, 'image_width': '40%', 'caption': caption, 'light': light}
+        _args = {'title': title, 'content': contents, 'img_path': img_url, 'image_width': '40%', 'caption': caption}
         if ratio > 1.77:
             if random.random() < 0.5:
                 self._log_layout(slide_num, 'image_above_layout', _args)
-                return mgr.image_above_layout(title, contents, img_url, caption=caption, light=light)
+                return mgr.image_above_layout(title, contents, img_url, caption=caption)
             else:
                 self._log_layout(slide_num, 'image_below_layout', _args)
-                return mgr.image_below_layout(title, contents, img_url, caption=caption, light=light)
+                return mgr.image_below_layout(title, contents, img_url, caption=caption)
         elif random.random() < 0.5:
             self._log_layout(slide_num, 'image_right_layout', _args)
-            return mgr.image_right_layout(title, contents, img_url, caption=caption, light=light)
+            return mgr.image_right_layout(title, contents, img_url, caption=caption)
         else:
             self._log_layout(slide_num, 'image_left_layout', _args)
-            return mgr.image_left_layout(title, contents, img_url, caption=caption, light=light)
+            return mgr.image_left_layout(title, contents, img_url, caption=caption)
 
     @staticmethod
     def _normalise_image_caption(caption: Optional[str], slide_title: str) -> Optional[str]:
@@ -472,75 +471,75 @@ class SlidePickMerge:
             merged.append(text)
         return merged
 
-    def _apply_layout_hint(self, sn: int, title: str, contents: List[str], layout_hint: str, light: bool) -> Optional[str]:
+    def _apply_layout_hint(self, sn: int, title: str, contents: List[str], layout_hint: str) -> Optional[str]:
         mgr = self._mgr
         n = len(contents)
         if layout_hint == 'key_points_layout' and 3 <= n <= 6:
             pts = self._bullets_to_key_points(contents)
-            self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts, 'light': light})
-            return mgr.key_points_layout(title, pts, light=light)
+            self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts})
+            return mgr.key_points_layout(title, pts)
         if layout_hint == 'conclusion_cards_layout' and 3 <= n <= 5:
             conc = self._bullets_to_conclusions(contents)
-            self._log_layout(sn, 'conclusion_cards_layout', {'title': title, 'conclusions': conc, 'light': light})
-            return mgr.conclusion_cards_layout(title, conc, light=light)
+            self._log_layout(sn, 'conclusion_cards_layout', {'title': title, 'conclusions': conc})
+            return mgr.conclusion_cards_layout(title, conc)
         if layout_hint == 'numbered_conclusions_layout' and 4 <= n <= 7:
             conc = self._bullets_to_conclusions(contents)
-            self._log_layout(sn, 'numbered_conclusions_layout', {'title': title, 'conclusions': conc, 'light': light})
-            return mgr.numbered_conclusions_layout(title, conc, light=light)
+            self._log_layout(sn, 'numbered_conclusions_layout', {'title': title, 'conclusions': conc})
+            return mgr.numbered_conclusions_layout(title, conc)
         if layout_hint == 'three_cols_content_layout' and 3 <= n <= 4:
             cols = self._bullets_to_three_cols(contents[:3])
-            self._log_layout(sn, 'three_cols_content_layout', {'title': title, 'cols': cols, 'light': light})
-            return mgr.three_cols_content_layout(title, cols, light=light)
+            self._log_layout(sn, 'three_cols_content_layout', {'title': title, 'cols': cols})
+            return mgr.three_cols_content_layout(title, cols)
         if layout_hint == 'grid_2x2_layout' and 4 <= n <= 5:
             cells = self._bullets_to_grid_cells(contents[:4])
-            self._log_layout(sn, 'grid_2x2_layout', {'title': title, 'cells': cells, 'light': light})
-            return mgr.grid_2x2_layout(title, cells, light=light)
+            self._log_layout(sn, 'grid_2x2_layout', {'title': title, 'cells': cells})
+            return mgr.grid_2x2_layout(title, cells)
         if layout_hint == 'steps_horizontal_layout' and 3 <= n <= 5:
             steps = self._bullets_to_steps(contents)
-            self._log_layout(sn, 'steps_horizontal_layout', {'title': title, 'steps': steps, 'light': light})
-            return mgr.steps_horizontal_layout(title, steps, light=light)
+            self._log_layout(sn, 'steps_horizontal_layout', {'title': title, 'steps': steps})
+            return mgr.steps_horizontal_layout(title, steps)
         if layout_hint == 'two_cols_content_layout' and n >= 4:
-            self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents, 'light': light})
-            return mgr.two_cols_content_layout(title, contents, light=light)
+            self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents})
+            return mgr.two_cols_content_layout(title, contents)
         if layout_hint == 'only_content':
-            self._log_layout(sn, 'only_content', {'title': title, 'content': contents, 'light': light})
-            return mgr.only_content(title, contents, light=light)
+            self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
+            return mgr.only_content(title, contents)
         if layout_hint == 'research_question_layout' and n >= 2:
             main_q = contents[0]
             sub_qs = contents[1:4]
-            self._log_layout(sn, 'research_question_layout', {'title': title, 'main_question': main_q, 'sub_questions': sub_qs, 'light': light})
-            return mgr.research_question_layout(title, main_q, sub_qs, light=light)
+            self._log_layout(sn, 'research_question_layout', {'title': title, 'main_question': main_q, 'sub_questions': sub_qs})
+            return mgr.research_question_layout(title, main_q, sub_qs)
         if layout_hint == 'quote_layout' and n >= 1:
             q = contents[0]
             attr = contents[1] if n >= 2 else ''
-            self._log_layout(sn, 'quote_layout', {'quote': q, 'attribution': attr, 'light': light})
-            return mgr.quote_layout(q, attr, light=light)
+            self._log_layout(sn, 'quote_layout', {'quote': q, 'attribution': attr})
+            return mgr.quote_layout(q, attr)
         if layout_hint == 'section_divider_layout':
             _m = re.match(r'^(\d+)[\.\):]?\s*', title)
             sec_num = _m.group(1).zfill(2) if _m else ''
             clean_title = re.sub(r'^\d+[\.\):]?\s*', '', title).strip() or title
-            self._log_layout(sn, 'section_divider_layout', {'title': clean_title, 'section_number': sec_num, 'light': light})
-            return mgr.section_divider_layout(clean_title, section_number=sec_num, light=light)
+            self._log_layout(sn, 'section_divider_layout', {'title': clean_title, 'section_number': sec_num})
+            return mgr.section_divider_layout(clean_title, section_number=sec_num)
         if layout_hint == 'editorial_layout' and n >= 1:
             lede = ' '.join(contents)
-            self._log_layout(sn, 'editorial_layout', {'title': title, 'lede': lede, 'light': light})
+            self._log_layout(sn, 'editorial_layout', {'title': title, 'lede': lede})
             return mgr.editorial_layout(title, lede)
         if layout_hint == 'agenda_layout' and n >= 2:
             items = self._bullets_to_agenda_items(contents)
-            self._log_layout(sn, 'agenda_layout', {'title': title, 'items': items, 'light': light})
-            return mgr.agenda_layout(title, items, light=light)
+            self._log_layout(sn, 'agenda_layout', {'title': title, 'items': items})
+            return mgr.agenda_layout(title, items)
         if layout_hint == 'stats_cards_layout' and 2 <= n <= 4:
             stats = [{'value': '', 'label': b, 'body': ''} for b in contents[:4]]
-            self._log_layout(sn, 'stats_cards_layout', {'title': title, 'stats': stats, 'light': light})
-            return mgr.stats_cards_layout(title, stats, light=light)
+            self._log_layout(sn, 'stats_cards_layout', {'title': title, 'stats': stats})
+            return mgr.stats_cards_layout(title, stats)
         if layout_hint == 'nested_bullets_layout' and n >= 1:
             items = [{'text': b, 'sub': []} for b in contents]
-            self._log_layout(sn, 'nested_bullets_layout', {'title': title, 'items': items, 'light': light})
-            return mgr.nested_bullets_layout(title, items, light=light)
+            self._log_layout(sn, 'nested_bullets_layout', {'title': title, 'items': items})
+            return mgr.nested_bullets_layout(title, items)
         if layout_hint == 'pricing_cards_layout' and 2 <= n <= 4:
             cards = self._bullets_to_pricing_cards(contents)
-            self._log_layout(sn, 'pricing_cards_layout', {'title': title, 'cards': cards, 'light': light})
-            return mgr.pricing_cards_layout(title, cards, light=light)
+            self._log_layout(sn, 'pricing_cards_layout', {'title': title, 'cards': cards})
+            return mgr.pricing_cards_layout(title, cards)
         return None
 
     def _build_content_slide(self, slide_entry: dict) -> str:
@@ -565,7 +564,6 @@ class SlidePickMerge:
         self._slide_counter += 1
         sn = self._slide_counter
         self._content_idx += 1
-        light = random.random() < 0.5
         has_images = num in self._image_dist
         has_table_dist = num in self._table_dist
         if stype == 'comparison':
@@ -574,14 +572,14 @@ class SlidePickMerge:
             if not table_md and isinstance(contents, str) and '|' in contents:
                 table_md = contents
             if table_md and '|' in table_md:
-                self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md, 'light': light})
-                return mgr.comparison_layout(title, table_md, light=light)
-            self._log_layout(sn, 'only_content', {'title': title, 'content': contents, 'light': light})
-            return mgr.only_content(title, contents if isinstance(contents, list) else [str(contents)], light=light)
+                self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md})
+                return mgr.comparison_layout(title, table_md)
+            self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
+            return mgr.only_content(title, contents if isinstance(contents, list) else [str(contents)])
         if stype == 'two_sub_contents':
             if isinstance(contents, list) and len(contents) <= 2:
-                self._log_layout(sn, 'only_content', {'title': title, 'content': contents, 'light': light})
-                return mgr.only_content(title, contents, light=light)
+                self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
+                return mgr.only_content(title, contents)
             if isinstance(contents, dict):
                 keys = list(contents.keys())
                 sub_title_1 = keys[0] if len(keys) > 0 else 'Part 1'
@@ -596,20 +594,20 @@ class SlidePickMerge:
             if random.random() < 0.30:
                 _left  = (sub_content_1 if isinstance(sub_content_1, list) else [str(sub_content_1)])[:4]
                 _right = (sub_content_2 if isinstance(sub_content_2, list) else [str(sub_content_2)])[:4]
-                _args2 = {'left_title': sub_title_1, 'left_items': _left, 'right_title': sub_title_2, 'right_items': _right, 'light': light}
+                _args2 = {'left_title': sub_title_1, 'left_items': _left, 'right_title': sub_title_2, 'right_items': _right}
                 self._log_layout(sn, 'split_contrast_layout', _args2)
-                return mgr.split_contrast_layout(sub_title_1, _left, sub_title_2, _right, light=light)
-            self._log_layout(sn, 'two_contents_in_a_slide_layout', {'title': title, 'sub_title_1': sub_title_1, 'sub_title_2': sub_title_2, 'sub_content_1': sub_content_1, 'sub_content_2': sub_content_2, 'light': light})
-            return mgr.two_contents_in_a_slide_layout(title, sub_title_1, sub_title_2, sub_content_1, sub_content_2, light=light)
+                return mgr.split_contrast_layout(sub_title_1, _left, sub_title_2, _right)
+            self._log_layout(sn, 'two_contents_in_a_slide_layout', {'title': title, 'sub_title_1': sub_title_1, 'sub_title_2': sub_title_2, 'sub_content_1': sub_content_1, 'sub_content_2': sub_content_2})
+            return mgr.two_contents_in_a_slide_layout(title, sub_title_1, sub_title_2, sub_content_1, sub_content_2)
         if stype == 'have_formula':
             latex = self._sanitise_latex(slide_info.get('latex_block_formula') or '')
-            _args = {'title': title, 'latex_formula_block': latex, 'content': contents, 'light': light}
+            _args = {'title': title, 'latex_formula_block': latex, 'content': contents}
             if random.random() < 0.5:
                 self._log_layout(sn, 'formula_top_layout', _args)
-                return mgr.formula_top_layout(title, latex, contents, light=light)
+                return mgr.formula_top_layout(title, latex, contents)
             else:
                 self._log_layout(sn, 'formula_below_layout', _args)
-                return mgr.formula_below_layout(title, latex, contents, light=light)
+                return mgr.formula_below_layout(title, latex, contents)
         if stype == 'have_table':
             table_obj = slide_info.get('table') or {}
             table_caption = table_obj.get('table_caption', None)
@@ -619,33 +617,33 @@ class SlidePickMerge:
                     image_url = self._to_assets_path(image_table_path)
                     ratio = self._img_aspect_ratio(image_table_path)
                     image_width = '90%' if ratio >= 1.0 else '60%'
-                    self._log_layout(sn, 'image_above_layout', {'title': title, 'content': [], 'img_path': image_url, 'image_width': image_width, 'caption': table_caption, 'light': light})
-                    return mgr.image_above_layout(title, [], image_url, image_width=image_width, caption=table_caption, light=light)
+                    self._log_layout(sn, 'image_above_layout', {'title': title, 'content': [], 'img_path': image_url, 'image_width': image_width, 'caption': table_caption})
+                    return mgr.image_above_layout(title, [], image_url, image_width=image_width, caption=table_caption)
             if has_images:
                 img_entries = self._image_dist[num]
                 if len(img_entries) >= 2:
                     img1 = img_entries[0]
                     img2 = img_entries[1]
-                    return self._pick_image_layout(sn, title, contents, self._to_assets_path(img1['image_path']), img1['image_path'], self._to_assets_path(img2['image_path']), img2['image_path'], caption=img1.get('caption'), caption2=img2.get('caption'), light=light)
+                    return self._pick_image_layout(sn, title, contents, self._to_assets_path(img1['image_path']), img1['image_path'], self._to_assets_path(img2['image_path']), img2['image_path'], caption=img1.get('caption'), caption2=img2.get('caption'))
                 else:
                     img = img_entries[0]
-                    return self._pick_image_layout(sn, title, contents, self._to_assets_path(img['image_path']), img['image_path'], caption=img.get('caption'), light=light)
+                    return self._pick_image_layout(sn, title, contents, self._to_assets_path(img['image_path']), img['image_path'], caption=img.get('caption'))
             table_md = table_obj.get('table_markdown') or ''
             if table_md and '|' in table_md:
-                self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md, 'light': light})
-                return mgr.comparison_layout(title, table_md, light=light)
-            self._log_layout(sn, 'only_content', {'title': title, 'content': contents, 'light': light})
-            return mgr.only_content(title, contents, light=light)
+                self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md})
+                return mgr.comparison_layout(title, table_md)
+            self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
+            return mgr.only_content(title, contents)
         layout_hint = slide_entry.get('layout_hint')
         if has_images:
             img_entries = self._image_dist[num]
             if len(img_entries) >= 2:
                 img1 = img_entries[0]
                 img2 = img_entries[1]
-                return self._pick_image_layout(sn, title, contents, self._to_assets_path(img1['image_path']), img1['image_path'], self._to_assets_path(img2['image_path']), img2['image_path'], caption=img1.get('caption'), caption2=img2.get('caption'), light=light)
+                return self._pick_image_layout(sn, title, contents, self._to_assets_path(img1['image_path']), img1['image_path'], self._to_assets_path(img2['image_path']), img2['image_path'], caption=img1.get('caption'), caption2=img2.get('caption'))
             else:
                 img = img_entries[0]
-                return self._pick_image_layout(sn, title, contents, self._to_assets_path(img['image_path']), img['image_path'], caption=img.get('caption'), light=light)
+                return self._pick_image_layout(sn, title, contents, self._to_assets_path(img['image_path']), img['image_path'], caption=img.get('caption'))
         if has_table_dist:
             tbl_entry = self._table_dist[num]
             image_table_path = tbl_entry.get('image_table_path')
@@ -654,70 +652,70 @@ class SlidePickMerge:
                 table_caption = tbl_entry.get('table_caption')
                 ratio = self._img_aspect_ratio(image_table_path)
                 image_width = '90%' if ratio >= 1.0 else '60%'
-                self._log_layout(sn, 'image_above_layout', {'title': title, 'content': [], 'img_path': image_url, 'image_width': image_width, 'caption': table_caption, 'light': light})
-                return mgr.image_above_layout(title, [], image_url, image_width=image_width, caption=table_caption, light=light)
+                self._log_layout(sn, 'image_above_layout', {'title': title, 'content': [], 'img_path': image_url, 'image_width': image_width, 'caption': table_caption})
+                return mgr.image_above_layout(title, [], image_url, image_width=image_width, caption=table_caption)
         if isinstance(contents, list):
             n = len(contents)
             total_chars = sum(len(s) for s in contents)
             split_ok = self._bullets_are_split_friendly(contents)
             if layout_hint:
-                hinted = self._apply_layout_hint(sn, title, contents, layout_hint, light)
+                hinted = self._apply_layout_hint(sn, title, contents, layout_hint)
                 if hinted is not None:
                     return hinted
             if n == 3:
                 pick = random.random()
                 if pick < 0.30 and split_ok:
                     cols = self._bullets_to_three_cols(contents)
-                    self._log_layout(sn, 'three_cols_content_layout', {'title': title, 'cols': cols, 'light': light})
-                    return mgr.three_cols_content_layout(title, cols, light=light)
+                    self._log_layout(sn, 'three_cols_content_layout', {'title': title, 'cols': cols})
+                    return mgr.three_cols_content_layout(title, cols)
                 if pick < 0.55 and split_ok:
                     conc = self._bullets_to_conclusions(contents)
-                    self._log_layout(sn, 'conclusion_cards_layout', {'title': title, 'conclusions': conc, 'light': light})
-                    return mgr.conclusion_cards_layout(title, conc, light=light)
+                    self._log_layout(sn, 'conclusion_cards_layout', {'title': title, 'conclusions': conc})
+                    return mgr.conclusion_cards_layout(title, conc)
                 if pick < 0.80 and split_ok:
                     pts = self._bullets_to_key_points(contents)
-                    self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts, 'light': light})
-                    return mgr.key_points_layout(title, pts, light=light)
+                    self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts})
+                    return mgr.key_points_layout(title, pts)
 
             elif n == 4:
                 pick = random.random()
                 if pick < 0.28 and split_ok:
                     cells = self._bullets_to_grid_cells(contents)
-                    self._log_layout(sn, 'grid_2x2_layout', {'title': title, 'cells': cells, 'light': light})
-                    return mgr.grid_2x2_layout(title, cells, light=light)
+                    self._log_layout(sn, 'grid_2x2_layout', {'title': title, 'cells': cells})
+                    return mgr.grid_2x2_layout(title, cells)
                 if pick < 0.52 and split_ok:
                     conc = self._bullets_to_conclusions(contents)
-                    self._log_layout(sn, 'conclusion_cards_layout', {'title': title, 'conclusions': conc, 'light': light})
-                    return mgr.conclusion_cards_layout(title, conc, light=light)
+                    self._log_layout(sn, 'conclusion_cards_layout', {'title': title, 'conclusions': conc})
+                    return mgr.conclusion_cards_layout(title, conc)
                 if pick < 0.75 and split_ok:
                     pts = self._bullets_to_key_points(contents)
-                    self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts, 'light': light})
-                    return mgr.key_points_layout(title, pts, light=light)
+                    self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts})
+                    return mgr.key_points_layout(title, pts)
                 if total_chars > 420 or any(len(s) > 88 for s in contents):
-                    self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents, 'light': light})
-                    return mgr.two_cols_content_layout(title, contents, light=light)
+                    self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents})
+                    return mgr.two_cols_content_layout(title, contents)
             elif 5 <= n <= 6:
                 pick = random.random()
                 if pick < 0.25 and split_ok:
                     pts = self._bullets_to_key_points(contents)
-                    self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts, 'light': light})
-                    return mgr.key_points_layout(title, pts, light=light)
+                    self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts})
+                    return mgr.key_points_layout(title, pts)
                 if pick < 0.47 and split_ok:
                     conc = self._bullets_to_conclusions(contents)
-                    self._log_layout(sn, 'numbered_conclusions_layout', {'title': title, 'conclusions': conc, 'light': light})
-                    return mgr.numbered_conclusions_layout(title, conc, light=light)
+                    self._log_layout(sn, 'numbered_conclusions_layout', {'title': title, 'conclusions': conc})
+                    return mgr.numbered_conclusions_layout(title, conc)
                 if pick < 0.62 and split_ok:
                     steps = self._bullets_to_steps(contents)
-                    self._log_layout(sn, 'steps_horizontal_layout', {'title': title, 'steps': steps, 'light': light})
-                    return mgr.steps_horizontal_layout(title, steps, light=light)
+                    self._log_layout(sn, 'steps_horizontal_layout', {'title': title, 'steps': steps})
+                    return mgr.steps_horizontal_layout(title, steps)
                 if total_chars > 420 or any(len(s) > 88 for s in contents):
-                    self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents, 'light': light})
-                    return mgr.two_cols_content_layout(title, contents, light=light)
+                    self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents})
+                    return mgr.two_cols_content_layout(title, contents)
             elif n >= 2 and ((total_chars > 420 and n >= 4) or any(len(s) > 88 for s in contents)):
-                self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents, 'light': light})
-                return mgr.two_cols_content_layout(title, contents, light=light)
-        self._log_layout(sn, 'only_content', {'title': title, 'content': contents, 'light': light})
-        return mgr.only_content(title, contents, light=light)
+                self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents})
+                return mgr.two_cols_content_layout(title, contents)
+        self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
+        return mgr.only_content(title, contents)
 
     def _resolve_institution(self) -> str:
         if self.institution:

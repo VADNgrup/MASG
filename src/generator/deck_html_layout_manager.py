@@ -141,11 +141,47 @@ _THEMES: dict[str, dict] = {
             "mono": "'IBM Plex Mono', monospace",
         },
     },
+    "ivory": {
+        "cover_bg": "linear-gradient(135deg, #2c2c3e 0%, #1a1a2e 100%)",
+        "end_bg": "radial-gradient(circle at top, #2c2c3e 0%, #0f0f1e 72%)",
+        "accent": "#c9a96e",
+        "accent_light": "#7a4f2e",
+        "light_bg": "#f5f3ee",
+        "text": "#f8fafc",
+        "dim": "rgba(248, 250, 252, 0.55)",
+        "cards": ["#7a4f2e", "#4a6fa5", "#5a8a5a", "#7a5c8a"],
+        "panel": "dark",
+        "light": True,
+        "font": {
+            "display": "'Cormorant Garamond', Georgia, serif",
+            "body": "'Work Sans', system-ui, sans-serif",
+            "mono": "'IBM Plex Mono', ui-monospace, monospace",
+        },
+    },
+    "sage": {
+        "cover_bg": "linear-gradient(135deg, #1b3a2d 0%, #0f2318 50%, #071a0f 100%)",
+        "end_bg": "radial-gradient(circle at top, #1b3a2d 0%, #071a0f 72%)",
+        "accent": "#7ecba1",
+        "accent_light": "#1d6b45",
+        "light_bg": "#eef4ef",
+        "text": "#f0faf3",
+        "dim": "rgba(240, 250, 243, 0.55)",
+        "cards": ["#1d6b45", "#2e6da4", "#7a5c8a", "#8b6914"],
+        "panel": "dark",
+        "light": True,
+        "font": {
+            "display": "'Lora', Georgia, serif",
+            "body": "'Source Sans 3', system-ui, sans-serif",
+            "mono": "'JetBrains Mono', ui-monospace, monospace",
+        },
+    },
 }
 _THEME_DEFAULT = _THEMES["frankfurt"]
 
 def _e(text: str) -> str:
-    return _html.escape(str(text or ""), quote=False)
+    # Strip stray HTML tags (e.g. <br>) that sometimes appear in LLM-generated data fields
+    cleaned = re.sub(r'<[^>]+>', ' ', str(text or "")).strip()
+    return _html.escape(cleaned, quote=False)
 
 def _li(items: List[str]) -> str:
     return "".join(f"<li>{_e(item)}</li>" for item in items)
@@ -168,19 +204,22 @@ class DeckHTMLLayoutManager:
         t = _THEMES.get(theme, _THEME_DEFAULT)
         self._accent = heading_color_code or t["accent"]
         self._t = t
+        self._light: bool = bool(t.get("light", False))
 
-                                                                               
+
 
     def _theme_vars(self) -> str:
         t = self._t
         c = t["cards"]
         panel_text = "#0b0d12" if t["panel"] == "dark" else "#ffffff"
         accent_light = t.get("accent_light", "#b45309")
+        light_bg = t.get("light_bg", "#f5f3ee")
         return (
             f"--cover-bg:{t['cover_bg']};"
             f"--end-bg:{t['end_bg']};"
             f"--accent:{t['accent']};"
             f"--accent-light:{accent_light};"
+            f"--light-bg:{light_bg};"
             f"--text:{t['text']};"
             f"--dim:{t['dim']};"
             f"--c1:{c[0]};--c2:{c[1]};--c3:{c[2]};--c4:{c[3]};"
@@ -219,6 +258,10 @@ class DeckHTMLLayoutManager:
     def _ul(items: List[str]) -> str:
         return "<ul>" + _li(items) + "</ul>"
 
+    @staticmethod
+    def _ul_fit(items: List[str]) -> str:
+        return '<ul data-fit data-fit-fill data-fit-scope=".body-wrap" data-fit-min="20" data-fit-max="52">' + _li(items) + "</ul>"
+
                                                                                
     def _slide_sep(self) -> str:
         return ""
@@ -231,7 +274,7 @@ class DeckHTMLLayoutManager:
             '<section class="slide cover">'
             '<div class="body-wrap">'
             '<div class="eyebrow"></div>'
-            f'<h1 data-fit data-fit-lines="2" data-fit-min="60" data-fit-max="140">{st}</h1>'
+            f'<h1 data-fit data-fit-lines="2" data-fit-min="60" data-fit-max="100">{st}</h1>'
             '<div class="meta-row">'
             f'<div class="by">Presented by <b>{author}</b></div>'
             "</div>"
@@ -244,9 +287,8 @@ class DeckHTMLLayoutManager:
         self,
         toc_content: List[str],
         heading: str = "Table of Contents",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         rows = ""
         for item in toc_content:
             m = re.match(r"^(\d+)\.\s*(.*)", item)
@@ -261,7 +303,7 @@ class DeckHTMLLayoutManager:
             f'<section class="slide body toc{light_cls}">'
             '<div class="body-wrap">'
             f'<h2 data-fit data-fit-lines="2" data-fit-min="56" data-fit-max="120">{_e(heading)}.</h2>'
-            f'<div class="toc-grid">{rows}</div>'
+            f'<div class="toc-grid" data-fit-block>{rows}</div>'
             "</div>"
             "</section>"
         )
@@ -290,15 +332,14 @@ class DeckHTMLLayoutManager:
         self,
         title: str,
         content: List[str],
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = content if isinstance(content, list) else [str(content)]
         return (
             f'<section class="slide body bullets{light_cls}">'
             '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
             f'<h2 data-fit data-fit-lines="2" data-fit-min="48" data-fit-max="112">{_e(title)}</h2>'
-            f"{self._ul(items)}"
+            f"{self._ul_fit(items)}"
             "</div>"
             "</section>"
         )
@@ -309,9 +350,8 @@ class DeckHTMLLayoutManager:
         title: str,
         table_markdown: str,
         caption: Optional[str] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         table_html = _md_table_to_html(table_markdown)
         cap_html = f'<div class="caption">{_e(caption)}</div>' if caption else ""
         return (
@@ -331,9 +371,8 @@ class DeckHTMLLayoutManager:
         sub_title_2: str,
         sub_content_1,
         sub_content_2,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
 
         def _block(st: str, items) -> str:
             lst = items if isinstance(items, list) else [str(items)]
@@ -359,27 +398,24 @@ class DeckHTMLLayoutManager:
         title: str,
         latex_formula_block: str,
         content: List[str],
-        light: bool = False,
     ) -> str:
-        return self._formula_slide(title, latex_formula_block, content, light)
+        return self._formula_slide(title, latex_formula_block, content)
 
     def formula_below_layout(
         self,
         title: str,
         latex_formula_block: str,
         content: List[str],
-        light: bool = False,
     ) -> str:
-        return self._formula_slide(title, latex_formula_block, content, light)
+        return self._formula_slide(title, latex_formula_block, content)
 
     def _formula_slide(
         self,
         title: str,
         latex: str,
         content: List[str],
-        light: bool,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = content if isinstance(content, list) else []
         src = (latex or '').strip()
                                                                                     
@@ -425,9 +461,8 @@ class DeckHTMLLayoutManager:
         img_path: str,
         image_width: str = "40%",
         caption: Optional[str] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = content if isinstance(content, list) else []
         cap_html = (f'<figcaption data-fit data-fit-scope="figure" data-fit-lines="2" data-fit-min="14" data-fit-max="22">{_e(caption)}</figcaption>') if caption else ""
         img = self._img_tag(img_path, caption or title)
@@ -451,9 +486,8 @@ class DeckHTMLLayoutManager:
         img_path: str,
         image_width: str = "40%",
         caption: Optional[str] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = content if isinstance(content, list) else []
         cap_html = (f'<figcaption data-fit data-fit-scope="figure" data-fit-lines="2" data-fit-min="14" data-fit-max="22">{_e(caption)}</figcaption>') if caption else ""
         img = self._img_tag(img_path, caption or title)
@@ -477,9 +511,8 @@ class DeckHTMLLayoutManager:
         img_path: str,
         image_width: str = "90%",
         caption: Optional[str] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = content if isinstance(content, list) else []
         cap_html = (f'<figcaption data-fit data-fit-scope="figure" data-fit-lines="2" data-fit-min="14" data-fit-max="22">{_e(caption)}</figcaption>') if caption else ""
         img = self._img_tag(img_path, caption or title)
@@ -501,9 +534,8 @@ class DeckHTMLLayoutManager:
         img_path: str,
         image_width: str = "90%",
         caption: Optional[str] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = content if isinstance(content, list) else []
         cap_html = (f'<figcaption data-fit data-fit-scope="figure" data-fit-lines="2" data-fit-min="14" data-fit-max="22">{_e(caption)}</figcaption>') if caption else ""
         img = self._img_tag(img_path, caption or title)
@@ -527,9 +559,8 @@ class DeckHTMLLayoutManager:
         image_width: str = "30%",
         caption1: Optional[str] = None,
         caption2: Optional[str] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = content if isinstance(content, list) else []
         img1 = self._img_tag(img1_path, caption1 or title)
         img2 = self._img_tag(img2_path, caption2 or title)
@@ -560,9 +591,8 @@ class DeckHTMLLayoutManager:
         image_width: str = "30%",
         caption1: Optional[str] = None,
         caption2: Optional[str] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = content if isinstance(content, list) else []
         img1 = self._img_tag(img1_path, caption1 or title)
         img2 = self._img_tag(img2_path, caption2 or title)
@@ -592,9 +622,8 @@ class DeckHTMLLayoutManager:
         img2_path: str,
         caption1: Optional[str] = None,
         caption2: Optional[str] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = content if isinstance(content, list) else []
         img1 = self._img_tag(img1_path, caption1 or title)
         img2 = self._img_tag(img2_path, caption2 or title)
@@ -622,9 +651,8 @@ class DeckHTMLLayoutManager:
         img2_path: str,
         caption1: Optional[str] = None,
         caption2: Optional[str] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = content if isinstance(content, list) else []
         img1 = self._img_tag(img1_path, caption1 or title)
         img2 = self._img_tag(img2_path, caption2 or title)
@@ -648,9 +676,8 @@ class DeckHTMLLayoutManager:
         self,
         title: str,
         content: List[str],
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         mid = (len(content) + 1) // 2
         left, right = content[:mid], content[mid:]
         return (
@@ -668,9 +695,8 @@ class DeckHTMLLayoutManager:
         title: str,
         steps: List[dict],
         subtitle: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         steps_html = ""
         for step in steps[:5]:
             st = _e(step.get("title", ""))
@@ -697,9 +723,8 @@ class DeckHTMLLayoutManager:
         title: str,
         points: List[dict],
         subtitle: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         pts_html = ""
         for i, pt in enumerate(points[:6]):
             ix = f"P·{i+1:02d}"
@@ -730,9 +755,8 @@ class DeckHTMLLayoutManager:
         title: str,
         cols: List[dict],
         subtitle: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         cols_html = ""
         for i, col in enumerate(cols[:3]):
             tag = _e(col.get("icon", f"#{i+1:02d}"))
@@ -764,7 +788,6 @@ class DeckHTMLLayoutManager:
         left_items: List[str],
         right_title: str,
         right_items: List[str],
-        light: bool = False,
     ) -> str:
         def _side(tag: str, h3: str, items: List[str], cls: str) -> str:
             return (
@@ -790,9 +813,8 @@ class DeckHTMLLayoutManager:
         title: str,
         conclusions: List[dict],
         subtitle: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         colors = ["var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)"]
         dots_html = ""
         cards_html = ""
@@ -827,9 +849,8 @@ class DeckHTMLLayoutManager:
         title: str,
         conclusions: List[dict],
         subtitle: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         rows_html = ""
         for i, conc in enumerate(conclusions):
             h = _e(conc.get("heading", ""))
@@ -859,9 +880,8 @@ class DeckHTMLLayoutManager:
         cells: List[dict],
         subtitle: str = "",
         caption: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         cells_html = ""
         for cell in cells[:4]:
             h3 = _e(cell.get("title", ""))
@@ -888,9 +908,8 @@ class DeckHTMLLayoutManager:
         title: str,
         main_question: str,
         sub_questions: List[str],
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         subs_html = ""
         for i, sq in enumerate(sub_questions[:3]):
             subs_html += (
@@ -918,9 +937,8 @@ class DeckHTMLLayoutManager:
         title: str,
         items: List[dict],
         subtitle: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         sub_html = f"<p>{_e(subtitle)}</p>" if subtitle else ""
         li_html = ""
         for item in items:
@@ -946,9 +964,8 @@ class DeckHTMLLayoutManager:
         title: str,
         stats: List[dict],
         subtitle: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         nums_html = ""
         for stat in stats:
             big = _e(stat.get("value", ""))
@@ -975,9 +992,8 @@ class DeckHTMLLayoutManager:
         self,
         quote: str,
         attribution: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         who_html = f'<div class="who"><b>{_e(attribution)}</b></div>' if attribution else ""
         return (
             f'<section class="slide body quote{light_cls}">'
@@ -995,7 +1011,6 @@ class DeckHTMLLayoutManager:
         title: str,
         section_number: str = "",
         part_label: str = "",
-        light: bool = False,
     ) -> str:
         sec_num_html = (
             f'<div class="section-num">Part &middot; {_e(section_number)}</div>'
@@ -1008,7 +1023,7 @@ class DeckHTMLLayoutManager:
                 f'<div class="lead">{_e(part_label)}</div>'
                 "</div>"
             )
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         return (
             f'<section class="slide section-divider{light_cls}">'
             '<div class="body-wrap">'
@@ -1103,9 +1118,8 @@ class DeckHTMLLayoutManager:
         title: str,
         items: List,
         subtitle: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items_list = items if isinstance(items, list) else []
         li_html = ""
         for it in items_list:
@@ -1135,9 +1149,8 @@ class DeckHTMLLayoutManager:
         headers: List[str],
         rows: List[List],
         caption: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         th = "".join(f"<th>{_cell_text(str(h))}</th>" for h in headers)
         tbody = ""
         for row in rows:
@@ -1160,9 +1173,8 @@ class DeckHTMLLayoutManager:
         title: str,
         cards: List[dict],
         subtitle: str = "",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         cards_html = ""
         for c in cards:
             name = _e(c.get("name", ""))
@@ -1200,9 +1212,8 @@ class DeckHTMLLayoutManager:
         self,
         eyebrow: str = "",
         meta_rows: Optional[List[dict]] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         eyebrow_html = (
             f'<div class="eyebrow">{_e(eyebrow)}</div>'
             if eyebrow else '<div class="eyebrow"></div>'
@@ -1231,9 +1242,8 @@ class DeckHTMLLayoutManager:
         self,
         toc_content: List[str],
         heading: str = "Table of Contents",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items_html = ""
         for item in toc_content:
             m = re.match(r"^(\d+)\.\s*(.*?)(?:\s*\|\s*(.*))?$", str(item))
@@ -1267,9 +1277,8 @@ class DeckHTMLLayoutManager:
         self,
         toc_content: List,
         heading: str = "What we'll cover",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items_html = ""
         for i, item in enumerate(toc_content):
             if isinstance(item, dict):
@@ -1306,9 +1315,8 @@ class DeckHTMLLayoutManager:
         self,
         toc_content: List,
         heading: str = "Sections",
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         cards_html = ""
         for i, item in enumerate(toc_content):
             if isinstance(item, dict):
@@ -1320,14 +1328,11 @@ class DeckHTMLLayoutManager:
                 n_label = m.group(1).zfill(2) if m else str(i + 1).zfill(2)
                 title = _e(m.group(2).strip() if m else str(item))
                 desc = ""
-            desc_html = (
-                f'<p data-fit data-fit-scope=".card" data-fit-lines="10" '
-                f'data-fit-min="12" data-fit-max="26">{desc}</p>'
-            ) if desc else ""
+            desc_html = f'<p>{desc}</p>' if desc else ""
             cards_html += (
                 f'<div class="card">'
                 f'<div class="n">{n_label}</div>'
-                f'<h3 data-fit data-fit-scope=".card" data-fit-lines="3" data-fit-min="16" data-fit-max="40">{title}</h3>'
+                f'<h3 data-fit data-fit-lines="3" data-fit-min="18" data-fit-max="38">{title}</h3>'
                 f'{desc_html}'
                 '</div>'
             )
@@ -1347,9 +1352,8 @@ class DeckHTMLLayoutManager:
         img_path: str = "",
         caption: str = "",
         meta_items: Optional[List[dict]] = None,
-        light: bool = False,
     ) -> str:
-        light_cls = " light" if light else ""
+        light_cls = " light" if self._light else ""
         items = meta_items or [
             {"k": "Presented by", "v": self.author},
             {"k": "Q&A Session", "v": "Open discussion"},
@@ -1435,7 +1439,6 @@ class DeckHTMLLayoutManager:
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
         onload="renderMathInElement(document.body,{{delimiters:[{{left:'$$',right:'$$',display:true}},{{left:'\\\\[',right:'\\\\]',display:true}},{{left:'$',right:'$',display:false}},{{left:'\\\\(',right:'\\\\)',display:false}}]}})"></script>
-<script src="deck-stage.js" defer></script>
 <style>
 {css}
 </style>
@@ -1444,6 +1447,7 @@ class DeckHTMLLayoutManager:
 <deck-stage style="{theme_vars}">
 {slides_html}
 </deck-stage>
+<script src="deck-stage.js"></script>
 </body>
 </html>"""
 

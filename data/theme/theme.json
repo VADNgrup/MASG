@@ -32,4 +32,14 @@
     "theme": "improving-25",
     "font": "Roboto",
     "serve": "Best for modern, startup-style or tech presentations where visual impact and brand identity matter: product launches, pitch decks, tech conferences, and innovation showcases. Features bold typography and bright contemporary colors — not suitable for traditional academic or formal report settings."
+},
+{
+    "theme": "ivory",
+    "font": "Cormorant Garamond",
+    "serve": "Best for elegant, print-inspired presentations with a light cream background on all body slides. Ideal for humanities, liberal arts, literature, history, or any topic where a warm, readable, paper-like aesthetic suits the audience."
+},
+{
+    "theme": "sage",
+    "font": "Lora",
+    "serve": "Best for calm, nature-inspired or environmental presentations with a soft sage-green light background on all body slides. Suitable for biology, ecology, sustainability, health sciences, or any topic where a fresh, earthy feel is appropriate."
 }]

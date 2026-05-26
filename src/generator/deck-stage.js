@@ -25,6 +25,7 @@
       document.addEventListener('keydown', this._onKey);
       window.addEventListener('resize', this._onResize);
       this._scale();
+      this.setAttribute('data-ready', '');
       window.addEventListener('message', this._onMessage.bind(this));
     }
 
@@ -48,6 +49,14 @@
         bubbles: true,
         detail: { index: this._idx, total: this._total }
       }));
+      const slide = this._slides[this._idx];
+      if (slide) {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          slide.querySelectorAll('[data-fit]').forEach(fitText);
+          if (slide.classList.contains('toc-cards')) syncCardTitles(slide);
+          slide.querySelectorAll('[data-fit-block]').forEach(fitBlock);
+        }));
+      }
     }
 
     _onKey(e) {
@@ -112,10 +121,13 @@
     const padH = parseFloat(cs.paddingLeft || '0') + parseFloat(cs.paddingRight || '0');
     const availW = scopeSel ? parent.offsetWidth - padH : parent.offsetWidth - 240;
 
+    const prevOverflow = el.style.overflow;
+    el.style.overflow = 'hidden';
+
     let lo = minPx, hi = maxPx, best = minPx;
     if (fillHeight) {
       const availH = el.offsetHeight;
-      if (availH <= 0) { el.style.fontSize = minPx + 'px'; return; }
+      if (availH <= 0) { el.style.overflow = prevOverflow; el.style.fontSize = minPx + 'px'; return; }
       while (lo <= hi) {
         const mid = (lo + hi) >> 1;
         el.style.fontSize = mid + 'px';
@@ -142,6 +154,7 @@
       }
     }
     el.style.fontSize = best + 'px';
+    el.style.overflow = prevOverflow;
   }
 
   function fitBlock(el) {
@@ -159,20 +172,20 @@
     }
   }
 
+  function syncCardTitles(slide) {
+    const h3s = Array.from(slide.querySelectorAll('.toc-cards .card h3, .card h3'));
+    if (h3s.length < 2) return;
+    const minPx = Math.min(...h3s.map(h => parseFloat(h.style.fontSize) || parseFloat(getComputedStyle(h).fontSize)));
+    h3s.forEach(h => { h.style.fontSize = minPx + 'px'; });
+  }
+
   function runAutoFit() {
     requestAnimationFrame(() => requestAnimationFrame(() => {
       document.querySelectorAll('section.slide').forEach(slide => {
-        const hidden = slide.style.display === 'none';
-        if (hidden) {
-          slide.style.visibility = 'hidden';
-          slide.style.display = '';
-        }
+        if (slide.style.display === 'none') return;
         slide.querySelectorAll('[data-fit]').forEach(fitText);
+        if (slide.classList.contains('toc-cards')) syncCardTitles(slide);
         slide.querySelectorAll('[data-fit-block]').forEach(fitBlock);
-        if (hidden) {
-          slide.style.display = 'none';
-          slide.style.visibility = '';
-        }
       });
     }));
   }
@@ -182,7 +195,12 @@
   } else {
     runAutoFit();
   }
-  document.fonts.ready.then(runAutoFit);
+  document.fonts.ready.then(() => {
+    // Extra RAF pair so font metrics are flushed to layout before measuring
+    requestAnimationFrame(() => requestAnimationFrame(runAutoFit));
+  });
+  // Fallback: some browsers resolve fonts.ready before metrics propagate
+  setTimeout(runAutoFit, 400);
   window.addEventListener('resize', runAutoFit);
 
 })();
