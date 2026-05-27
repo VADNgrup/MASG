@@ -416,12 +416,14 @@ class SlidePickMerge:
     def _sanitise_latex(latex: str) -> str:
         if not latex:
             return ""
-        s = latex.replace("\\n", " ")
+        s = latex.replace("\\n", "\n")
         s = s.strip()
-        if s.startswith("$$") and s.endswith("$$"):
-            s = s[2:-2].strip()
-        elif s.startswith("$") and s.endswith("$"):
-            s = s[1:-1].strip()
+        if s.startswith("$$") and s.endswith("$$") and s.count("$$") == 2:
+            return s[2:-2].strip()
+        if s.startswith("$") and s.endswith("$") and s.count("$") == 2:
+            return s[1:-1].strip()
+        if "$$" in s:
+            s = re.sub(r'\$\$(.*?)\$\$', lambda m: f'\\[{m.group(1).strip()}\\]', s, flags=re.DOTALL)
         return s
 
     @staticmethod
@@ -572,6 +574,9 @@ class SlidePickMerge:
             if not table_md and isinstance(contents, str) and '|' in contents:
                 table_md = contents
             if table_md and '|' in table_md:
+                if contents and isinstance(contents, list) and len(contents) >= 1:
+                    self._log_layout(sn, 'table_above_layout', {'title': title, 'table_markdown': table_md, 'content': contents})
+                    return mgr.table_above_layout(title, table_md, contents)
                 self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md})
                 return mgr.comparison_layout(title, table_md)
             self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
@@ -630,6 +635,9 @@ class SlidePickMerge:
                     return self._pick_image_layout(sn, title, contents, self._to_assets_path(img['image_path']), img['image_path'], caption=img.get('caption'))
             table_md = table_obj.get('table_markdown') or ''
             if table_md and '|' in table_md:
+                if contents and isinstance(contents, list) and len(contents) >= 1:
+                    self._log_layout(sn, 'table_above_layout', {'title': title, 'table_markdown': table_md, 'content': contents})
+                    return mgr.table_above_layout(title, table_md, contents)
                 self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md})
                 return mgr.comparison_layout(title, table_md)
             self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
@@ -740,7 +748,7 @@ class SlidePickMerge:
         self._resolved_institution = self._resolve_institution()
         short_title = self._summarise_title(self.lecture_title)
         self._short_title = short_title
-        cover = self._mgr.config_and_greeting_slide(short_title=short_title)
+        cover = self._mgr.config_and_greeting_slide(short_title=short_title, institution=self._resolved_institution)
         self._log_layout(self._slide_counter, 'config_and_greeting_slide', {'short_title': short_title})
         self._deck_sections.append(cover)
         toc_items = self._parse_outline()

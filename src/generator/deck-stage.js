@@ -55,6 +55,7 @@
           slide.querySelectorAll('[data-fit]').forEach(fitText);
           if (slide.classList.contains('toc-cards')) syncCardTitles(slide);
           slide.querySelectorAll('[data-fit-block]').forEach(fitBlock);
+          if (slide.classList.contains('toc-cards')) syncCardScales(slide);
         }));
       }
     }
@@ -163,7 +164,15 @@
     el.style.justifyContent = '';
     const reserve = parseInt(el.dataset.fitReserve || '0', 10);
     const availH = el.offsetHeight - reserve;
-    const contentH = el.scrollHeight;
+    let contentH = el.scrollHeight;
+    // For flex/grid children with overflow:visible, scrollHeight === offsetHeight
+    // (browser ignores visible overflow). Fall back to measuring child bounding boxes.
+    if (contentH <= availH + 4 && el.children.length > 0) {
+      const elTop = el.getBoundingClientRect().top;
+      for (const child of el.children) {
+        contentH = Math.max(contentH, child.getBoundingClientRect().bottom - elTop);
+      }
+    }
     if (contentH > availH && availH > 0) {
       el.style.justifyContent = 'flex-start';
       const scale = Math.max(0.55, availH / contentH);
@@ -179,6 +188,26 @@
     h3s.forEach(h => { h.style.fontSize = minPx + 'px'; });
   }
 
+  function syncCardScales(slide) {
+    const cards = Array.from(slide.querySelectorAll('.toc-cards .card[data-fit-block]'));
+    if (cards.length < 2) return;
+    let minScale = 1;
+    cards.forEach(c => {
+      const t = c.style.transform;
+      if (t && t.startsWith('scale(')) {
+        const s = parseFloat(t.slice(6));
+        if (!isNaN(s) && s < minScale) minScale = s;
+      }
+    });
+    if (minScale < 1) {
+      cards.forEach(c => {
+        c.style.transform = `scale(${minScale.toFixed(4)})`;
+        c.style.transformOrigin = 'top center';
+        c.style.justifyContent = 'flex-start';
+      });
+    }
+  }
+
   function runAutoFit() {
     requestAnimationFrame(() => requestAnimationFrame(() => {
       document.querySelectorAll('section.slide').forEach(slide => {
@@ -186,6 +215,7 @@
         slide.querySelectorAll('[data-fit]').forEach(fitText);
         if (slide.classList.contains('toc-cards')) syncCardTitles(slide);
         slide.querySelectorAll('[data-fit-block]').forEach(fitBlock);
+        if (slide.classList.contains('toc-cards')) syncCardScales(slide);
       });
     }));
   }

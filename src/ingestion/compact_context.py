@@ -39,6 +39,28 @@ _TRAILING_TRIM_WORDS = {
     "and", "or", "but", "that", "which", "whose", "its", "their", "these", "this", "those",
     "newly", "recently", "very", "quite", "rather", "also", "even", "just",
 }
+_STRUCTURAL_HEADING_RE = re.compile(
+    r"^(?:"
+    r"[IVXivx]{1,8}\.?\s*$"
+    r"|"
+    r"(?:chương|phần|mục|bài|tiết|chapter|part|section|unit|lesson|module|topic|appendix|annex"
+    r"|bölüm|kapitel|chapitre|partie|cap[ií]tulo|sezione|hoofdstuk|rozdzia[lł]|lección|leçon)\s*"
+    r"(?:\d+(?:[.\-]\d+)*|[IVXivx]{1,8})"
+    r"(?:\s*[.:;].*)?$"
+    r"|"
+    r"第\s*(?:\d+(?:[.\-]\d+)*|[一二三四五六七八九十百千]+)\s*"
+    r"(?:章|節|节|部分|部份|篇|單元|单元|课|課)?"
+    r"(?:\s*[.：、。].*)?$"
+    r"|"
+    r"제\s*\d+\s*(?:장|절|부|편)?"
+    r"(?:\s*[.：、].*)?$"
+    r"|"
+    r"(?:บท|ตอน|ส่วน)(?:ที่)?\s*\d+"
+    r"(?:\s*[.:：].*)?$"
+    r")",
+    re.IGNORECASE | re.UNICODE,
+)
+
 _NOISE_PREFIXES = (
     "cite this document as",
     "references",
@@ -287,7 +309,7 @@ def _section_map(pages: List[Tuple[int, str]], page_insights: List[Dict[str, Any
         candidates = headings[:4] or ([insight.get("page_title")] if insight.get("page_title") else [])
         for title in candidates:
             clean_title = _squash(title)[:140]
-            if not clean_title or _is_noise_text(clean_title):
+            if not clean_title or _is_noise_text(clean_title) or _is_structural_heading_only(clean_title):
                 continue
             key = clean_title.lower()
             if key in seen:
@@ -296,7 +318,6 @@ def _section_map(pages: List[Tuple[int, str]], page_insights: List[Dict[str, Any
             sections.append({
                 "title": clean_title,
                 "page": page_num,
-                "summary": _first_sentences(_clean_text(page_md), 350),
                 "keywords": _keywords(_clean_text(page_md))[:8],
             })
     if not sections:
@@ -304,7 +325,6 @@ def _section_map(pages: List[Tuple[int, str]], page_insights: List[Dict[str, Any
             sections.append({
                 "title": f"Page {page_num}",
                 "page": page_num,
-                "summary": _first_sentences(_clean_text(page_md), 350),
                 "keywords": _keywords(_clean_text(page_md))[:8],
             })
     return sections[:80]
@@ -330,7 +350,7 @@ def _content_units(pages: List[Tuple[int, str]], page_insights: List[Dict[str, A
             ))
             counter += 1
         for title, body in sections:
-            if _is_noise_text(title) or _is_metadata_noise(body):
+            if _is_noise_text(title) or _is_metadata_noise(body) or _is_structural_heading_only(title):
                 continue
             semantic_blocks = _semantic_subunits(title, body)
             units.append(_make_unit(
@@ -854,7 +874,7 @@ def _document_insights_prompt(
         )[:12]
         if not _looks_noise_unit_for_prompt(unit)
     ]
-    section_lines = [f"- p.{item.get('page')} {item.get('title')}: {item.get('summary')}" for item in section_map[:10]]
+    section_lines = [f"- p.{item.get('page')} {item.get('title')}" for item in section_map[:10]]
     body_sample = _body_text_sample(markdown, max_chars=1200) if markdown else ""
     body_lang_hint = _detect_body_language_hint(body_sample)
     if body_lang_hint:
@@ -989,8 +1009,8 @@ def _must_have_prompt(
         insight_lines.append(
             f"- p.{item.get('page')} [{item.get('page_role')}] {item.get('page_title')}: must-have=({must}) support=({support})"
         )
-    section_lines = [f"- p.{item.get('page')} {item.get('title')}: {item.get('summary')}" for item in section_map[:12]]
-    dense_section_lines = [line for line in section_lines if len(line.split()) >= 8]
+    section_lines = [f"- p.{item.get('page')} {item.get('title')}" for item in section_map[:12]]
+    dense_section_lines = [line for line in section_lines if len(line.split()) >= 4]
     return (
         "You are selecting the core presentation points that a slide deck MUST include.\n"
         "Return ONLY JSON array. Each item must be an object with keys: label, summary.\n"
@@ -1376,8 +1396,8 @@ def _outline_label(text: str) -> str:
     if _is_noise_text(clean):
         return ""
     words = clean.split()
-    if len(words) > 10:
-        words = words[:10]
+    if len(words) > 20:
+        words = words[:20]
         while len(words) > 4 and words[-1].lower() in _TRAILING_TRIM_WORDS:
             words.pop()
         clean = " ".join(words)
@@ -1574,3 +1594,7 @@ def _first_sentences(text: str, max_chars: int) -> str:
 
 def _squash(text: Any) -> str:
     return re.sub(r"\s+", " ", str(text)).strip()
+
+
+def _is_structural_heading_only(text: str) -> bool:
+    return bool(_STRUCTURAL_HEADING_RE.match(_squash(text)))
