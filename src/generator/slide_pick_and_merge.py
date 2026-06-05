@@ -194,9 +194,12 @@ class SlidePickMerge:
             contents = [item for item in contents if re.match('^\\d+\\.\\s+\\S', item) and item.split('.')[0].strip().isdigit()]
         self._slide_counter += 1
         heading = 'Outline'
-        candidates = ['toc', 'toc_vertical', 'toc_described']
-        if 3 <= len(contents) <= 6:
-            candidates.append('toc_cards')
+        if len(contents) > 6:
+            candidates = ['toc']
+        else:
+            candidates = ['toc', 'toc_vertical', 'toc_described']
+            if 3 <= len(contents) <= 6:
+                candidates.append('toc_cards')
         variant = random.choice(candidates)
         if variant == 'toc_vertical':
             self._log_layout(self._slide_counter, 'toc_vertical_layout', {'toc_content': contents, 'heading': heading})
@@ -317,7 +320,7 @@ class SlidePickMerge:
         pts = []
         for i, b in enumerate(bullets):
             heading, body = SlidePickMerge._split_bullet_heading_body(b)
-            pts.append({'icon': icons[i % len(icons)], 'title': heading, 'body': body or b})
+            pts.append({'icon': icons[i % len(icons)], 'title': heading, 'body': body})
         return pts
 
     @staticmethod
@@ -473,9 +476,19 @@ class SlidePickMerge:
             merged.append(text)
         return merged
 
+    # Layouts that require "Short Title: Detailed body" bullet format
+    _TITLE_BODY_LAYOUTS = frozenset({
+        'key_points_layout', 'conclusion_cards_layout', 'numbered_conclusions_layout',
+        'three_cols_content_layout', 'grid_2x2_layout', 'steps_horizontal_layout',
+        'agenda_layout', 'pricing_cards_layout',
+    })
+
     def _apply_layout_hint(self, sn: int, title: str, contents: List[str], layout_hint: str) -> Optional[str]:
         mgr = self._mgr
         n = len(contents)
+        # Title:body layouts require properly formatted bullets — fall back if not split-friendly
+        if layout_hint in self._TITLE_BODY_LAYOUTS and not self._bullets_are_split_friendly(contents):
+            return None
         if layout_hint == 'key_points_layout' and 3 <= n <= 6:
             pts = self._bullets_to_key_points(contents)
             self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts})
@@ -624,6 +637,14 @@ class SlidePickMerge:
                     image_width = '90%' if ratio >= 1.0 else '60%'
                     self._log_layout(sn, 'image_above_layout', {'title': title, 'content': [], 'img_path': image_url, 'image_width': image_width, 'caption': table_caption})
                     return mgr.image_above_layout(title, [], image_url, image_width=image_width, caption=table_caption)
+            # Prioritise the markdown table over images — images on have_table slides are secondary
+            table_md = table_obj.get('table_markdown') or ''
+            if table_md and '|' in table_md:
+                if contents and isinstance(contents, list) and len(contents) >= 1:
+                    self._log_layout(sn, 'table_above_layout', {'title': title, 'table_markdown': table_md, 'content': contents})
+                    return mgr.table_above_layout(title, table_md, contents)
+                self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md})
+                return mgr.comparison_layout(title, table_md)
             if has_images:
                 img_entries = self._image_dist[num]
                 if len(img_entries) >= 2:
@@ -633,13 +654,6 @@ class SlidePickMerge:
                 else:
                     img = img_entries[0]
                     return self._pick_image_layout(sn, title, contents, self._to_assets_path(img['image_path']), img['image_path'], caption=img.get('caption'))
-            table_md = table_obj.get('table_markdown') or ''
-            if table_md and '|' in table_md:
-                if contents and isinstance(contents, list) and len(contents) >= 1:
-                    self._log_layout(sn, 'table_above_layout', {'title': title, 'table_markdown': table_md, 'content': contents})
-                    return mgr.table_above_layout(title, table_md, contents)
-                self._log_layout(sn, 'comparison_layout', {'title': title, 'table_markdown': table_md})
-                return mgr.comparison_layout(title, table_md)
             self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
             return mgr.only_content(title, contents)
         layout_hint = slide_entry.get('layout_hint')
@@ -719,7 +733,7 @@ class SlidePickMerge:
                 if total_chars > 420 or any(len(s) > 88 for s in contents):
                     self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents})
                     return mgr.two_cols_content_layout(title, contents)
-            elif n >= 2 and ((total_chars > 420 and n >= 4) or any(len(s) > 88 for s in contents)):
+            elif n >= 4 and (total_chars > 420 or any(len(s) > 88 for s in contents)):
                 self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents})
                 return mgr.two_cols_content_layout(title, contents)
         self._log_layout(sn, 'only_content', {'title': title, 'content': contents})

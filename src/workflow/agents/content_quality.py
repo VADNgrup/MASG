@@ -1271,6 +1271,24 @@ class ContentQualityAgent:
             return True
         if re.fullmatch(r"\d{1,3}\.?", lower):
             return True
+        if re.match(r"^\d+(?:\.\d+)+\.?\s+", raw):  # 1.2. or 3.5.3.1. headings (any depth)
+            return True
+        if re.match(
+            r"^(chương|mục|phần|tiết|bài|bảng\s+\d|hình\s+\d"
+            r"|chapter|section|part|appendix|annex"
+            r"|kapitel|abschnitt|abbildung"
+            r"|chapitre|partie|tableau|figure"
+            r"|cap[ií]tulo|secci[oó]n|parte|figura"
+            r"|sezione|capitolo|figura|tabella"
+            r"|hoofdstuk|sectie|deel"
+            r"|rozdzia[lł]|sekcja"
+            r"|第\s*\d|図\s*\d|表\s*\d"
+            r"|제\s*\d|절\s*\d"
+            r"|бөлім|раздел|глава"
+            r")\s+\d+\b",
+            lower,
+        ):
+            return True
         if re.fullmatch(r"(berlin,\s*)?den\s+\d{1,2}\.?", lower):
             return True
         if re.fullmatch(r"[a-zäöüß]+,\s*den\s+\d{1,2}\.?", lower):

@@ -255,12 +255,49 @@ class DeckHTMLLayoutManager:
         )
 
     @staticmethod
+    def _bullet_style(items: List[str]) -> str:
+        """Compute inline font-size and gap so bullets fill the content panel."""
+        n = len(items)
+        if n == 0:
+            return "font-size:30px;gap:24px"
+        # Available height inside ul for list items (conservative estimate):
+        # slide 1080 - body-wrap padding (180+140) - h2 ~100px - gap 40px - ul padding 72px
+        avail_h = 500
+        # Text width available per line:
+        # 1920 - body-wrap lr padding (240) - ul lr padding (96) - li indent (44) = 1540px
+        text_w = 1540
+        char_w_ratio = 0.55  # avg char width as fraction of font size
+        lh_ratio = 1.5       # line-height
+        gap_ratio = 0.65     # gap between items as fraction of font size
+
+        lo, hi, best = 18, 52, 18
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            chars_per_line = max(1, int(text_w / (mid * char_w_ratio)))
+            line_h = mid * lh_ratio
+            gap_px = int(mid * gap_ratio)
+            total = 0.0
+            for s in items:
+                n_lines = max(1, -(-len(s) // chars_per_line))  # ceiling div
+                total += n_lines * line_h
+            total += (n - 1) * gap_px
+            if total <= avail_h:
+                best = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+
+        gap = max(10, int(best * gap_ratio))
+        return f"font-size:{best}px;gap:{gap}px"
+
+    @staticmethod
     def _ul(items: List[str]) -> str:
         return "<ul>" + _li(items) + "</ul>"
 
     @staticmethod
     def _ul_fit(items: List[str]) -> str:
-        return '<ul data-fit data-fit-fill data-fit-scope=".body-wrap" data-fit-min="20" data-fit-max="52">' + _li(items) + "</ul>"
+        style = DeckHTMLLayoutManager._bullet_style(items)
+        return f'<ul style="{style}">' + _li(items) + "</ul>"
 
                                                                                
     def _slide_sep(self) -> str:
@@ -467,8 +504,9 @@ class DeckHTMLLayoutManager:
             else:
                 parts = re.split(r'\n\s*\n', src)
                 eq_blocks = ''.join(f'\\[{_e(p.strip())}\\]' for p in parts if p.strip())
+        eq_count = eq_blocks.count('\\[')
         return (
-            f'<section class="slide body formula{light_cls}">'
+            f'<section class="slide body formula{light_cls}" data-eq-count="{eq_count}">'
             '<div class="body-wrap">'
             f'<h2 data-fit data-fit-lines="2" data-fit-min="24" data-fit-max="112">{_e(title)}</h2>'
             f'<div class="eq-wrap"><div class="eq">{eq_blocks}</div></div>'
@@ -964,6 +1002,20 @@ class DeckHTMLLayoutManager:
     ) -> str:
         light_cls = " light" if self._light else ""
         sub_html = f"<p>{_e(subtitle)}</p>" if subtitle else ""
+        n = len(items)
+        # Slide is 1920×1080, body-wrap padding 180px top + 140px bottom = 760px available.
+        # Per-item budget: (760px - lhs_heading ~160px head reserve) / n
+        # Use CSS custom properties so they cascade properly into li and .ttl.
+        if n >= 9:
+            ol_vars = ' style="--ag-li-pad:4px; --ag-ttl-size:28px;"'
+        elif n == 8:
+            ol_vars = ' style="--ag-li-pad:6px; --ag-ttl-size:32px;"'
+        elif n == 7:
+            ol_vars = ' style="--ag-li-pad:10px; --ag-ttl-size:38px;"'
+        elif n == 6:
+            ol_vars = ' style="--ag-li-pad:16px; --ag-ttl-size:46px;"'
+        else:
+            ol_vars = ''
         li_html = ""
         for item in items:
             ttl = _e(item.get("title", ""))
@@ -977,7 +1029,7 @@ class DeckHTMLLayoutManager:
             f'<h2 data-fit data-fit-lines="2" data-fit-min="24" data-fit-max="140">{_e(title)}</h2>'
             f"{sub_html}"
             "</div>"
-            f"<ol>{li_html}</ol>"
+            f"<ol{ol_vars}>{li_html}</ol>"
             "</div>"
             "</section>"
         )
@@ -1157,11 +1209,15 @@ class DeckHTMLLayoutManager:
             if sub:
                 sub_html = "<ul>" + "".join(f"<li>{_e(str(s))}</li>" for s in sub) + "</ul>"
             li_html += f"<li>{text}{sub_html}</li>"
+        top_texts = [
+            (it.get("text", "") if isinstance(it, dict) else str(it)) for it in items_list
+        ]
+        style = self._bullet_style(top_texts)
         return (
             f'<section class="slide body bullets{light_cls}">'
             '<div class="body-wrap" data-fit-block data-fit-reserve="70">'
             f'<h2 data-fit data-fit-lines="2" data-fit-min="24" data-fit-max="112">{_e(title)}</h2>'
-            f"<ul>{li_html}</ul>"
+            f'<ul style="{style}">{li_html}</ul>'
             "</div>"
             "</section>"
         )
