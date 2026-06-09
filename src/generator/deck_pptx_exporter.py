@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import re
 import subprocess
@@ -112,17 +113,29 @@ def _render_gradient_bg_png(stops: list[tuple[str, float]], out_path: Path,
         print(f'[gradient_bg] {e}')
         return False
 
+def _rgba_to_hex(value: str) -> str:
+    m = re.search(r'rgba?\((\d+),\s*(\d+),\s*(\d+)', value)
+    if m:
+        return '{:02X}{:02X}{:02X}'.format(*[int(x) for x in m.groups()])
+    return ''
+
 def _parse_theme(deck_style: str) -> dict:
     accent     = _first_hex(_css_var(deck_style, 'accent'))
     cover_bg   = _css_var(deck_style, 'cover-bg')
-    bg_dark    = _first_hex(cover_bg)
+    _stops     = _parse_gradient_stops(cover_bg)
+    bg_dark    = _stops[-1][0] if _stops else _first_hex(cover_bg)
     panel_text = _first_hex(_css_var(deck_style, 'panel-text'))
+    dim_css    = _css_var(deck_style, 'dim')
+    dim_dark   = _first_hex(dim_css) or _rgba_to_hex(dim_css) or 'AAAAAA'
+    text_dark  = _first_hex(_css_var(deck_style, 'text')) or 'FFFFFF'
+    bg_light   = _first_hex(_css_var(deck_style, 'light-bg')) or 'F5F3EE'
     return {
         'accent':        accent     or 'FFCC33',
         'bg_dark':       bg_dark    or '500014',
         'grad_stops':    _parse_gradient_stops(cover_bg),
-        'bg_light':      'F5F3EE',
-        'text_dark':     'FFFFFF',
+        'bg_light':      bg_light,
+        'text_dark':     text_dark,
+        'dim_dark':      dim_dark,
         'text_light':    panel_text or '0B0D12',
         'font_display':  _first_font(_css_var(deck_style, 'font-display')) or 'Playfair Display',
         'font_body':     _first_font(_css_var(deck_style, 'font-body'))    or 'Source Sans 3',
@@ -201,7 +214,7 @@ def _parse_section(section, html_dir: Path) -> Optional[dict]:
         'bullets', 'formula',
         'twoimgbelow', 'twoimgright', 'twoimgleft',
         'imgleft', 'imgright', 'imgabove', 'imgbelow', 'twoimgabove',
-        'twocols', 'twocontents', 'cmptable', 'stat',
+        'twocols', 'twocontents', 'cmptable', 'tblabove', 'stat',
         'steps', 'keypoints', 'threecol',
         'splitcontrast', 'conclcards', 'numconcl',
         'grid2x2', 'rquestion', 'agenda', 'quote',
@@ -340,7 +353,7 @@ def _parse_section(section, html_dir: Path) -> Optional[dict]:
         entry['body_text'] = _txt(p_el) if p_el else ''
 
                                                                              
-    if layout == 'cmptable':
+    if layout in ('cmptable', 'tblabove'):
         table_el = section.find('table')
         if table_el:
             thead = table_el.find('thead')
@@ -795,7 +808,11 @@ def _layout_log_to_slide(entry: dict, output_dir: Path, page_num: int) -> dict:
 
     elif fn == 'toc_cards_layout':
         cards = _toc_cards(args.get('toc_content', []))
-        return {'type': 'toc_cards', 'cards': cards, 'is_light': light, 'page_num': page_num}
+        return {
+            'type': 'toc_cards', 'cards': cards,
+            'heading': args.get('heading', 'Outline'),
+            'is_light': light, 'page_num': page_num,
+        }
 
     elif fn == 'only_content':
         return {
@@ -825,6 +842,14 @@ def _layout_log_to_slide(entry: dict, output_dir: Path, page_num: int) -> dict:
         return {
             'type': 'cmptable', 'title': args.get('title', ''),
             'table': {'table_markdown': args.get('table_markdown', '')},
+            'is_light': light, 'page_num': page_num,
+        }
+
+    elif fn == 'table_above_layout':
+        return {
+            'type': 'tblabove', 'title': args.get('title', ''),
+            'table': {'table_markdown': args.get('table_markdown', '')},
+            'bullets': args.get('content', []),
             'is_light': light, 'page_num': page_num,
         }
 
@@ -1137,23 +1162,13 @@ def export_pptx_from_layout_log(
         slide = _layout_log_to_slide(entry, output_dir, i)
         manifest_slides.append(slide)
 
-    grad_tmp: Optional[Path] = None
-    grad_stops = theme.get('grad_stops', [])
-    if len(grad_stops) >= 2:
-        grad_tmp = Path(tempfile.mktemp(suffix='.png'))
-        if _render_gradient_bg_png(grad_stops, grad_tmp):
-            pass
-        else:
-            grad_tmp = None
-
     manifest: dict = {
         'lecture_title': lecture_title,
         'speaker':       speaker,
+        'date':          _dt.date.today().strftime('%B %Y'),
         'theme':         theme,
         'slides':        manifest_slides,
     }
-    if grad_tmp:
-        manifest['dark_bg_path'] = str(grad_tmp)
 
     # Render formula PNGs and replace formula_latex with formula_image_path
     for slide in manifest_slides:
@@ -1181,7 +1196,5 @@ def export_pptx_from_layout_log(
             raise RuntimeError(f'deck_pptx_gen.js exited {result.returncode}: {err}')
     finally:
         manifest_path.unlink(missing_ok=True)
-        if grad_tmp:
-            grad_tmp.unlink(missing_ok=True)
 
     return len(manifest_slides)

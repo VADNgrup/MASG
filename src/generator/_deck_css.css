@@ -729,6 +729,14 @@
   }
 
   /* Auto-scale keypoints when many items (sibling combinator) */
+  /* 4+ items */
+  .keypoints .body-wrap:has(.pt:nth-child(4)) { gap: 44px; }
+  .keypoints .body-wrap:has(.pt:nth-child(4)) h2 { font-size: 76px; }
+  .keypoints .list:has(.pt:nth-child(4)) { gap: 12px; }
+  .keypoints .list:has(.pt:nth-child(4)) .pt { padding: 18px 36px; }
+  .keypoints .list:has(.pt:nth-child(4)) .pt .ttl { font-size: 38px; margin-bottom: 6px; }
+  .keypoints .list:has(.pt:nth-child(4)) .pt .body { font-size: 22px; }
+
   /* 5+ items */
   .keypoints .body-wrap:has(.pt:nth-child(5)) { gap: 40px; }
   .keypoints .body-wrap:has(.pt:nth-child(5)) h2 { font-size: 72px; }
@@ -3209,10 +3217,10 @@
   .toc-cards .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-auto-rows: 1fr;
     gap: 24px;
     flex: 1;
     min-height: 0;
-    align-content: start;
   }
   .toc-cards .card {
     background: rgba(255,255,255,0.06);
@@ -3246,6 +3254,13 @@
     margin: 0;
     overflow: hidden;
   }
+  /* Scale down card title when grid has 4+ cards (narrower columns) */
+  .toc-cards .grid:has(.card:nth-child(4)) .card h3 { font-size: 26px; }
+  .toc-cards .grid:has(.card:nth-child(4)) .card p  { font-size: 20px; }
+  .toc-cards .grid:has(.card:nth-child(5)) .card h3 { font-size: 22px; }
+  .toc-cards .grid:has(.card:nth-child(5)) .card p  { font-size: 18px; }
+  .toc-cards .grid:has(.card:nth-child(6)) .card h3 { font-size: 20px; }
+  .toc-cards .grid:has(.card:nth-child(6)) .card p  { font-size: 16px; }
   .slide.light.toc-cards .card {
     background: rgba(255,255,255,0.75);
     border-color: rgba(0,0,0,0.12);

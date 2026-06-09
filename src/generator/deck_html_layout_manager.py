@@ -801,7 +801,7 @@ class DeckHTMLLayoutManager:
                 "</div>"
                 "</div>"
             )
-        head = f'<div class="head"><h2 data-fit data-fit-lines="2" data-fit-min="24" data-fit-max="112">{_e(title)}</h2></div>'
+        head = f'<div class="head"><h2 data-fit data-fit-lines="3" data-fit-min="24" data-fit-max="112">{_e(title)}</h2></div>'
         return (
             f'<section class="slide body keypoints{light_cls}">'
             '<div class="body-wrap" data-fit-block data-fit-reserve="70">'

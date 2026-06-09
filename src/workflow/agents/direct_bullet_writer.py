@@ -73,7 +73,7 @@ class DirectBulletWriterAgent:
             "# NON-NEGOTIABLE RULES\n"
             "- Use ONLY facts supported by the packet evidence or required_facts.\n"
             "- Preserve every required_fact that fits the slide title.\n"
-            "- Use the SAME language as the slide title and source packet evidence. Do not translate into another language.\n"
+            "- Write ALL bullets in the SAME language as the slide title. The slide title language takes priority over the evidence language. Technical terms, model names, acronyms, and numeric metrics may remain in their original form, but all verbs, connectors, and sentence structure must match the slide title language.\n"
             "- Keep each slide tightly focused on its anchor evidence; do not turn every slide into the same overview.\n"
             "- Each bullet must be slide-friendly: ideally one short sentence or clause, and must be no more than about 150 characters.\n"
             "- If a fact is dense, split it into two shorter bullets instead of writing one long bullet.\n"

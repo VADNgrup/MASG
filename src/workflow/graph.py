@@ -22,7 +22,10 @@ def create_workflow() -> StateGraph:
         print(f"{'=' * 60}\n")
         plan = planner.create_outline(state['document_context'])
         lecture_title = planner.generate_title(plan['outline'], state['document_context'])
-        print(f'\nGenerated lecture title: {lecture_title}\n')
+        try:
+            print(f'\nGenerated lecture title: {lecture_title}\n')
+        except UnicodeEncodeError:
+            print('\nGenerated lecture title: [unicode title]\n')
         return {'lecture_plan': plan, 'lecture_title': lecture_title, 'slides': []}
 
     def plan_specer_node(state: WorkflowState) -> Dict[str, Any]:
