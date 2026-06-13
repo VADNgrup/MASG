@@ -887,9 +887,11 @@ class DeckHTMLLayoutManager:
             p = _e(conc.get("body", ""))
             cards_html += (
                 f'<div class="card" style="background:{c};">'
+                f'<div class="card-content" data-fit-block style="display:flex;flex-direction:column;gap:10px;height:100%;">'
                 f'<div class="num">{i+1:02d}</div>'
-                f"<h3>{h3}</h3>"
+                f'<h3 data-fit data-fit-lines="3" data-fit-min="18" data-fit-max="40">{h3}</h3>'
                 f"<p>{p}</p>"
+                "</div>"
                 "</div>"
             )
         return (
@@ -950,9 +952,11 @@ class DeckHTMLLayoutManager:
             p = _e(cell.get("body", ""))
             cells_html += (
                 f'<div class="cell">'
+                f'<div class="cell-content" data-fit-block style="display:flex;flex-direction:column;gap:12px;height:100%;">'
                 '<div class="dash"></div>'
-                f"<h3>{h3}</h3>"
+                f'<h3 data-fit data-fit-lines="3" data-fit-min="20" data-fit-max="48">{h3}</h3>'
                 f"<p>{p}</p>"
+                "</div>"
                 "</div>"
             )
         return (
@@ -1271,11 +1275,13 @@ class DeckHTMLLayoutManager:
             note_html = f"<p>{note}</p>" if note else ""
             cards_html += (
                 f'<div class="card{card_cls}">'
+                f'<div class="card-content" data-fit-block style="display:flex;flex-direction:column;gap:10px;height:100%;">'
                 f"{badge_html}"
                 f'<div class="name">{name}</div>'
                 f'<div class="price">{price}{period_html}</div>'
                 f"<ul>{li_items}</ul>"
                 f"{note_html}"
+                "</div>"
                 "</div>"
             )
         return (
@@ -1408,19 +1414,22 @@ class DeckHTMLLayoutManager:
                 n_label = m.group(1).zfill(2) if m else str(i + 1).zfill(2)
                 title = _e(m.group(2).strip() if m else str(item))
                 desc = ""
-            desc_html = f'<p>{desc}</p>' if desc else ""
+            desc_html = f'<p data-fit data-fit-lines="5" data-fit-min="12" data-fit-max="22">{desc}</p>' if desc else ""
+            desc_html_scaled = desc_html.replace('data-fit-max="22"', 'data-fit-max="32"')
             cards_html += (
-                f'<div class="card" data-fit-block>'
+                f'<div class="card">'
+                f'<div class="card-content" data-fit-block style="display:flex;flex-direction:column;gap:10px;height:100%;">'
                 f'<div class="n">{n_label}</div>'
-                f'<h3 data-fit data-fit-lines="3" data-fit-min="18" data-fit-max="38">{title}</h3>'
-                f'{desc_html}'
+                f'<h3 data-fit data-fit-lines="3" data-fit-min="18" data-fit-max="50" style="margin:0;">{title}</h3>'
+                f'{desc_html_scaled}'
+                '</div>'
                 '</div>'
             )
         return (
             f'<section class="slide body toc-cards{light_cls}">'
             '<div class="body-wrap">'
             f'<h2 data-fit data-fit-lines="2" data-fit-min="24" data-fit-max="120">{_e(heading)}</h2>'
-            f'<div class="grid" data-fit-block>{cards_html}</div>'
+            f'<div class="grid" data-fit-block style="display: flex; justify-content: center; gap: 24px;">{cards_html}</div>'
             '</div>'
             '</section>'
         )

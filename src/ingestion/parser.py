@@ -69,11 +69,16 @@ class DocumentParser:
             image_info_list = page.get_images(full=True)
             page_rect = page.rect
             page_area = max(page_rect.width * page_rect.height, 1)
-            for img_idx, img in enumerate(image_info_list):
+            
+            raw_rects = []
+            for img in image_info_list:
                 xref = img[0]
-                rects = page.get_image_rects(xref)
-                if not rects: continue
-                rect = max(rects, key=lambda r: r.width * r.height)
+                for r in page.get_image_rects(xref):
+                    raw_rects.append(r)
+            
+            merged_rects = self._merge_intersecting_rects(raw_rects, margin=3.0)
+
+            for img_idx, rect in enumerate(merged_rects):
                 if self._is_small_or_decorative_image(rect, page_area):
                     _log.info(
                         'Skipping small/decorative image on page %d: %.1fx%.1f (area %.4f)',
@@ -84,13 +89,14 @@ class DocumentParser:
                     )
                     continue
                 
-                base_image = self.doc.extract_image(xref)
-                img_ext = base_image["ext"]
+                # Render the merged region from the page instead of extracting sliced parts
+                pix = page.get_pixmap(clip=rect, matrix=fitz.Matrix(2, 2))
+                img_ext = "png"
                 img_filename = f"page_{i+1}_img_{img_idx+1}.{img_ext}"
                 img_path = assets_images_dir / img_filename
 
                 with open(img_path, "wb") as f_img:
-                    f_img.write(base_image["image"])
+                    f_img.write(pix.tobytes("png"))
                 
                 rel_img_path = f"assets/{document_id}/images/{img_filename}"
                 
@@ -109,7 +115,7 @@ class DocumentParser:
                         'width': int(rect.width),
                         'height': int(rect.height),
                         'format': img_ext,
-                        'file_size_kb': len(base_image["image"]) / 1024
+                        'file_size_kb': len(pix.tobytes("png")) / 1024
                     }
                 })
 
@@ -136,6 +142,40 @@ class DocumentParser:
         
         self.doc.close()
         return content
+
+    @staticmethod
+    def _merge_intersecting_rects(rects: List[fitz.Rect], margin: float = 2.0) -> List[fitz.Rect]:
+        merged = []
+        for r in rects:
+            r_padded = r + (-margin, -margin, margin, margin)
+            intersected = False
+            for i, m in enumerate(merged):
+                m_padded = m + (-margin, -margin, margin, margin)
+                if r_padded.intersects(m_padded):
+                    merged[i] = m | r
+                    intersected = True
+                    break
+            if not intersected:
+                merged.append(r)
+        
+        # Second pass to ensure transitive merges are caught
+        changed = True
+        while changed:
+            changed = False
+            i = 0
+            while i < len(merged):
+                j = i + 1
+                while j < len(merged):
+                    m1_padded = merged[i] + (-margin, -margin, margin, margin)
+                    m2_padded = merged[j] + (-margin, -margin, margin, margin)
+                    if m1_padded.intersects(m2_padded):
+                        merged[i] = merged[i] | merged[j]
+                        merged.pop(j)
+                        changed = True
+                    else:
+                        j += 1
+                i += 1
+        return merged
 
     @staticmethod
     def _is_small_or_decorative_image(rect, page_area: float) -> bool:

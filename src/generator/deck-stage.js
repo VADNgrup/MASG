@@ -164,19 +164,31 @@
     el.style.justifyContent = '';
     const reserve = parseInt(el.dataset.fitReserve || '0', 10);
     const availH = el.offsetHeight - reserve;
+    const availW = el.offsetWidth;
     let contentH = el.scrollHeight;
+    let contentW = el.scrollWidth;
     // For flex/grid children with overflow:visible, scrollHeight === offsetHeight
     // (browser ignores visible overflow). Fall back to measuring child bounding boxes.
     if (contentH <= availH + 4 && el.children.length > 0) {
-      const elTop = el.getBoundingClientRect().top;
+      const box = el.getBoundingClientRect();
+      const elTop = box.top;
+      const elLeft = box.left;
       for (const child of el.children) {
-        contentH = Math.max(contentH, child.getBoundingClientRect().bottom - elTop);
+        const cbox = child.getBoundingClientRect();
+        contentH = Math.max(contentH, cbox.bottom - elTop);
+        contentW = Math.max(contentW, cbox.right - elLeft);
       }
     }
+    let scale = 1;
     if (contentH > availH && availH > 0) {
+      scale = Math.min(scale, availH / contentH);
+    }
+    if (contentW > availW && availW > 0) {
+      scale = Math.min(scale, availW / contentW);
+    }
+    if (scale < 1) {
       el.style.justifyContent = 'flex-start';
-      const scale = Math.max(0.55, availH / contentH);
-      el.style.transform = `scale(${scale.toFixed(4)})`;
+      el.style.transform = `scale(${Math.max(0.1, scale).toFixed(4)})`;
       el.style.transformOrigin = 'top center';
     }
   }
@@ -189,7 +201,8 @@
   }
 
   function syncCardScales(slide) {
-    const cards = Array.from(slide.querySelectorAll('.toc-cards .card[data-fit-block]'));
+    // Some layouts might have data-fit-block on the card, some on card-content.
+    const cards = Array.from(slide.querySelectorAll('.toc-cards [data-fit-block]')).filter(el => el.classList.contains('card') || el.classList.contains('card-content'));
     if (cards.length < 2) return;
     let minScale = 1;
     cards.forEach(c => {
@@ -232,5 +245,15 @@
   // Fallback: some browsers resolve fonts.ready before metrics propagate
   setTimeout(runAutoFit, 400);
   window.addEventListener('resize', runAutoFit);
+  window.addEventListener('load', runAutoFit);
+
+  // Monitor late-loading images that might alter layouts
+  if (typeof document !== 'undefined') {
+    document.querySelectorAll('img').forEach(img => {
+      if (!img.complete) {
+        img.addEventListener('load', runAutoFit);
+      }
+    });
+  }
 
 })();

@@ -11,7 +11,7 @@ from src.workflow.agents.content_quality import ContentQualityAgent
 
 class DirectBulletWriterAgent:
     BATCH_SIZE = 4
-    MAX_OUTPUT_TOKENS = 1536
+    MAX_OUTPUT_TOKENS = 2560
     PROMPT_TOKEN_BUDGET = 5600
 
     def __init__(self, model: str):
@@ -64,7 +64,7 @@ class DirectBulletWriterAgent:
             "# ROLE\n"
             "You write final presentation bullets from source-grounded slide packets.\n\n"
             "# TASK\n"
-            "For each packet, produce final slide content directly as 5 to 8 bullets when the source is rich; never fewer than 4 unless the source itself is sparse.\n\n"
+            "For each packet, produce final slide content directly as 4 to 6 bullets; never fewer than 3 unless the source itself is sparse. Prioritise quality and specificity over quantity — 4 sharp, source-grounded bullets beat 6 vague ones.\n\n"
             "# EVAL-ALIGNED TARGETS\n"
             "- Every slide must have a clear focus that obviously matches the slide title.\n"
             "- Text-only slides must still feel substantial enough for presentation, not like sparse placeholders with excessive white space.\n"
@@ -83,9 +83,12 @@ class DirectBulletWriterAgent:
             "- Avoid repeating the same named entities or facts across neighboring slides unless the packet title requires them.\n"
             "- Do not introduce numbers that are not in required_facts/evidence.\n"
             "- Do not copy page headers, journal headers, figure labels, markdown headings, or source page numbers as facts.\n"
+            "- NEVER copy raw sentences from evidence verbatim. Always paraphrase into a complete, self-contained presentation phrase. A bullet that reads like a sentence fragment or ends mid-clause must be rewritten.\n"
             "- Keep bullets concise but not vague.\n"
             "- Avoid generic bullets that could apply to any document; each bullet should contain a source-specific noun, number, method, action, result, or implication.\n"
             "- Preserve formulas and units exactly enough to be mathematically faithful.\n"
+            "- NEVER use block math `$$ ... $$` or `\\[ ... \\]` inside bullets. ALWAYS use inline math `$ ... $` for formulas.\n"
+            "- When writing inline math, ensure the ENTIRE mathematical expression is enclosed within a single pair of `$ ... $` (e.g. `$X_1 = 270$`, not `$X_1$: 270`). Do NOT leave operators like `\\geq` outside of the `$` tags.\n"
             "- For software workflow slides, keep each action as a clean action bullet.\n\n"
             "# LAYOUT SELECTION\n"
             "For each slide, also choose the best layout from the list below.\n"
@@ -138,8 +141,33 @@ class DirectBulletWriterAgent:
         evidence_limit = 1600 if packet.get("coverage_mode") == "list_coverage" else 1200
         evidence = str(packet.get("evidence") or "")
         if evidence:
-            keep["evidence_excerpt"] = ContentQualityAgent._sentence_safe_truncate(evidence, evidence_limit)
+            # OLD (partial clean):
+            # cleaned_evidence = re.sub(r"[^\x00-\x7FÀ-ɏḀ-ỿ̀-ͯ]", " ", evidence)
+            # cleaned_evidence = re.sub(r" {2,}", " ", cleaned_evidence).strip()
+            cleaned_evidence = DirectBulletWriterAgent._clean_evidence_text(evidence)
+            keep["evidence_excerpt"] = ContentQualityAgent._sentence_safe_truncate(cleaned_evidence, evidence_limit)
         return keep
+
+    @staticmethod
+    def _clean_evidence_text(text: str) -> str:
+        # 1. Strip citation markers [1], [1, 2], [1-3]
+        text = re.sub(r"\[\d+(?:[,\-]\s*\d+)*\]", "", text)
+        # 2. Strip figure/table/equation labels
+        text = re.sub(
+            r"\b(?:Figure|Fig\.|Table|Eq\.?|Equation|Algorithm|Listing|Chart)\s*\d+[:\.]?\s*",
+            "", text, flags=re.IGNORECASE,
+        )
+        # 3. Strip bare section numbers at line start (e.g. "3.2.1 ", "4. ")
+        text = re.sub(r"(?:^|\n)\s*\d+(?:\.\d+){0,3}\.?\s+", " ", text)
+        # 4. Strip non-Latin/Vietnamese characters (Greek, Cyrillic, CJK, Arabic, etc.)
+        # Allow: ASCII + Latin Extended (U+00C0-U+024F) + combining marks (U+0300-U+036F) + Vietnamese (U+1EA0-U+1EFF)
+        text = re.sub(r"[^\x00-\x7FÀ-ɏ̀-ͯẠ-ỿ]", " ", text)
+        # 5. Keep only complete sentences (ending with . ? !)
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        complete = [s.strip() for s in sentences if s.strip() and re.search(r"[.!?]$", s.strip())]
+        text = " ".join(complete)  # empty → evidence clears, forcing LLM to write from title+goal
+        # 6. Normalise whitespace
+        return re.sub(r"\s{2,}", " ", text).strip()
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -147,8 +175,8 @@ class DirectBulletWriterAgent:
 
     def _output_budget(self, prompt: str, slide_count: int) -> int:
         prompt_tokens = self._estimate_tokens(prompt)
-        remaining = max(512, 7900 - prompt_tokens)
-        per_slide = max(384, slide_count * 320)
+        remaining = max(768, 10000 - prompt_tokens)
+        per_slide = max(512, slide_count * 480)
         return min(self.MAX_OUTPUT_TOKENS, remaining, per_slide)
 
     def _normalise_content(self, content: Any, packet: Dict[str, Any], spec: Any) -> List[str]:
@@ -173,7 +201,23 @@ class DirectBulletWriterAgent:
         bullets = self._remove_title_echoes(bullets, spec.slide_title)
         bullets = self._compact_slide_bullets(self._filter_language_mismatch(spec.slide_title, self._dedupe(bullets)))
         bullets = [bullet for bullet in bullets if len(bullet.strip()) >= 12]
-        return bullets[:8]
+
+        capitalized_bullets = []
+        for b in bullets:
+            b = b.strip()
+            if b:
+                # Fix raw LaTeX \text{} tags that cause KaTeX errors
+                b = re.sub(r'\\+text\{\s*([^}]*)\}', r'\1', b)
+                # Fix \USD or similar undefined commands
+                b = b.replace(r'\USD', 'USD').replace(r'\usd', 'usd')
+                # Replace block math $$ with inline math $ to avoid layout breakage
+                b = re.sub(r'\$\$(.*?)\$\$', r'$\1$', b)
+                b = b.replace('^2', '²').replace('^3', '³')
+                capitalized_bullets.append(b[0].upper() + b[1:])
+            else:
+                capitalized_bullets.append(b)
+
+        return capitalized_bullets[:8]
 
     def _fallback_bullets(self, packet: Dict[str, Any], spec: Any) -> List[str]:
         evidence = packet.get("evidence", "")
@@ -257,13 +301,15 @@ class DirectBulletWriterAgent:
                 compacted.append(text)
                 continue
             parts = re.split(
-                r"(?<=[.;!?])\s+|\s+[—-]\s+|;\s+|:\s+|,\s+(?=[A-ZÀ-Ỹ0-9])|\s*\((?=[^)]{12,}\))",
+                r"(?<=[.;!?])\s+|\s+[—-]\s+|;\s+|:\s+|,\s+(?=[A-Z0-9])",
                 text,
             )
             kept = False
             for part in parts:
                 part = " ".join(part.split()).strip(" ;,-()")
-                if 16 <= len(part) <= max_chars:
+                # OLD: if 16 <= len(part) <= max_chars:
+                # Raised minimum from 16 → 40 to drop truncated fragments
+                if 40 <= len(part) <= max_chars:
                     compacted.append(part)
                     kept = True
                 if len(compacted) >= 8:

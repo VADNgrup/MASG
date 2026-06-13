@@ -7,7 +7,7 @@ from src.utils.file_utils import load_json, save_json
 from src.utils.language_utils import detect_language_code
 from src.utils.llm import chat
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 19
 _WORD_RE = re.compile(r"[A-Za-zÀ-ỹ][A-Za-zÀ-ỹ0-9_/-]{2,}")
 
 _QUALITATIVE_FLOAT = {"high": 0.9, "medium": 0.6, "moderate": 0.6, "low": 0.3, "none": 0.0}
@@ -26,6 +26,8 @@ def _safe_float(val, default: float = 0.0) -> float:
         return default
 _SIZE_ONLY_RE = re.compile(r"^\s*\d+(?:\.\d+)?\s*(?:kb|mb|gb|tb)(?:\s*\([^)]*\))?\s*$", re.IGNORECASE)
 _URL_RE = re.compile(r"https?://|www\.|doi\.org|doi:", re.IGNORECASE)
+_IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+_CAPTION_RE = re.compile(r"\*(?:Figure|Table|Fig\.?|Bảng|Hình)[:\s]+([^*]+)\*", re.IGNORECASE)
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 _CITATION_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _STOPWORDS = {
@@ -109,6 +111,7 @@ def build_compact_context(
 ) -> Dict[str, Any]:
     pages = _split_pages(markdown)
     page_cards = [_page_card(page_num, page_md) for page_num, page_md in pages]
+    _propagate_section_headings(page_cards)
     normalized_page_insights = _normalise_page_insights(page_insights, page_count, page_cards)
     section_map = _section_map(pages, normalized_page_insights)
     content_units = _content_units(pages, normalized_page_insights)
@@ -232,13 +235,71 @@ def _page_card(page_num: int, page_md: str) -> Dict[str, Any]:
         "page": page_num,
         "headings": [_squash(h)[:140] for h in headings[:10]],
         "summary": _first_sentences(clean, 800),
-        "keywords": _keywords(clean),
         "assets": _extract_assets(page_md)[:12],
         "numbered_items": numbered_items[:30],
         "table_count": len(tables),
         "formula_count": len(re.findall(r"\$\$(.*?)\$\$", page_md, flags=re.DOTALL)),
         "lines": [line.strip() for line in page_md.splitlines() if line.strip()][:120],
+        "sections": _split_page_sections(page_md),
     }
+
+
+
+def _propagate_section_headings(page_cards: List[Dict[str, Any]]) -> None:
+    """Inherit previous page last heading into continuation sections (heading=None at page start)."""
+    prev_heading: str | None = None
+    prev_level: int = 1
+    for card in page_cards:
+        sections = card.get('sections', [])
+        if not sections:
+            continue
+        first = sections[0]
+        if first.get('heading') is None and prev_heading is not None:
+            first['heading'] = prev_heading
+            first['level'] = prev_level
+        for sec in sections:
+            if sec.get('heading') is not None:
+                prev_heading = sec['heading']
+                prev_level = sec.get('level', 1)
+
+
+def _split_page_sections(page_md: str) -> List[Dict[str, Any]]:
+    """Split page markdown into sections by heading.
+    First section has heading=None if content precedes the first heading (continuation from prev page).
+    Each section also tracks assets (images/figures) appearing within it.
+    """
+    sections: List[Dict[str, Any]] = []
+    current_heading: str | None = None
+    current_level: int = 0
+    current_lines: List[str] = []
+    current_assets: List[str] = []
+    for line in page_md.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        m = re.match(r'^#{1,4}\s+(.+)$', stripped)
+        if m:
+            if current_heading is not None or current_lines or current_assets:
+                sections.append({"heading": current_heading, "level": current_level, "lines": current_lines[:60], "assets": current_assets[:6]})
+            hashes_m = re.match(r'^#{1,4}', stripped)
+            current_level = len(hashes_m.group(0)) if hashes_m else 1
+            current_heading = _squash(m.group(1))[:140]
+            current_lines = []
+            current_assets = []
+        elif _IMG_RE.search(stripped) or _CAPTION_RE.search(stripped):
+            for alt, path in _IMG_RE.findall(stripped):
+                text = _squash(alt or path)
+                if text:
+                    current_assets.append(text[:180])
+            for caption in _CAPTION_RE.findall(stripped):
+                text = _squash(caption)
+                if text and text not in current_assets:
+                    current_assets.append(text[:180])
+        else:
+            current_lines.append(stripped)
+    if current_heading is not None or current_lines or current_assets:
+        sections.append({"heading": current_heading, "level": current_level, "lines": current_lines[:60], "assets": current_assets[:6]})
+    return sections
 
 
 def _strip_md_images(text: str) -> str:
@@ -318,14 +379,12 @@ def _section_map(pages: List[Tuple[int, str]], page_insights: List[Dict[str, Any
             sections.append({
                 "title": clean_title,
                 "page": page_num,
-                "keywords": _keywords(_clean_text(page_md))[:8],
             })
     if not sections:
         for page_num, page_md in pages[: min(8, len(pages))]:
             sections.append({
                 "title": f"Page {page_num}",
                 "page": page_num,
-                "keywords": _keywords(_clean_text(page_md))[:8],
             })
     return sections[:80]
 
@@ -1561,16 +1620,6 @@ def _first_source_page(item: Dict[str, Any]) -> int:
         return 999
     return min(int(page) for page in pages)
 
-
-def _keywords(text: str) -> List[str]:
-    counts: Dict[str, int] = {}
-    for word in _WORD_RE.findall(text):
-        key = word.lower().strip("_-/")
-        if len(key) < 4 or key in _STOPWORDS:
-            continue
-        counts[key] = counts.get(key, 0) + 1
-    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return [word for word, _ in ranked[:16]]
 
 
 def _clean_text(text: str) -> str:

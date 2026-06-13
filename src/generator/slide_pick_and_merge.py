@@ -198,7 +198,7 @@ class SlidePickMerge:
             candidates = ['toc']
         else:
             candidates = ['toc', 'toc_vertical', 'toc_described']
-            if 3 <= len(contents) <= 6:
+            if 3 <= len(contents) <= 5:
                 candidates.append('toc_cards')
         variant = random.choice(candidates)
         if variant == 'toc_vertical':

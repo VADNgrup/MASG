@@ -65,7 +65,11 @@ class PlannerAgent:
             headings = [primary_subject] + headings
         headings = [heading for heading in headings if heading and not cls._is_noise_heading(heading)]
         headings = cls._remove_weak_duplicate_headings(headings, point_labels, primary_subject)
-        headings = cls._remove_sparse_headings(headings, presentation_units, points, document_insights.get("must_include_labels", []))
+
+        # Protect both suggested and compiled outlines so we don't aggressively filter out good headings
+        protected_headings = set(h.lower() for h in suggested_outline + compiled_outline)
+        headings = cls._remove_sparse_headings(headings, presentation_units, points, document_insights.get("must_include_labels", []), protected=protected_headings)
+
         if len(headings) < 2:
             headings = ([primary_subject] if primary_subject else []) + headings
         if not headings:
@@ -344,11 +348,15 @@ class PlannerAgent:
         return result or headings
 
     @classmethod
-    def _remove_sparse_headings(cls, headings: List[str], presentation_units: List[Dict[str, Any]], points: List[Dict[str, Any]], must_include_labels: List[str] | None = None) -> List[str]:
+    def _remove_sparse_headings(cls, headings: List[str], presentation_units: List[Dict[str, Any]], points: List[Dict[str, Any]], must_include_labels: List[str] | None = None, protected: set | None = None) -> List[str]:
         if len(headings) <= 4:
             return headings
+        protected = protected or set()
         scored: List[tuple[str, bool]] = []
         for heading in headings:
+            if heading.lower() in protected:
+                scored.append((heading, False))
+                continue
             support_score = cls._heading_support_score(heading, presentation_units)
             broad_score = cls._heading_broad_support_score(heading, presentation_units)
             point_strength = cls._heading_point_strength(heading, points)
@@ -506,8 +514,8 @@ class PlannerAgent:
         clean = re.sub(r"[*_`#]+", "", clean)
         clean = re.sub(r"\s+", " ", clean)
         clean = re.sub(r"\s*[:;,-]\s*$", "", clean)
-        if len(clean.split()) > 12:
-            clean = " ".join(clean.split()[:12])
+        if len(clean) > 120:
+            clean = clean[:120]
         return clean
 
     @staticmethod
@@ -558,14 +566,28 @@ class PlannerAgent:
     @staticmethod
     def _is_redundant_subject(primary_subject: str, headings: List[str]) -> bool:
         lower = primary_subject.lower()
-        return any(lower == heading.lower() for heading in headings[:2])
+        if any(lower == heading.lower() for heading in headings[:2]):
+            return True
+        subject_terms = PlannerAgent._term_set(primary_subject)
+        for heading in headings[:2]:
+            heading_terms = PlannerAgent._term_set(heading)
+            if subject_terms and heading_terms:
+                overlap = len(subject_terms & heading_terms) / max(1, min(len(subject_terms), len(heading_terms)))
+                if overlap >= 0.45:
+                    return True
+        return False
 
     @staticmethod
     def _is_noise_heading(text: str) -> bool:
         lower = text.lower().strip()
+        words = lower.split()
+        if not words:
+            return True
+            
+        bad_endings = {"the", "a", "an", "and", "or", "to", "of", "in", "on", "with", "for", "by", "as", "which", "that", "at", "from", "into", "onto", "upon", "is", "are", "was", "were", "be", "been", "being", "am", "it", "this", "these", "those"}
+        
         return (
-            not lower
-            or lower.startswith("cite this document as")
+            lower.startswith("cite this document as")
             or lower.startswith("abstract")
             or lower.startswith("references")
             or lower.startswith("acknowledgement")
@@ -577,6 +599,13 @@ class PlannerAgent:
             or lower.startswith("last retrieved")
             or "doi" == lower
             or lower.startswith("keywords")
+            or lower.startswith("author")
+            or lower.startswith("tác giả")
             or lower in {"additional information", "other information", "more information", "miscellaneous", "general information", "thông tin thêm", "thông tin khác", "khác", "ghi chú"}
             or bool(re.search(r'\bvol\.?\s*\d+\b', lower) and re.search(r'\b\d{4}\b', lower))
+            or bool(re.match(r'^[a-z]+\s+[a-z]+\s+(là|is)\s+', lower))
+            or 'nhà nghiên cứu tại' in lower
+            or 'researcher at' in lower
+            or words[-1] in bad_endings
+            or len(words) > 18
         )

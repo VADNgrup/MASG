@@ -1,4 +1,5 @@
 from dataclasses import asdict
+import json
 import re
 from typing import Any, Dict, List
 
@@ -6,53 +7,166 @@ from src.ingestion.compact_context import ensure_compact_context
 from src.models.context import DocumentContext
 from src.models.slide import Slide
 from src.workflow.agents.content_quality import ContentQualityAgent
+from src.utils.llm import chat
+from src.utils.parse_llm_response import parse_json_response
 
 
 class SlidePacketBuilderAgent:
     MAX_EVIDENCE_CHARS = 4800
     MAX_SUPPORT_UNITS = 4
 
+    _LINE_NOISE_RE = re.compile(
+        r"^(?:"
+        r"#{1,4}\s"
+        r"|(?:Figure|Fig\.|Table|Algorithm|Listing)\s*\d"
+        r"|\*(?:Figure|Fig\.|Table|Hình|Bảng)"
+        r"|\$\$"
+        r"|!\["
+        r"|\|\s*[-:]{3}"
+        r"|-{3,}$"
+        r")",
+        re.IGNORECASE,
+    )
+
     def __init__(self, model: str):
+        self.model = model
         self.content_tools = ContentQualityAgent(model)
 
     def build_packets(self, slide_specs: List[Slide], context: DocumentContext) -> List[Dict[str, Any]]:
         compact = ensure_compact_context(context)
-        units = compact.get("presentation_units") or compact.get("content_units") or []
-        must_have_points = compact.get("must_have_points", [])
-        document_insights = compact.get("document_insights", {})
+        
+        # Flatten all sections
+        all_sections = []
+        for card in compact.get("page_cards", []):
+            page_num = card.get("page", 1)
+            for section in card.get("sections", []):
+                all_sections.append({
+                    "page": page_num,
+                    "heading": section.get("heading") or f"Page {page_num}",
+                    "level": section.get("level", 1),
+                    "lines": section.get("lines", []),
+                    "assets": section.get("assets", []),
+                })
+                
+        # Call LLM to map slide_number -> list of section indices
+        slide_to_indices = self._llm_map_sections(slide_specs, all_sections)
+                
         packets: List[Dict[str, Any]] = []
-        used_anchor_ids: set[str] = set()
+        used_section_indices: set[int] = set()
+        
         for spec in slide_specs:
-            ranked_units = self._rank_units_for_slide(spec, units, must_have_points, document_insights)
-            anchor_unit = self._choose_anchor_unit(spec, ranked_units, used_anchor_ids)
-            support_units = self._choose_support_units(spec, anchor_unit, ranked_units)
-            if anchor_unit:
-                used_anchor_ids.add(str(anchor_unit.get("unit_id")))
-            required_facts = self._required_facts(spec, anchor_unit, support_units, compact)
-            coverage_items = self._coverage_items(anchor_unit, support_units)
+            mapped_indices = slide_to_indices.get(spec.slide_number, [])
+            
+            home_pages = set()
+            evidence_lines = []
+            section_assets = []
+            
+            for idx in mapped_indices:
+                if 0 <= idx < len(all_sections):
+                    sec = all_sections[idx]
+                    home_pages.add(sec["page"])
+                    evidence_lines.extend(sec["lines"])
+                    section_assets.extend(sec["assets"])
+                    used_section_indices.add(idx)
+                
+            evidence_text = "\n".join(evidence_lines)
+            
+            # Use original fallback for evidence if empty
+            if not evidence_text:
+                thesis = compact.get("document_insights", {}).get("document_thesis", "")
+                evidence_text = thesis
+                
+            # Clean evidence text
+            evidence_text = self.content_tools._sentence_safe_truncate(evidence_text, self.MAX_EVIDENCE_CHARS)
+            
             packet = {
                 "slide_number": spec.slide_number,
                 "slide_title": spec.slide_title,
                 "slide_type": spec.slide_type.value if hasattr(spec.slide_type, "value") else str(spec.slide_type),
                 "goal": spec.goal,
-                "intent": self._infer_intent(spec, anchor_unit),
-                "coverage_mode": "list_coverage" if coverage_items else "normal",
-                "source_pages": self._source_pages(anchor_unit, support_units),
-                "required_facts": required_facts,
-                "required_checks": self._required_checks(required_facts, coverage_items),
-                "coverage_items": coverage_items,
-                "evidence": self._build_evidence(anchor_unit, support_units, compact),
-                "source_alignment": self._source_alignment(spec, anchor_unit, support_units, ranked_units),
-                "anchor_unit_id": anchor_unit.get("unit_id") if anchor_unit else None,
-                "support_unit_ids": [unit.get("unit_id") for unit in support_units if unit.get("unit_id")],
-                "forbidden_unit_ids": self._forbidden_unit_ids(anchor_unit, support_units, ranked_units),
+                "intent": self._infer_intent(spec, None),
+                "coverage_mode": "normal",
+                "source_pages": sorted(list(home_pages)),
+                "home_pages": sorted(list(home_pages)),
+                "required_facts": [],
+                "required_checks": [],
+                "coverage_items": evidence_lines[:6] if evidence_lines else [],
+                "evidence": evidence_text,
+                "section_assets": section_assets,
             }
             if spec.table:
                 packet["table"] = asdict(spec.table)
             if spec.latex_block_formula:
                 packet["latex_block_formula"] = spec.latex_block_formula
             packets.append(packet)
+            
         return packets
+
+    def _llm_map_sections(self, slide_specs: List[Slide], all_sections: List[Dict]) -> Dict[int, List[int]]:
+        catalog_lines = []
+        for idx, sec in enumerate(all_sections):
+            # Provide enough context to be accurate without being overly verbose
+            snippet = " ".join(sec.get("lines", [])[:2])
+            if len(snippet) > 150:
+                snippet = snippet[:147] + "..."
+            catalog_lines.append(f"[{idx}] (Level {sec.get('level', 1)}) {sec['heading']} | {snippet}")
+            
+        catalog_text = "\n".join(catalog_lines)
+        
+        slides_lines = []
+        for spec in slide_specs:
+            slides_lines.append(f"Slide {spec.slide_number}: {spec.slide_title} (Goal: {spec.goal})")
+            
+        slides_text = "\n".join(slides_lines)
+        
+        # Robust prompt balancing token efficiency and strict instruction quality
+        prompt = f"""You are an expert presentation content curator. Your task is to accurately map slides to the document sections that provide their underlying facts.
+
+# DOCUMENT SECTIONS CATALOG
+{catalog_text}
+
+# SLIDES TO BE GENERATED
+{slides_text}
+
+# INSTRUCTIONS
+1. For each slide, identify the indices of the sections that contain the exact facts needed to fulfill the slide's Goal.
+2. If you select a parent section (e.g., Level 1), you should generally also include its immediate child sub-sections (e.g., Level 2) if they contain relevant details.
+3. Every slide MUST be mapped to at least one section index.
+4. Maintain a logical, sequential progression through the document where possible.
+5. Output ONLY a raw JSON dictionary. Do not include markdown blocks. Keys are slide numbers (strings), values are arrays of section indices (integers).
+
+Example output:
+{{"1": [0, 1, 2], "2": [3, 4]}}"""
+        messages = [
+            {"role": "user", "content": prompt}
+        ]
+        
+        print("[SlidePacketBuilder] Calling LLM to map sections to slides (Token-Optimized)...")
+        try:
+            def _invoke_llm(msgs):
+                return chat(self.model, msgs, temperature=0.1, max_tokens=1024)
+                
+            response = _invoke_llm(messages)
+            mapping_dict = parse_json_response(response, _invoke_llm, expect_list=False)
+            
+            result = {}
+            if isinstance(mapping_dict, dict):
+                for k, v in mapping_dict.items():
+                    try:
+                        slide_num = int(k)
+                        if isinstance(v, list):
+                            result[slide_num] = [int(i) for i in v]
+                    except ValueError:
+                        continue
+            return result
+        except Exception as e:
+            print(f"[SlidePacketBuilder] Failed to map sections using LLM: {e}")
+            return {}
+
+    @staticmethod
+    def _normalize_label(text: str) -> str:
+        clean = re.sub(r"^\d+(?:\.\d+)*[.)]?\s*", "", str(text or "")).strip()
+        return clean.lower()
 
     def _rank_units_for_slide(
         self,
@@ -60,6 +174,7 @@ class SlidePacketBuilderAgent:
         units: List[Dict[str, Any]],
         must_have_points: List[Dict[str, Any]],
         document_insights: Dict[str, Any],
+        all_slide_terms: dict[int, set[str]] | None = None,
     ) -> List[Dict[str, Any]]:
         scope = f"{spec.slide_title} {spec.goal}"
         title_terms = self._query_terms(scope)
@@ -96,6 +211,19 @@ class SlidePacketBuilderAgent:
                 score += 1.5
             if wants_structured_detail and unit.get("type") == "must_have_hint" and not re.search(r"\d", unit_text):
                 score -= 2.5
+            # Cross-slide penalty: penalise units that match another slide's topic better
+            if all_slide_terms and unit_terms:
+                current_overlap = self._token_overlap_score(title_terms, unit_terms)
+                best_other = max(
+                    (self._token_overlap_score(other_terms, unit_terms)
+                     for num, other_terms in all_slide_terms.items()
+                     if num != spec.slide_number and other_terms),
+                    default=0.0,
+                )
+                if best_other > current_overlap + 0.20:
+                    score = max(score - 5.0, -3.0)
+                elif best_other > current_overlap + 0.10:
+                    score = max(score - 2.0, -3.0)
             ranked.append({"score": score, "unit": unit})
         ranked.sort(
             key=lambda item: (
@@ -107,9 +235,10 @@ class SlidePacketBuilderAgent:
         )
         return ranked
 
-    def _choose_anchor_unit(self, spec: Slide, ranked_units: List[Dict[str, Any]], used_anchor_ids: set[str]) -> Dict[str, Any] | None:
+    def _choose_anchor_unit(self, spec: Slide, ranked_units: List[Dict[str, Any]], used_anchor_ids: set[str], used_anchor_pages: set[int] | None = None) -> Dict[str, Any] | None:
         viable: List[tuple[float, Dict[str, Any]]] = []
         weak_title = self._is_weak_slide_title(spec.slide_title)
+        used_anchor_pages = used_anchor_pages or set()
         for row in ranked_units:
             unit = row["unit"]
             unit_id = str(unit.get("unit_id") or "")
@@ -123,7 +252,10 @@ class SlidePacketBuilderAgent:
             if fit < 0.18 and viable:
                 continue
             reuse_penalty = 7.0 if unit_id in used_anchor_ids else 0.0
-            viable.append((float(row["score"]) + fit * 10.0 - reuse_penalty, unit))
+            # Page-level penalty: units from already-anchored pages get penalised even if different unit_id
+            unit_pages = set(unit.get("source_pages", [self._first_source_page(unit)]))
+            page_penalty = 9.0 if unit_pages & used_anchor_pages else 0.0
+            viable.append((float(row["score"]) + fit * 10.0 - reuse_penalty - page_penalty, unit))
         if weak_title:
             broad = [
                 (score, unit) for score, unit in viable
@@ -137,9 +269,10 @@ class SlidePacketBuilderAgent:
             return viable[0][1]
         return ranked_units[0]["unit"] if ranked_units else None
 
-    def _choose_support_units(self, spec: Slide, anchor_unit: Dict[str, Any] | None, ranked_units: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _choose_support_units(self, spec: Slide, anchor_unit: Dict[str, Any] | None, ranked_units: List[Dict[str, Any]], slide_overlap_floor: float = 0.36, home_pages: set | None = None) -> List[Dict[str, Any]]:
         if not anchor_unit:
             return []
+        home_pages = home_pages or set()
         support: List[Dict[str, Any]] = []
         anchor_page = self._first_source_page(anchor_unit)
         anchor_type = anchor_unit.get("type")
@@ -159,7 +292,15 @@ class SlidePacketBuilderAgent:
                 continue
             if unit.get("type") in {"page_focus", "must_have_hint"}:
                 continue
-            page_gap = abs(self._first_source_page(unit) - anchor_page)
+            unit_page = self._first_source_page(unit)
+            page_gap = abs(unit_page - anchor_page)
+            # Units outside the anchor's home section require much stricter thresholds
+            if home_pages and unit_page not in home_pages and page_gap > 1:
+                unit_terms_check = self._query_terms(self._unit_text(unit))
+                slide_overlap_check = self._token_overlap_score(self._query_terms(f"{spec.slide_title} {spec.goal}"), unit_terms_check)
+                family_overlap_check = self._token_overlap_score(anchor_terms, unit_terms_check)
+                if slide_overlap_check < 0.55 or family_overlap_check < 0.45:
+                    continue
             same_family = (unit.get("merge_key") or unit.get("outline_label") or unit.get("title")) == anchor_merge
             same_type = unit.get("type") == anchor_type
             unit_terms = self._query_terms(self._unit_text(unit))
@@ -175,7 +316,7 @@ class SlidePacketBuilderAgent:
                 (same_family and family_overlap >= 0.18)
                 or (same_type and page_gap <= 1 and family_overlap >= 0.26 and self._bucket_score(anchor_bucket, unit_bucket) >= 0.0)
                 or (page_gap == 0 and family_overlap >= 0.32 and score_ratio >= 0.7 and self._bucket_score(anchor_bucket, unit_bucket) >= 0.0)
-                or (slide_overlap >= 0.36 and family_overlap >= 0.2)
+                or (slide_overlap >= slide_overlap_floor and family_overlap >= 0.2)  # OLD: 0.36
             )
             if not keep:
                 continue
@@ -231,16 +372,31 @@ class SlidePacketBuilderAgent:
             facts.extend(self._facts_from_unit(unit, anchor=False))
         if not facts:
             facts.extend(self._facts_from_document_insights(compact))
-        facts.extend(self._facts_from_matching_must_have(spec, compact, facts))
+        source_pages = self._source_pages(anchor_unit, support_units)
+        facts.extend(self._facts_from_matching_must_have(spec, compact, facts, source_pages))
         return self._select_language_coherent_facts(spec.slide_title, self._dedupe_facts(facts))[:8]
 
-    def _facts_from_matching_must_have(self, spec: Slide, compact: Dict[str, Any], existing_facts: List[str]) -> List[str]:
+    def _facts_from_matching_must_have(
+        self, spec: Slide, compact: Dict[str, Any], existing_facts: List[str], source_pages: List[int] | None = None
+    ) -> List[str]:
         if len(existing_facts) >= 4:
             return []
         slide_terms = self._query_terms(f"{spec.slide_title} {spec.goal}")
         existing_text = " ".join(existing_facts).lower()
+        units_by_id = {u["unit_id"]: u for u in (compact.get("presentation_units") or compact.get("content_units") or [])}
         additions: List[str] = []
         for point in compact.get("must_have_points", []):
+            # Skip must_have_points from distant pages to avoid intro facts bleeding into later slides
+            if source_pages:
+                point_pages: set[int] = set()
+                for uid in point.get("source_unit_ids", []):
+                    unit = units_by_id.get(uid)
+                    if unit:
+                        for p in unit.get("source_pages", [unit.get("page")] if unit.get("page") else []):
+                            if isinstance(p, int):
+                                point_pages.add(p)
+                if point_pages and not any(abs(pp - sp) <= 1 for pp in point_pages for sp in source_pages):
+                    continue
             text = f"{point.get('label', '')}: {point.get('summary', '')}"
             point_terms = self._query_terms(text)
             if not point_terms:
@@ -302,6 +458,54 @@ class SlidePacketBuilderAgent:
             checks.append({"kind": "coverage_items", "items": coverage_items[:6], "min_hits": min(3, len(coverage_items))})
         return checks
 
+    @staticmethod
+    def _reconstruct_sentences(raw_lines: List[str], title_terms: set[str] | None = None) -> List[str]:
+        sentences: List[str] = []
+        current = ""
+        in_relevant_section = True  # include pre-heading content by default
+        any_heading_matched = False  # tracks if any heading on this page matched anchor terms
+
+        for line in raw_lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Detect markdown headings before _LINE_NOISE_RE (which also matches ^#{1,4}\s)
+            heading_match = re.match(r'^#{1,4}\s+(.+)$', line)
+            if heading_match:
+                if current and len(current) >= 60:  # save partial content before heading resets accumulator
+                    sentences.append(current.strip())
+                current = ""
+                if title_terms:
+                    heading_terms = SlidePacketBuilderAgent._query_terms(heading_match.group(1))
+                    if heading_terms:
+                        overlap = len(title_terms & heading_terms)
+                        ratio = overlap / max(1, min(len(title_terms), len(heading_terms)))
+                        in_relevant_section = ratio >= 0.5
+                        if in_relevant_section:
+                            any_heading_matched = True
+                continue
+
+            if SlidePacketBuilderAgent._LINE_NOISE_RE.match(line):
+                if current and len(current) >= 60:  # save substantial partial content before reset
+                    sentences.append(current.strip())
+                current = ""
+                continue
+
+            # Only filter by section if at least one heading on this page matched anchor terms.
+            # When no heading matches (parent heading, different terminology), include all content.
+            if title_terms and not in_relevant_section and any_heading_matched:
+                current = ""
+                continue
+
+            current = (current + " " + line) if current else line
+            if re.search(r"[.!?]$", current):
+                if len(current) > 40:
+                    sentences.append(current.strip())
+                current = ""
+
+        return sentences
+
     def _build_evidence(
         self,
         anchor_unit: Dict[str, Any] | None,
@@ -311,7 +515,13 @@ class SlidePacketBuilderAgent:
         lines: List[str] = []
         if anchor_unit:
             lines.append(self._unit_evidence_block(anchor_unit, "anchor"))
+        anchor_summary_words = set(re.findall(r'[A-Za-zÀ-ỹ]{3,}', (anchor_unit.get("summary", "") if anchor_unit else "").lower()))
         for unit in support_units:
+            unit_summary_words = set(re.findall(r'[A-Za-zÀ-ỹ]{3,}', unit.get("summary", "").lower()))
+            if unit_summary_words and anchor_summary_words:
+                contained = len(unit_summary_words & anchor_summary_words) / len(unit_summary_words)
+                if contained >= 0.85:
+                    continue
             lines.append(self._unit_evidence_block(unit, "support"))
         if not lines:
             thesis = compact.get("document_insights", {}).get("document_thesis", "")
@@ -331,6 +541,43 @@ class SlidePacketBuilderAgent:
                 if insight and insight.get("must_have_points"):
                     points = insight["must_have_points"][:4]
                     lines.append(f"PAGE {page} KEY POINTS:\n" + "\n".join(f"- {p}" for p in points))
+        # Enrich with reconstructed sentences from raw page lines, filtered by anchor section
+        anchor_title_terms = self._query_terms(
+            " ".join(filter(None, [
+                anchor_unit.get("title", "") if anchor_unit else "",
+                anchor_unit.get("outline_label", "") if anchor_unit else "",
+                anchor_unit.get("merge_key", "") if anchor_unit else "",
+            ]))
+        ) or None
+        page_cards_map = {card.get("page"): card for card in compact.get("page_cards", [])}
+        anchor_pages = set(anchor_unit.get("source_pages", []) if anchor_unit else [])
+        sent_blocks: List[str] = []
+        for page in self._source_pages(anchor_unit, support_units)[:3]:
+            card = page_cards_map.get(page)
+            if not card:
+                continue
+            relevant_lines = self._select_section_lines(card, anchor_title_terms, page in anchor_pages)
+            sents = self._reconstruct_sentences(relevant_lines, None)[:8]
+            if sents:
+                sent_blocks.append("\n".join(sents))
+        if sent_blocks:
+            covered_words = set(re.findall(r'[A-Za-zÀ-ỹ]{3,}', "\n".join(lines).lower()))
+            filtered_blocks: List[str] = []
+            for block in sent_blocks:
+                block_sents = [s for s in block.splitlines() if s.strip()]
+                new_sents = []
+                for sent in block_sents:
+                    sent_words = set(re.findall(r'[A-Za-zÀ-ỹ]{3,}', sent.lower()))
+                    if not sent_words:
+                        continue
+                    overlap = len(sent_words & covered_words) / len(sent_words)
+                    if overlap < 0.70:
+                        new_sents.append(sent)
+                        covered_words |= sent_words
+                if new_sents:
+                    filtered_blocks.append("\n".join(new_sents))
+            if filtered_blocks:
+                lines.append("SOURCE LINES:\n" + "\n\n".join(filtered_blocks))
         return self.content_tools._sentence_safe_truncate("\n\n".join(item for item in lines if item), self.MAX_EVIDENCE_CHARS)
 
     def _source_alignment(
@@ -394,12 +641,18 @@ class SlidePacketBuilderAgent:
         if unit.get("number") is not None and summary:
             facts.append(f"{unit.get('number')}. {summary}")
         elif anchor and label and summary and label.lower() not in summary.lower():
-            facts.append(f"{label}: {summary}")
+            # Only prepend label when it adds substantive context (not a short section heading)
+            if len(label.split()) >= 5:
+                facts.append(f"{label}: {summary}")
+            else:
+                facts.append(summary)
         elif summary:
             facts.append(summary)
         title = self._clean_fact(unit.get("title") or "")
+        # Skip bare section titles (short headings with no sentence structure) as standalone facts
         if anchor and title and not re.fullmatch(r"item\s+\d+", title, flags=re.IGNORECASE) and title != label and title not in facts:
-            facts.append(title)
+            if len(title.split()) >= 5 or re.search(r"[.!?]$", title):
+                facts.append(title)
         return facts
 
     @staticmethod
@@ -456,7 +709,8 @@ class SlidePacketBuilderAgent:
             label = str(point.get("label") or "")
             point_terms = self._query_terms(f"{label} {point.get('summary', '')}")
             overlap = len(scope_terms & point_terms)
-            if overlap or label in preferred_labels:
+            overlap_ratio = overlap / max(1, min(len(scope_terms), len(point_terms)))
+            if overlap_ratio >= 0.25 or label in preferred_labels:
                 for unit_id in point.get("source_unit_ids", [])[:3]:
                     if unit_id:
                         boost_ids.add(str(unit_id))
@@ -558,6 +812,94 @@ class SlidePacketBuilderAgent:
         if not left or not right:
             return 0.0
         return len(left & right) / max(1, min(len(left), len(right)))
+
+    @staticmethod
+    def _select_section_lines(
+        card: Dict[str, Any],
+        title_terms: set[str] | None,
+        is_anchor_page: bool,
+    ) -> List[str]:
+        """Return lines from sections relevant to title_terms.
+        is_anchor_page=True: fall back to all lines if no heading matches (VTM parent-heading case).
+        is_anchor_page=False: return [] if no heading matches (prevents bleeding from unrelated pages).
+        """
+        sections = card.get("sections")
+        if not sections:
+            return card.get("lines", [])
+
+        has_continuation = sections[0].get("heading") is None
+        continuation_lines: List[str] = sections[0].get("lines", []) if has_continuation else []
+
+        matched_lines: List[str] = []
+        for section in sections:
+            heading = section.get("heading")
+            if heading is None:
+                continue
+            if not title_terms:
+                matched_lines.extend(section.get("lines", []))
+                continue
+            heading_terms = SlidePacketBuilderAgent._query_terms(heading)
+            if not heading_terms:
+                matched_lines.extend(section.get("lines", []))
+                continue
+            overlap = len(title_terms & heading_terms)
+            ratio = overlap / max(1, min(len(title_terms), len(heading_terms)))
+            if ratio >= 0.5:
+                matched_lines.extend(section.get("lines", []))
+
+        if matched_lines:
+            return continuation_lines + matched_lines
+        if is_anchor_page:
+            return card.get("lines", [])
+        # Support page, no heading matched — still return pre-first-heading content (continuation
+        # from the previous page's last matched section).
+        return continuation_lines
+
+    @staticmethod
+    def _find_anchor_sections(anchor_unit: Dict[str, Any] | None, compact: Dict[str, Any]) -> set[int]:
+        """Return pages whose compact sections match the anchor unit's heading,
+        including direct child sub-sections (one heading level deeper only).
+        """
+        if not anchor_unit:
+            return set()
+        anchor_terms = SlidePacketBuilderAgent._query_terms(
+            " ".join(filter(None, [
+                anchor_unit.get("outline_label", ""),
+                anchor_unit.get("title", ""),
+                anchor_unit.get("merge_key", ""),
+            ]))
+        )
+        home_pages: set[int] = set(anchor_unit.get("source_pages", []))
+        if not anchor_terms:
+            return home_pages
+        # Build flat ordered list of all sections across all pages
+        all_sections: list[tuple[int, dict]] = []
+        for card in sorted(compact.get("page_cards", []), key=lambda c: c.get("page", 0)):
+            for section in card.get("sections", []):
+                all_sections.append((card.get("page", 0), section))
+        # Find matched sections (ratio >= 0.40) and record flat index + level
+        matched: list[tuple[int, int]] = []
+        for i, (page, section) in enumerate(all_sections):
+            heading = section.get("heading") or ""
+            if not heading:
+                continue
+            heading_terms = SlidePacketBuilderAgent._query_terms(heading)
+            if not heading_terms:
+                continue
+            ratio = len(anchor_terms & heading_terms) / max(1, min(len(anchor_terms), len(heading_terms)))
+            if ratio >= 0.40:
+                home_pages.add(page)
+                matched.append((i, section.get("level", 1)))
+        # Include direct children (level == match_level+1) until a sibling/parent appears
+        for match_pos, match_level in matched:
+            for j in range(match_pos + 1, len(all_sections)):
+                child_page, child_section = all_sections[j]
+                child_level = child_section.get("level", 1)
+                if child_level <= match_level:
+                    break
+                if child_level == match_level + 1:
+                    home_pages.add(child_page)
+        return home_pages
 
     @staticmethod
     def _source_pages(anchor_unit: Dict[str, Any] | None, support_units: List[Dict[str, Any]]) -> List[int]:

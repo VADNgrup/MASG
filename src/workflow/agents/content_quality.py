@@ -361,9 +361,6 @@ class ContentQualityAgent:
                 blocking.append("unbalanced inline math delimiter")
             if self._has_noisy_slack_values(text):
                 blocking.append("unsupported slack value list")
-            missing = self._missing_title_anchors(slide.slide.slide_title, lower_text)
-            if missing:
-                soft.append(f"title-content mismatch: missing {', '.join(missing)}")
             if blocking:
                 issues[slide.slide.slide_number] = blocking
             if soft:
@@ -645,91 +642,6 @@ class ContentQualityAgent:
         return text
 
     @classmethod
-    def _extract_objective_formula(cls, evidence: str) -> str:
-        formulas = cls._extract_formulas(evidence)
-        for formula in formulas:
-            normal = cls._normalise_for_match(formula)
-            if re.search(r"\b[a-z]\s*=", normal) and any(word in cls._normalise_for_match(evidence) for word in ["objective", "maximize", "minimize", "profit", "income"]):
-                return formula
-        match = re.search(r"(?:maximize|minimize|maximise|minimise|objective[^.:]*[:.]?)\s*([A-Za-z]\s*=\s*[^.\n;]+)", evidence, flags=re.IGNORECASE)
-        return match.group(1).strip() if match else ""
-
-    @classmethod
-    def _extract_constraints(cls, evidence: str) -> List[str]:
-        formulas = cls._extract_formulas(evidence)
-        constraints = []
-        for formula in formulas:
-            normal = cls._normalise_for_match(formula)
-            if ("<=" in normal or ">=" in normal or " less than or equal " in normal or " greater than or equal " in normal) and re.search(r"[A-Za-z]\s*_?\s*\d+", formula):
-                constraints.append(formula)
-        inline = re.findall(r"([A-Za-z0-9_{}\\^+\-*/().\s]+\s*(?:<=|>=|≤|≥|\\leq?|\\geq?)\s*[A-Za-z0-9_{}\\^+\-*/().\s]+)", evidence)
-        for item in inline:
-            clean = re.sub(r"\s+", " ", item).strip(" .;:")
-            if 4 <= len(clean) <= 120 and re.search(r"[A-Za-z]\s*_?\s*\d+", clean) and re.search(r"(<=|>=|≤|≥|\\leq?|\\geq?)", clean) and clean not in constraints:
-                constraints.append(clean)
-        return constraints[:5]
-
-    @classmethod
-    def _extract_result_values(cls, evidence: str) -> List[str]:
-        values = []
-        result_region = cls._sentences_matching(cls._clean_evidence_text(evidence), ["optimal", "maximum", "minimum", "profit", "income", "solution"])
-        required_match = re.search(r"Result values:\s*([^\n.]+)", evidence, flags=re.IGNORECASE)
-        if required_match:
-            required_values = required_match.group(1)
-            result_region.append(required_values)
-            without_assignments = re.sub(r"\b[A-Za-z]\s*_?\s*\d*\s*=\s*-?\d+(?:\.\d+)?\b", " ", required_values)
-            for match in re.findall(r"\b\d+(?:\.\d+)?\b", without_assignments):
-                clean = re.sub(r"\s+", "", match)
-                if clean and clean not in values:
-                    values.append(clean)
-        for text in result_region:
-            for match in re.findall(r"\b[A-Za-z]\s*_?\s*\d*\s*=\s*-?\d+(?:\.\d+)?\b", text):
-                clean = re.sub(r"\s+", "", match.replace("$", ""))
-                if clean and clean not in values:
-                    values.append(clean)
-            for match in re.findall(r"(?:maximum|minimum|profit|income|objective value)[^.\d$\",:]{0,40}\$?\s*(\d+(?:\.\d+)?)|\$\s*(\d+(?:\.\d+)?)", text, flags=re.IGNORECASE):
-                raw = next((part for part in match if part), "")
-                clean = re.sub(r"\s+", "", raw.replace("$", ""))
-                if clean and clean not in values:
-                    values.append(clean)
-        return values[:6]
-
-    @classmethod
-    def _extract_slack_facts(cls, evidence: str) -> Dict[str, List[str]]:
-        required_match = re.search(r"Slack values?:\s*([^\n.]+)", evidence, flags=re.IGNORECASE)
-        if required_match:
-            values = []
-            for match in re.findall(r"\b\d+(?:\.\d+)?\s*(?:ft\^?2|ft\$?\^?2|lb|hours?|units?|%)?|\$?\b\d+(?:\.\d+)?\b", required_match.group(1), flags=re.IGNORECASE):
-                clean = re.sub(r"\s+", " ", match.replace("$", "")).strip()
-                if clean and clean not in values:
-                    values.append(clean)
-            values = cls._clean_slack_values(values)
-            return {"sentences": [], "values": values[:4]} if values else {}
-        sentences = cls._sentences_matching(cls._clean_evidence_text(evidence), ["slack", "not used", "unused", "remaining", "binding"])
-        values = []
-        for sentence in sentences:
-            preferred = re.findall(r"\bor\s+(\d+(?:\.\d+)?\s*(?:ft\^?2|ft\$?\^?2|lb|hours?|units?|%)?)", sentence, flags=re.IGNORECASE)
-            for match in preferred:
-                clean = re.sub(r"\s+", " ", match.replace("$", "")).strip()
-                if clean and clean not in values:
-                    values.append(clean)
-            if values:
-                continue
-            unit_values = re.findall(r"\b\d+(?:\.\d+)?\s*(?:ft\^?2|ft\$?\^?2|lb|hours?|units?|%)", sentence, flags=re.IGNORECASE)
-            for match in unit_values:
-                clean = re.sub(r"\s+", " ", match.replace("$", "")).strip()
-                if clean and clean not in values:
-                    values.append(clean)
-            if values:
-                continue
-            for match in re.findall(r"\b\d+(?:\.\d+)?\s*(?:ft\^?2|ft\$?\^?2|lb|hours?|units?|%)?|\$?\b\d+(?:\.\d+)?\b", sentence, flags=re.IGNORECASE):
-                clean = re.sub(r"\s+", " ", match.replace("$", "")).strip()
-                if clean and clean not in values:
-                    values.append(clean)
-        values = cls._clean_slack_values(values)
-        return {"sentences": sentences[:2], "values": values[:4]} if sentences else {}
-
-    @classmethod
     def _extract_software_actions(cls, evidence: str) -> List[str]:
         actions = []
         chunks = []
@@ -885,28 +797,6 @@ class ContentQualityAgent:
                 result.append(clean)
         return result[:6]
 
-    @staticmethod
-    def _missing_title_anchors(title: str, lower_text: str) -> List[str]:
-        title_l = title.lower()
-        groups = []
-        if "slack" in title_l:
-            groups.append(("slack interpretation", ["slack", "unused", "remaining", "not used", "binding"]))
-        if "objective" in title_l:
-            groups.append(("objective function", ["objective", "maximize", "minimize", "profit", "income", "="]))
-        elif "constraint" in title_l:
-            groups.append(("constraints", ["constraint", "<=", ">=", "subject to", "available"]))
-        elif "optimal" in title_l or "production result" in title_l:
-            groups.append(("optimal result", ["optimal", "maximum", "minimum", "profit", "income", "="]))
-        elif "graphical" in title_l or "feasible" in title_l:
-            groups.append(("graphical method", ["graph", "feasible", "region", "constraint"]))
-        elif "model" in title_l or "formulat" in title_l:
-            groups.append(("model formulation", ["model", "variable", "objective", "constraint", "x1", "x2"]))
-        missing = []
-        for label, anchors in groups:
-            if not any(anchor in lower_text for anchor in anchors):
-                missing.append(label)
-        return missing
-
     @classmethod
     def _normalise_content(cls, content: Any, fallback: Any) -> Any:
         if isinstance(content, list):
@@ -1050,68 +940,11 @@ class ContentQualityAgent:
 
     @classmethod
     def _deterministic_content(cls, slide: SlideContent, evidence: str, packet: Dict[str, Any] | None = None) -> List[str]:
-        title_l = slide.slide.slide_title.lower()
-        evidence_l = cls._normalise_for_match(evidence)
         packet_checks = (packet or {}).get("required_checks", [])
         packet_content = cls._deterministic_from_packet_checks(packet_checks, evidence)
         if packet_content:
             return packet_content
-        objective = cls._extract_objective_formula(evidence)
-        objective_check = next((check for check in packet_checks if check.get("kind") == "objective_formula"), None)
-        if objective_check and objective_check.get("formula"):
-            objective = str(objective_check.get("formula"))
-        if objective:
-            bullets = [f"Objective function: ${objective}$"]
-            direction = cls._objective_direction(evidence)
-            if direction:
-                bullets.insert(0, direction)
-            bullets.extend(cls._variable_bullets(evidence))
-            return cls._pad_bullets(bullets, "Decision variables define the model choice")
-        slack = cls._extract_slack_facts(evidence)
-        slack_check = next((check for check in packet_checks if check.get("kind") == "slack_facts"), None)
-        if slack_check:
-            slack = {
-                "values": cls._clean_slack_values([str(item) for item in slack_check.get("values", []) if str(item).strip()]),
-                "sentences": [str(item) for item in slack_check.get("sentences", []) if str(item).strip()],
-            }
-        if slack:
-            bullets = []
-            for sentence in slack.get("sentences", [])[:2]:
-                bullets.append(cls._trim_bullet(sentence))
-            if slack.get("values"):
-                bullets.append("Slack value(s): " + ", ".join(slack["values"][:3]))
-            bullets.append("Slack identifies non-binding resources")
-            return cls._pad_bullets(bullets, "Binding constraints are fully used")
-        constraints = cls._extract_constraints(evidence)
-        constraint_check = next((check for check in packet_checks if check.get("kind") == "constraints"), None)
-        if constraint_check:
-            constraints = [str(item) for item in constraint_check.get("items", []) if str(item).strip()]
-        if constraints:
-            bullets = [f"Constraint: ${constraint}$" for constraint in constraints[:4]]
-            bullets.append("Subject to resource limits")
-            return cls._pad_bullets(bullets, "Non-negativity conditions apply")
-        values = cls._extract_result_values(evidence)
-        value_check = next((check for check in packet_checks if check.get("kind") == "result_values"), None)
-        if value_check:
-            values = [str(item) for item in value_check.get("items", []) if str(item).strip()]
-        if values:
-            bullets = []
-            variable_values = [value for value in values if "=" in value]
-            scalar_values = [value for value in values if "=" not in value]
-            if variable_values:
-                bullets.append("Optimal decision values: " + ", ".join(variable_values[:3]))
-            if scalar_values:
-                bullets.append("Objective value(s): " + ", ".join(scalar_values[:3]))
-            for sentence in cls._sentences_matching(cls._clean_evidence_text(evidence), ["optimal", "maximum", "minimum", "profit", "income"])[:2]:
-                bullets.append(cls._trim_bullet(sentence))
-            return cls._pad_bullets(bullets, "Translate numerical result to the scenario")
-        if ("graph" in title_l or "feasible" in title_l) and "feasible region" in evidence_l:
-            return [
-                "Plot constraints on the $x_1$-$x_2$ plane",
-                "Inequalities define bounded half-plane regions",
-                "Common shaded area: feasible solution space",
-                "Optimal solution must lie in feasible region",
-            ]
+
         actions = cls._extract_software_actions(evidence)
         action_check = next((check for check in packet_checks if check.get("kind") == "workflow_actions"), None)
         required_actions = [str(item) for item in action_check.get("items", []) if str(item).strip()] if action_check else cls._extract_required_workflow_actions(evidence)
@@ -1120,9 +953,11 @@ class ContentQualityAgent:
         if actions:
             bullets = [cls._trim_bullet(action) for action in actions[:5]]
             return cls._pad_bullets(bullets, "Workflow actions are derived from the source procedure")
+            
         if packet and packet.get("required_facts"):
             title_seed = re.sub(r"^\d+(?:\.\d+)*[.)]?\s*", "", slide.slide.slide_title).strip()
             return cls._pad_bullets([str(item) for item in packet.get("required_facts", [])[:5]], title_seed[:90] or "Source-backed summary")
+            
         return []
 
     @classmethod
@@ -1131,40 +966,27 @@ class ContentQualityAgent:
             return []
         check = packet_checks[0]
         kind = str(check.get("kind") or "").strip().lower()
-        if kind == "objective_formula" and check.get("formula"):
-            objective = str(check.get("formula"))
-            bullets = [f"Objective function: ${objective}$"]
-            direction = cls._objective_direction(evidence)
-            if direction:
-                bullets.insert(0, direction)
-            return cls._pad_bullets(bullets, "Decision variables define the model choice")
-        if kind == "constraints":
-            constraints = [str(item) for item in check.get("items", []) if str(item).strip()]
-            if constraints:
-                bullets = [f"Constraint: ${constraint}$" for constraint in constraints[:4]]
-                bullets.append("Subject to resource limits")
-                return cls._pad_bullets(bullets, "Non-negativity conditions apply")
-        if kind == "result_values":
+        
+        if kind in ["exact_formulas", "objective_formula", "constraints"]:
+            items = []
+            if check.get("formula"):
+                items.append(str(check.get("formula")))
+            items.extend([str(item) for item in check.get("items", []) if str(item).strip()])
+            if items:
+                bullets = [f"Formula: ${item}$" for item in items[:4]]
+                return cls._pad_bullets(bullets, "Mathematical relationships extracted")
+
+        if kind in ["key_values", "result_values", "slack_facts"]:
             values = [str(item) for item in check.get("items", []) if str(item).strip()]
-            if values:
-                variable_values = [value for value in values if "=" in value]
-                scalar_values = [value for value in values if "=" not in value]
-                bullets = []
-                if variable_values:
-                    bullets.append("Optimal decision values: " + ", ".join(variable_values[:3]))
-                if scalar_values:
-                    bullets.append("Objective value(s): " + ", ".join(scalar_values[:3]))
-                bullets.append("Translate numerical result to the scenario")
-                return cls._pad_bullets(bullets, "Result values come from the source solution")
-        if kind == "slack_facts":
-            values = cls._clean_slack_values([str(item) for item in check.get("values", []) if str(item).strip()])
+            if not values and "values" in check:
+                values = [str(item) for item in check.get("values", []) if str(item).strip()]
             sentences = [str(item) for item in check.get("sentences", []) if str(item).strip()]
-            if values or sentences:
-                bullets = [cls._trim_bullet(sentence) for sentence in sentences[:2]]
-                if values:
-                    bullets.append("Slack value: " + ", ".join(values[:2]))
-                bullets.append("Slack identifies a non-binding resource")
-                return cls._pad_bullets(bullets, "Binding constraints are fully used")
+            bullets = [cls._trim_bullet(s) for s in sentences[:2]]
+            if values:
+                bullets.extend([f"Key value: {v}" for v in values[:3]])
+            if bullets:
+                return cls._pad_bullets(bullets, "Numerical values guide decision-making")
+
         if kind == "workflow_actions":
             actions = [str(item) for item in check.get("items", []) if str(item).strip()]
             if actions:
@@ -1234,7 +1056,7 @@ class ContentQualityAgent:
     def _trim_bullet(text: str) -> str:
         text = ContentQualityAgent._clean_bullet(text)
         text = re.sub(r"\s+", " ", text).strip(" .;:-")
-        return ContentQualityAgent._sentence_safe_truncate(text, 140)
+        return ContentQualityAgent._sentence_safe_truncate(text, 160)
 
     @staticmethod
     def _fallback_items(value: Any) -> List[str]:
@@ -1244,15 +1066,15 @@ class ContentQualityAgent:
         for part in parts:
             item = part.strip().lstrip("-*•").strip()
             item = ContentQualityAgent._clean_bullet(item)
-            item = ContentQualityAgent._sentence_safe_truncate(item, 140)
+            item = ContentQualityAgent._sentence_safe_truncate(item, 160)
             token_count = len(re.findall(r"[A-Za-zÀ-ỹ0-9]{2,}", item))
             cjk_count = len(re.findall(r"[\u4e00-\u9fff]", item))
-            if 8 <= len(item) <= 140 and (token_count >= 2 or cjk_count >= 4) and not ContentQualityAgent._is_bad_line(item):
+            if 8 <= len(item) <= 160 and (token_count >= 2 or cjk_count >= 4) and not ContentQualityAgent._is_bad_line(item):
                 items.append(item)
         items = ContentQualityAgent._dedupe_bullets(items)
         if items:
             return items
-        clean_text = ContentQualityAgent._sentence_safe_truncate(ContentQualityAgent._clean_evidence_text(text), 140)
+        clean_text = ContentQualityAgent._sentence_safe_truncate(ContentQualityAgent._clean_evidence_text(text), 160)
         if clean_text and not ContentQualityAgent._is_bad_line(clean_text):
             return [clean_text]
         return []
@@ -1407,7 +1229,10 @@ class ContentQualityAgent:
         # render centered block equations inside <li> elements
         line = re.sub(r'\$\$(.+?)\$\$', lambda m: f'${m.group(1).strip()}$', line, flags=re.DOTALL)
         line = re.sub(r'\\\[(.+?)\\\]', lambda m: f'${m.group(1).strip()}$', line, flags=re.DOTALL)
-        return re.sub(r"\s+", " ", line).strip()
+        line = re.sub(r"\s+", " ", line).strip()
+        if line and line[0].islower():
+            line = line[0].upper() + line[1:]
+        return line
 
     @staticmethod
     def _has_unbalanced_math(text: str) -> bool:

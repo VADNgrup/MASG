@@ -1,3 +1,4 @@
+import re
 from langgraph.graph import StateGraph, END
 from typing import Dict, Any
 from src.workflow.state import WorkflowState
@@ -42,7 +43,19 @@ def create_workflow() -> StateGraph:
         slide_specs = state.get('slide_specs', [])
         print(f'  Packet Builder — creating {len(slide_specs)} source-grounded slide packet(s)...')
         packets = packet_builder.build_packets(slide_specs=slide_specs, context=state['document_context'])
-        return {'slide_packets': packets}
+        # Planner outline order is already in correct PDF reading order.
+        # Only strip stale numeric prefixes from titles and assign clean sequential numbers.
+        spec_by_old = {spec.slide_number: spec for spec in slide_specs}
+        for new_num, pkt in enumerate(packets, 1):
+            old_num = pkt["slide_number"]
+            pkt["slide_number"] = new_num
+            clean_title = re.sub(r'^\d+\.\s*', '', pkt.get("slide_title", ""))
+            pkt["slide_title"] = f"{new_num}. {clean_title}"
+            if old_num in spec_by_old:
+                spec = spec_by_old[old_num]
+                spec.slide_number = new_num
+                spec.slide_title = pkt["slide_title"]
+        return {'slide_packets': packets, 'slide_specs': slide_specs}
 
     def direct_bullet_writer_node(state: WorkflowState) -> Dict[str, Any]:
         packets = state.get('slide_packets', [])
