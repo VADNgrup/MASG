@@ -103,9 +103,17 @@ class PlannerAgent:
                     "score": candidate["score"],
                     "pages": list(candidate["pages"]),
                 })
+        # 1. Sort by score descending to get the most salient clusters
         clusters.sort(key=lambda item: (-item["score"], min(item["pages"] or [999]), item["items"][0]["label"]))
+        
+        # 2. Take the top 8 most important clusters
+        top_clusters = clusters[:8]
+        
+        # 3. Re-sort the top clusters chronologically by page order
+        top_clusters.sort(key=lambda item: (min(item["pages"] or [999]), -item["score"]))
+        
         headings: List[str] = []
-        for cluster in clusters[:8]:
+        for cluster in top_clusters:
             heading = cls._cluster_heading(cluster["items"])
             if heading and not cls._is_noise_heading(heading):
                 headings.append(heading)
@@ -586,26 +594,41 @@ class PlannerAgent:
             
         bad_endings = {"the", "a", "an", "and", "or", "to", "of", "in", "on", "with", "for", "by", "as", "which", "that", "at", "from", "into", "onto", "upon", "is", "are", "was", "were", "be", "been", "being", "am", "it", "this", "these", "those"}
         
+        noise_prefixes = (
+            "cite this document as", "last retrieved",
+            "abstract", "tóm tắt", "摘要", "аннотация", "абстракт", "초록", "บทคัดย่อ",
+            "references", "bibliography", "tài liệu tham khảo", "参考文献", "参考", "литература", "список литературы", "библиография", "참고문헌", "เอกสารอ้างอิง",
+            "acknowledgement", "acknowledgment", "lời cảm ơn", "cảm ơn", "致谢", "鸣谢", "благодарности", "감사의 글", "กิตติกรรมประกาศ",
+            "funding", "tài trợ", "资金", "经费", "финансирование", "грант", "자금", "조달", "การระดมทุน", "กองทุน",
+            "conflict of interest", "xung đột lợi ích", "利益冲突", "конфликт интересов", "이해 상충", "ความขัดแย้งทางผลประโยชน์",
+            "keywords", "từ khóa", "关键词", "关键字", "ключевые слова", "주제어", "키워드", "คำสำคัญ",
+            "author", "tác giả", "作者", "автор", "저자", "ผู้แต่ง", "ผู้เขียน"
+        )
+        
+        noise_exacts = {
+            "doi", 
+            "additional information", "other information", "more information", "miscellaneous", "general information", 
+            "thông tin thêm", "thông tin khác", "khác", "ghi chú",
+            "附加信息", "其他信息", "更多信息", "杂项", "一般信息", "备注",
+            "дополнительная информация", "другая информация", "прочая информация", "общая информация", "заметки",
+            "추가 정보", "기타 정보", "자세한 정보", "일반 정보", "참고",
+            "ข้อมูลเพิ่มเติม", "ข้อมูลอื่น ๆ", "ข้อมูลทั่วไป", "หมายเหตุ"
+        }
+        
+        table_fig_pattern = r'^(table|figure|bảng|hình|biểu đồ|fig\.?|tbl\.?|表|表格|图表|图|图像|图片|附图|таблица|табл\.?|рисунок|рис\.?|표|그림|ตาราง|รูป|รูปภาพ|ภาพ)\s*(?:\d+|[ivx]+)\b'
+        
         return (
-            lower.startswith("cite this document as")
-            or lower.startswith("abstract")
-            or lower.startswith("references")
-            or lower.startswith("acknowledgement")
-            or lower.startswith("acknowledgements")
-            or lower.startswith("acknowledgment")
-            or lower.startswith("acknowledgments")
-            or lower.startswith("funding")
-            or lower.startswith("conflict of interest")
-            or lower.startswith("last retrieved")
-            or "doi" == lower
-            or lower.startswith("keywords")
-            or lower.startswith("author")
-            or lower.startswith("tác giả")
-            or lower in {"additional information", "other information", "more information", "miscellaneous", "general information", "thông tin thêm", "thông tin khác", "khác", "ghi chú"}
+            lower.startswith(noise_prefixes)
+            or lower in noise_exacts
             or bool(re.search(r'\bvol\.?\s*\d+\b', lower) and re.search(r'\b\d{4}\b', lower))
             or bool(re.match(r'^[a-z]+\s+[a-z]+\s+(là|is)\s+', lower))
+            or bool(re.match(table_fig_pattern, lower))
             or 'nhà nghiên cứu tại' in lower
             or 'researcher at' in lower
+            or '연구원' in lower
+            or 'исследователь в' in lower
+            or '研究员' in lower
+            or 'นักวิจัยที่' in lower
             or words[-1] in bad_endings
             or len(words) > 18
         )

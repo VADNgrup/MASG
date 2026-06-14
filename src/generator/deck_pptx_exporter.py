@@ -228,7 +228,7 @@ def _parse_section(section, html_dir: Path) -> Optional[dict]:
             break
                                                             
     if layout in TOC_VARIANTS:
-        layout = 'toc'
+        pass # Keep the specific layout variant (e.g., 'toc-cards')
 
                                                                              
     if layout in ('twoimgright', 'imgright', 'twocontents'):
@@ -284,7 +284,7 @@ def _parse_section(section, html_dir: Path) -> Optional[dict]:
         entry['cols'] = cols
 
                                                                              
-    if layout == 'toc':
+    if layout in TOC_VARIANTS:
         items = []
                                          
         for row in section.find_all(class_='toc-row'):
@@ -311,11 +311,25 @@ def _parse_section(section, html_dir: Path) -> Optional[dict]:
             for card in section.find_all(class_='card'):
                 n_el = card.find(class_='n')
                 h3   = card.find('h3')
+                p    = card.find('p')
                 items.append({
                     'n': n_el.get_text(strip=True) if n_el else '',
+                    'title': _txt(h3) if h3 else '',
+                    'desc': _txt(p) if p else '',
                     't': _txt(h3) if h3 else '',
                 })
-        entry['toc_items'] = items
+        
+        if layout == 'toc-cards':
+            entry['cards'] = items
+            entry['type'] = 'toc_cards'
+        elif layout == 'toc-described':
+            entry['toc_items'] = items
+            entry['type'] = 'toc_described'
+        elif layout == 'toc-vertical':
+            entry['toc_items'] = items
+            entry['type'] = 'toc_vertical'
+        else:
+            entry['toc_items'] = items
 
     if layout == 'formula':
         eq_el = section.find(class_='eq')

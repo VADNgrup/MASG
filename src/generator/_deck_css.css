@@ -31,9 +31,17 @@
     -webkit-font-smoothing: antialiased;
     position: relative;
     overflow: hidden;
-    /* container queries */
+    /* Container queries to resize internal layouts easily */
     container-type: size;
     container-name: slide;
+  }
+
+  @keyframes deckSlideIn {
+    from { opacity: 0; transform: translateX(40px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  deck-stage[data-transitions="true"] section.slide[data-deck-active] {
+    animation: deckSlideIn 0.35s ease-out forwards;
   }
   .slide.cover { background: var(--cover-bg); }
   .slide.end   { background: var(--end-bg); }
@@ -1656,10 +1664,23 @@
   .cmptable .tbl-wrap {
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow: auto;
     display: flex;
     flex-direction: column;
     gap: 16px;
+    padding-right: 8px;
+  }
+  .cmptable .tbl-wrap::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .cmptable .tbl-wrap::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+  }
+  .cmptable .tbl-wrap::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    border-radius: 4px;
   }
   .cmptable table {
     width: 100%;
@@ -2416,7 +2437,20 @@
   .tblabove .tbl-slot {
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow: auto;
+    padding-right: 8px;
+  }
+  .tblabove .tbl-slot::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .tblabove .tbl-slot::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+  }
+  .tblabove .tbl-slot::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    border-radius: 4px;
   }
   .tblabove .tbl-slot table {
     width: 100%;

@@ -251,7 +251,7 @@ function addTitle(slide, title, isLight, x, y, w, h, fontSize) {
 // Estimate font size so all bullets fit within w × h at render time
 function bulletFontSize(bullets, w, h) {
   const effectiveW = Math.max(0.5, w - 0.22);
-  for (const fs of [18, 16, 14, 12, 11, 10]) {
+  for (const fs of [11, 10, 9]) {
     const charW   = fs * 0.011;  // conservative: accounts for word-boundary wrap waste
     const lineH   = fs * 1.25 / 72;
     const paraGap = 5 / 72;
@@ -263,7 +263,7 @@ function bulletFontSize(bullets, w, h) {
     }
     if (totalH <= h) return fs;
   }
-  return 10;
+  return 9;
 }
 
 // Minimum height for bullets at 10pt — conservative estimate for image layout positioning.
@@ -1635,7 +1635,7 @@ function buildTocCards(s) {
     const titleH = card.desc ? Math.min(cardH * 0.45, 0.90) : cardH - 0.56;
     slide.addText(toPlain(card.title || ''), {
       x: x + 0.17, y: y + 0.51, w: cardW - 0.33, h: titleH,
-      fontSize: 18, fontFace: FDISP, color: fgC(isLight),
+      fontSize: 26, fontFace: FDISP, color: fgC(isLight),
       wrap: true, valign: 'top', shrinkText: true,
     });
     // Description — fills rest of card
@@ -1645,7 +1645,7 @@ function buildTocCards(s) {
       const descColor = isLight ? '444444' : 'BBBBBB';
       slide.addText(toPlain(card.desc), {
         x: x + 0.17, y: descY, w: cardW - 0.33, h: descH,
-        fontSize: 12, fontFace: FBODY, color: descColor,
+        fontSize: 16, fontFace: FBODY, color: descColor,
         wrap: true, valign: 'top', shrinkText: true,
       });
     }

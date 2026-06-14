@@ -1134,9 +1134,10 @@ class ContentQualityAgent:
     @classmethod
     def _ensure_min_bullets(cls, items: List[str], fallback: str) -> List[str]:
         clean = cls._dedupe_bullets([item for item in items if item and not cls._is_bad_line(item)])
-        fallback = cls._trim_bullet(fallback)
-        if fallback and not cls._is_bad_line(fallback):
-            clean = cls._dedupe_bullets(clean + [fallback])
+        if len(clean) < 2:
+            fallback = cls._trim_bullet(fallback)
+            if fallback and not cls._is_bad_line(fallback):
+                clean = cls._dedupe_bullets(clean + [fallback])
         return clean[:5]
 
     @classmethod

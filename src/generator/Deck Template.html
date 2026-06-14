@@ -47,6 +47,15 @@
     container-type: size;
     container-name: slide;
   }
+
+  @keyframes deckSlideIn {
+    from { opacity: 0; transform: translateX(40px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  deck-stage[data-transitions="true"] section.slide[data-deck-active] {
+    animation: deckSlideIn 0.35s ease-out forwards;
+  }
+
   .slide.cover { background: var(--cover-bg); }
   .slide.end   { background: var(--end-bg); }
   .slide.body  { background: var(--cover-bg); }

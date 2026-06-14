@@ -1429,7 +1429,7 @@ class DeckHTMLLayoutManager:
             f'<section class="slide body toc-cards{light_cls}">'
             '<div class="body-wrap">'
             f'<h2 data-fit data-fit-lines="2" data-fit-min="24" data-fit-max="120">{_e(heading)}</h2>'
-            f'<div class="grid" data-fit-block style="display: flex; justify-content: center; gap: 24px;">{cards_html}</div>'
+            f'<div class="grid" data-fit-block style="justify-content: center;">{cards_html}</div>'
             '</div>'
             '</section>'
         )
