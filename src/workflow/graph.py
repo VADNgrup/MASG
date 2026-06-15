@@ -73,7 +73,22 @@ def create_workflow() -> StateGraph:
             state['document_context'],
             slide_packets=state.get('slide_packets', []),
         )
-        return {'slides': repaired_slides, 'qa_report': qa_report}
+        new_rev = state.get('revision_count', 0) + 1
+        return {'slides': repaired_slides, 'qa_report': qa_report, 'revision_count': new_rev}
+
+    def qa_router(state: WorkflowState) -> str:
+        qa_report = state.get("qa_report") or {}
+        status = qa_report.get("status", "passed")
+        revision_count = state.get("revision_count", 0)
+
+        if status == "failed" and revision_count < 3:
+            print(f"\n[Router] ContentQA failed. Looping back to direct_bullet_writer (Attempt {revision_count}/3)...")
+            return "direct_bullet_writer"
+        
+        if status == "failed":
+            print(f"\n[Router] Max revisions reached. Accepting slides with unresolved issues.")
+            
+        return "end"
 
     workflow.add_node('planner', planner_node)
     workflow.add_node('plan_specer', plan_specer_node)
@@ -86,5 +101,8 @@ def create_workflow() -> StateGraph:
     workflow.add_edge('plan_specer', 'packet_builder')
     workflow.add_edge('packet_builder', 'direct_bullet_writer')
     workflow.add_edge('direct_bullet_writer', 'content_quality')
-    workflow.add_edge('content_quality', END)
+    workflow.add_conditional_edges('content_quality', qa_router, {
+        "direct_bullet_writer": "direct_bullet_writer",
+        "end": END
+    })
     return workflow.compile()

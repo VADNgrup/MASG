@@ -104,7 +104,7 @@ class ContentQualityAgent:
             "metrics": self._quality_metrics(repaired_slides, packet_by_number),
         }
         if blocking_unresolved:
-            raise RuntimeError(f"Content QA could not repair blocking slide issues: {blocking_unresolved}")
+            print(f"[ContentQA] Warning: Could not repair blocking slide issues: {blocking_unresolved}")
         return repaired_slides, report
 
     def _repair_batch(
