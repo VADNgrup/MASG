@@ -4,7 +4,6 @@ from src.models.slide import SlideContent, Slide
 
 class WorkflowState(TypedDict):
     document_context: DocumentContext
-    lecture_plan: Dict[str, Any]
     lecture_title: str
     slides: List[SlideContent]
     slide_specs: Optional[List[Slide]]

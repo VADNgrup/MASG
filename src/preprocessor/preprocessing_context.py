@@ -68,10 +68,9 @@ async def preprocess_context(context, output=None):
         print(f'Tables: {context.metadata.total_tables}\n')
     config.validate()
     workflow = create_workflow()
-    initial_state = {'document_context': context, 'lecture_plan': None, 'lecture_title': '', 'slides': [], 'slide_specs': None, 'slide_packets': None, 'qa_report': None}
+    initial_state = {'document_context': context, 'lecture_title': '', 'slides': [], 'slide_specs': None, 'slide_packets': None, 'qa_report': None}
     result = await workflow.ainvoke(initial_state)
     final_slides = result['slides']
-    final_plan = result['lecture_plan']
     qa_report = result.get('qa_report') or {}
     warning_count = len(qa_report.get('advisory_issues', {})) + len(qa_report.get('soft_issues', {}))
     quality_score = 100.0 if final_slides else 0.0
@@ -81,10 +80,14 @@ async def preprocess_context(context, output=None):
     output_save_path.mkdir(parents=True, exist_ok=True)
     lecture_json_path = output_save_path / f"{lecture_output['lecture_id']}.json"
     save_json(lecture_output, lecture_json_path)
-    outline_md = final_plan.get('outline', '')
+    final_specs  = result.get('slide_specs') or []
+    _num_prefix  = re.compile(r'^\d+(?:\.\d+)*[.)]*\s*')
+    outline_md   = '\n'.join(
+        f"# {_num_prefix.sub('', s.slide_title).strip()}"
+        for s in final_specs
+    )
     outline_path = output_save_path / f"{lecture_output['lecture_id']}_outline.md"
     outline_path.write_text(outline_md, encoding='utf-8')
-    final_specs = result.get('slide_specs')
     if final_specs:
 
         def _serialize_spec(s):

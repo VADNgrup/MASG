@@ -2,8 +2,7 @@ import re
 from langgraph.graph import StateGraph, END
 from typing import Dict, Any
 from src.workflow.state import WorkflowState
-from src.workflow.agents.planner import PlannerAgent
-from src.workflow.agents.plan_specer import PlanSpecerAgent
+from src.workflow.agents.plan_builder import PlanBuilderAgent
 from src.workflow.agents.content_quality import ContentQualityAgent
 from src.workflow.agents.slide_packet_builder import SlidePacketBuilderAgent
 from src.workflow.agents.direct_bullet_writer import DirectBulletWriterAgent
@@ -11,33 +10,25 @@ from src.utils.config import Config
 
 def create_workflow() -> StateGraph:
     workflow = StateGraph(WorkflowState)
-    planner = PlannerAgent(Config.LLM_MODEL_NAME)
+    plan_builder    = PlanBuilderAgent(Config.LLM_MODEL_NAME)
     content_quality = ContentQualityAgent(Config.LLM_MODEL_NAME)
-    packet_builder = SlidePacketBuilderAgent(Config.LLM_MODEL_NAME)
-    bullet_writer = DirectBulletWriterAgent(Config.LLM_MODEL_NAME)
-    plan_specer = PlanSpecerAgent(Config.LLM_MODEL_NAME)
+    packet_builder  = SlidePacketBuilderAgent(Config.LLM_MODEL_NAME)
+    bullet_writer   = DirectBulletWriterAgent(Config.LLM_MODEL_NAME)
 
-    def planner_node(state: WorkflowState) -> Dict[str, Any]:
+    def plan_builder_node(state: WorkflowState) -> Dict[str, Any]:
         print(f"\n{'=' * 60}")
-        print(f' Planner — Generating initial outline with goals...')
+        print(f' Plan Builder — Building outline and slide specs...')
         print(f"{'=' * 60}\n")
-        plan = planner.create_outline(state['document_context'])
-        lecture_title = planner.generate_title(plan['outline'], state['document_context'])
+        result = plan_builder.build(state['document_context'])
+        lecture_title = result['lecture_title']
+        specs         = result['slide_specs']
+        if not specs:
+            raise RuntimeError('PlanBuilder produced 0 slide specs.')
         try:
             print(f'\nGenerated lecture title: {lecture_title}\n')
         except UnicodeEncodeError:
             print('\nGenerated lecture title: [unicode title]\n')
-        return {'lecture_plan': plan, 'lecture_title': lecture_title, 'slides': []}
-
-    def plan_specer_node(state: WorkflowState) -> Dict[str, Any]:
-        outline_md = state['lecture_plan']['outline']
-        print(f"\n{'=' * 60}")
-        print(f' Plan Specer — Specifying slide specs from outline...')
-        print(f"{'=' * 60}\n")
-        specs = plan_specer.specify(outline_md, state['document_context'])
-        if not specs:
-            raise RuntimeError('Plan Specer produced 0 slide specs from the outline.')
-        return {'slide_specs': specs}
+        return {'lecture_title': lecture_title, 'slide_specs': specs, 'slides': []}
 
     def packet_builder_node(state: WorkflowState) -> Dict[str, Any]:
         slide_specs = state.get('slide_specs', [])
@@ -90,15 +81,13 @@ def create_workflow() -> StateGraph:
             
         return "end"
 
-    workflow.add_node('planner', planner_node)
-    workflow.add_node('plan_specer', plan_specer_node)
+    workflow.add_node('plan_builder', plan_builder_node)
     workflow.add_node('packet_builder', packet_builder_node)
     workflow.add_node('direct_bullet_writer', direct_bullet_writer_node)
     workflow.add_node('content_quality', content_quality_node)
 
-    workflow.set_entry_point('planner')
-    workflow.add_edge('planner', 'plan_specer')
-    workflow.add_edge('plan_specer', 'packet_builder')
+    workflow.set_entry_point('plan_builder')
+    workflow.add_edge('plan_builder', 'packet_builder')
     workflow.add_edge('packet_builder', 'direct_bullet_writer')
     workflow.add_edge('direct_bullet_writer', 'content_quality')
     workflow.add_conditional_edges('content_quality', qa_router, {
