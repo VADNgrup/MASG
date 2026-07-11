@@ -847,11 +847,14 @@
     position: relative;
   }
   .imgleft ul li::before {
-    content: "";
+    content: "•";
     position: absolute;
-    left: 0; top: 16px;
-    width: 18px; height: 2px;
-    background: var(--accent);
+    left: 0; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em;
+    line-height: 1.5;
+    color: var(--text);
   }
 
   /* steps */
@@ -1541,9 +1544,11 @@
     gap: 22px;
   }
   .twocols .grid li::before {
-    content: "—";
+    content: "•";
     position: absolute; left: 0; top: 0;
-    color: var(--accent);
+    color: var(--text);
+    font-size: 1.3em;
+    line-height: 1.5;
   }
 
   /* Auto-scale when a column has 5+ bullets */
@@ -1833,10 +1838,12 @@
     position: relative;
   }
   .formula ul li::before {
-    content: "";
-    position: absolute; left: 0; top: 16px;
-    width: 18px; height: 2px;
-    background: var(--accent);
+    content: "•";
+    position: absolute; left: 0; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em; line-height: 1.5;
+    color: var(--text);
   }
 
   /* rquestion */
@@ -2357,11 +2364,13 @@
     position: relative;
   }
   .imgright ul li::before {
-    content: "";
+    content: "•";
     position: absolute;
-    left: 0; top: 16px;
-    width: 18px; height: 2px;
-    background: var(--accent);
+    left: 0; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em; line-height: 1.5;
+    color: var(--text);
   }
 
   /* IMAGE ABOVE — title, image (large), bullets below */
@@ -2409,11 +2418,13 @@
     position: relative;
   }
   .imgabove ul li::before {
-    content: "";
+    content: "•";
     position: absolute;
-    left: 0; top: 14px;
-    width: 18px; height: 2px;
-    background: var(--accent);
+    left: 0; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em; line-height: 1.5;
+    color: var(--text);
   }
 
   /* TABLE ABOVE — title, table, bullets below */
@@ -2490,11 +2501,13 @@
     position: relative;
   }
   .tblabove ul li::before {
-    content: "";
+    content: "•";
     position: absolute;
-    left: 0; top: 13px;
-    width: 18px; height: 2px;
-    background: var(--accent);
+    left: 0; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em; line-height: 1.5;
+    color: var(--text);
   }
   .slide.light.tblabove ul li { color: #0b0d12; }
 
@@ -2531,11 +2544,13 @@
     position: relative;
   }
   .imgbelow ul li::before {
-    content: "";
+    content: "•";
     position: absolute;
-    left: 0; top: 14px;
-    width: 18px; height: 2px;
-    background: var(--accent);
+    left: 0; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em; line-height: 1.5;
+    color: var(--text);
   }
   .imgbelow figure {
     flex: 1;
@@ -2589,11 +2604,13 @@
     position: relative;
   }
   .twoimgright ul li::before {
-    content: "";
+    content: "•";
     position: absolute;
-    left: 0; top: 14px;
-    width: 18px; height: 2px;
-    background: var(--accent);
+    left: 0; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em; line-height: 1.5;
+    color: var(--text);
   }
   .twoimgright .imgs {
     display: flex;
@@ -2653,11 +2670,13 @@
     position: relative;
   }
   .twoimgleft ul li::before {
-    content: "";
+    content: "•";
     position: absolute;
-    left: 0; top: 14px;
-    width: 18px; height: 2px;
-    background: var(--accent);
+    left: 0; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em; line-height: 1.5;
+    color: var(--text);
   }
 
   /* TWO IMAGE ABOVE — title, 2 images side-by-side, text below */
@@ -2700,11 +2719,13 @@
     position: relative;
   }
   .twoimgabove ul li::before {
-    content: "";
+    content: "•";
     position: absolute;
-    left: 0; top: 14px;
-    width: 18px; height: 2px;
-    background: var(--accent);
+    left: 0; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em; line-height: 1.5;
+    color: var(--text);
   }
 
   /* TWO IMAGE BELOW — title, text, 2 images side-by-side below */
@@ -2740,11 +2761,13 @@
     position: relative;
   }
   .twoimgbelow ul li::before {
-    content: "";
+    content: "•";
     position: absolute;
-    left: 0; top: 14px;
-    width: 18px; height: 2px;
-    background: var(--accent);
+    left: 0; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em; line-height: 1.5;
+    color: var(--text);
   }
   .twoimgbelow .imgs {
     display: grid;
@@ -3015,11 +3038,14 @@
     position: relative;
   }
   .bullets ul li::before {
-    content: "";
+    content: "•";
     position: absolute;
-    left: 0; top: 18px;
-    width: 22px; height: 2px;
-    background: var(--accent);
+    left: 14px; top: 0;
+    width: auto; height: auto;
+    background: none;
+    font-size: 1.3em;
+    line-height: 1.5;
+    color: var(--text);
   }
   .slide.light.bullets ul li { color: #0b0d12; }
   .slide.light.bullets ul {

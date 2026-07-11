@@ -10,7 +10,17 @@ from typing import List, Optional
 _CSS_FILE = Path(__file__).parent / "_deck_css.css"
 _EMBEDDED_CSS: str = _CSS_FILE.read_text(encoding="utf-8") if _CSS_FILE.exists() else ""
 
-                                                                               
+# ─────────────────────────────────────────────────────────────────────────────
+# IN-BROWSER SLIDE EDITOR — injected into every generated HTML
+# ─────────────────────────────────────────────────────────────────────────────
+_EDITOR_CSS_FILE = Path(__file__).parent / "deck_editor.css"
+_EDITOR_CSS = _EDITOR_CSS_FILE.read_text(encoding="utf-8") if _EDITOR_CSS_FILE.exists() else ""
+
+_EDITOR_JS_FILE = Path(__file__).parent / "deck_editor.js"
+_EDITOR_JS = _EDITOR_JS_FILE.read_text(encoding="utf-8") if _EDITOR_JS_FILE.exists() else ""
+
+
+
 _FONTS_LINK = (
     "https://fonts.googleapis.com/css2?family=Archivo+Black"
     "&family=Archivo:wght@400;500;600;700;800"
@@ -1530,6 +1540,7 @@ class DeckHTMLLayoutManager:
         onload="renderMathInElement(document.body,{{delimiters:[{{left:'$$',right:'$$',display:true}},{{left:'\\\\[',right:'\\\\]',display:true}},{{left:'$',right:'$',display:false}},{{left:'\\\\(',right:'\\\\)',display:false}}]}})"></script>
 <style>
 {css}
+{_EDITOR_CSS}
 </style>
 </head>
 <body>
@@ -1537,6 +1548,9 @@ class DeckHTMLLayoutManager:
 {slides_html}
 </deck-stage>
 <script src="deck-stage.js"></script>
+<script>
+{_EDITOR_JS}
+</script>
 </body>
 </html>"""
 

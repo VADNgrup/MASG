@@ -780,6 +780,7 @@ class SlidePickMerge:
             sections=self._deck_sections,
             page_title=self.lecture_title,
         )
+        html_doc = self._make_self_contained(html_doc)
         self._deck_dir.mkdir(parents=True, exist_ok=True)
         out_path = self._deck_dir / f'{self.lecture_id}.html'
         with open(out_path, 'w', encoding='utf-8') as f:
@@ -795,6 +796,34 @@ class SlidePickMerge:
             self._lecture['metadata']['institution'] = institution
         with open(self.lecture_json_path, 'w', encoding='utf-8') as f:
             json.dump(self._lecture, f, ensure_ascii=False, indent=2)
+        return html_doc
+
+    def _make_self_contained(self, html_doc: str) -> str:
+        """Inline all local images as base64 data URIs and embed deck-stage.js."""
+        import base64
+        MIME = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.png': 'image/png',  '.gif': 'image/gif',
+            '.webp': 'image/webp', '.svg': 'image/svg+xml',
+        }
+        def _repl(m: re.Match) -> str:
+            src = m.group(1)
+            if src.startswith('data:') or src.startswith('http'):
+                return m.group(0)
+            p = self._deck_dir / src
+            if not p.exists():
+                return m.group(0)
+            mime = MIME.get(p.suffix.lower(), 'image/jpeg')
+            encoded = base64.b64encode(p.read_bytes()).decode('ascii')
+            return f'src="data:{mime};base64,{encoded}"'
+        html_doc = re.sub(r'src="([^"]+)"', _repl, html_doc)
+        js_path = _PROJECT_ROOT / 'src' / 'generator' / 'deck-stage.js'
+        if js_path.exists():
+            js_content = js_path.read_text(encoding='utf-8')
+            html_doc = html_doc.replace(
+                '<script src="deck-stage.js"></script>',
+                f'<script>{js_content}</script>',
+            )
         return html_doc
 
     def _summarise_title(self, title: str) -> str:

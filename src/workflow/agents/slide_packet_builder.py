@@ -141,7 +141,7 @@ Example output:
             {"role": "user", "content": prompt}
         ]
         
-        print("[SlidePacketBuilder] Calling LLM to map sections to slides (Token-Optimized)...")
+        print("[SlidePacketBuilder] Calling LLM to map sections to slides...")
         try:
             def _invoke_llm(msgs):
                 return chat(self.model, msgs, temperature=0.1, max_tokens=1024)

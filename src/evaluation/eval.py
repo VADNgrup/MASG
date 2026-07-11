@@ -9,6 +9,7 @@ import argparse
 from tqdm import tqdm
 import jieba
 import os
+import gc
 rouge = Rouge()
 CONTEXT_DIR = Config.CONTEXT_DIR
 OUTPUT_DIR = Config.OUTPUT_DIR
@@ -242,16 +243,21 @@ def eval(model):
             context_path = CONTEXT_DIR / f'{lecture_id}.json'
             output_lecture_path = OUTPUT_DIR / lecture_id / f'{model}' / f'{lecture_id}.json'
             slide_image_path = OUTPUT_DIR / lecture_id / model / 'slide_images'
-            source_text = parse_full_text(context_path)
-            institution = extract_institution(source_text)
-            presentation = parse_full_slides(output_lecture_path, institution=institution)
-            rouge_score_val = rouge_l_score(source_text, presentation)
-            content_score_val = content_score(slide_image_path)
-            design_score_val = design_score(slide_image_path)
-            coherence_score_val = coherence_score(presentation)
-            val_save = {'rouge_score': rouge_score_val, 'content_score': content_score_val, 'design_score': design_score_val, 'coherence_score': coherence_score_val}
-            val_saves.append(val_save)
-            json.dump(val_save, open(save_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+            try:
+                source_text = parse_full_text(context_path)
+                institution = extract_institution(source_text)
+                presentation = parse_full_slides(output_lecture_path, institution=institution)
+                rouge_score_val = rouge_l_score(source_text, presentation)
+                content_score_val = content_score(slide_image_path)
+                design_score_val = design_score(slide_image_path)
+                coherence_score_val = coherence_score(presentation)
+                val_save = {'rouge_score': rouge_score_val, 'content_score': content_score_val, 'design_score': design_score_val, 'coherence_score': coherence_score_val}
+                val_saves.append(val_save)
+                json.dump(val_save, open(save_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f'[ERROR] Failed to evaluate {lecture_id}: {e}')
+            finally:
+                gc.collect()
     print('======== ALL EVALUATION=======\n')
     if not val_saves:
         print('No evaluations completed.')
