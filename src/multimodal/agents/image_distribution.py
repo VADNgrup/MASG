@@ -3,6 +3,7 @@ import json
 import re
 from pathlib import Path
 from src.utils.config import Config
+from src.ingestion.compact_context import compact_context_path
 
 class ImageDistribution:
 
@@ -11,8 +12,9 @@ class ImageDistribution:
         self.max_images_per_slide = Config.IMAGE_MATCH_MAX_IMAGES_PER_SLIDE
         self.stopwords = self._load_stopwords()
 
-    def distribute_images(self, lecture_id: str, lecture_dict: Dict[str, Any], aggregated_media: Dict[str, Any], used_images: Set[str]) -> List[Dict[str, Any]]:
+    def distribute_images(self, lecture_id: str, lecture_dict: Dict[str, Any], aggregated_media: Dict[str, Any], used_images: Set[str], document_id: str = None) -> List[Dict[str, Any]]:
         self.aggregated_media = aggregated_media
+        document_id = document_id or lecture_dict.get('metadata', {}).get('source_document_id', lecture_id)
         slides = lecture_dict.get('slides', [])
         content_slides = self._extract_content_slides(slides)
         if not content_slides:
@@ -22,13 +24,28 @@ class ImageDistribution:
         print(f'  Image Distribution — {len(content_slides)} content slides')
         print(f"{'=' * 60}")
         existing_images = aggregated_media.get('images', [])
-        section_asset_tokens_by_slide, section_match_pages_by_slide, page_asset_map = self._load_section_info_by_slide(lecture_id)
+        section_asset_tokens_by_slide, section_match_pages_by_slide, page_asset_map = self._load_section_info_by_slide(lecture_id, document_id)
         image_pool = self._step0_summarise_images(existing_images, page_asset_map)
         print(f'\n  Step 0 complete: {len(image_pool)} context images prepared')
         source_pages_by_slide = self._load_slide_source_pages(lecture_id)
         slide_pool = self._step1_prepare_slides(content_slides, source_pages_by_slide, aggregated_media.get('page_count'), section_asset_tokens_by_slide, section_match_pages_by_slide)
         print(f'  Step 1 complete: {len(slide_pool)} content slides prepared')
-        distributions = self._step2_match_images_to_slides(image_pool, slide_pool, used_images)
+        # Collect source pages for slides whose content was extracted as formula or table —
+        # images from those pages should not be placed on any slide as raw images.
+        formula_table_pages: Set[int] = set()
+        for slide_entry in slides:
+            slide_meta = slide_entry.get('slide', {})
+            if slide_meta.get('latex_block_formula') or (slide_meta.get('table') or {}).get('table_markdown'):
+                sn = slide_meta.get('slide_number', -1)
+                try:
+                    sn = int(sn)
+                except (TypeError, ValueError):
+                    continue
+                for pg in source_pages_by_slide.get(sn, []):
+                    formula_table_pages.add(pg)
+        if formula_table_pages:
+            print(f'  [filter] Excluding images from formula/table source pages: {sorted(formula_table_pages)}')
+        distributions = self._step2_match_images_to_slides(image_pool, slide_pool, used_images, formula_table_pages)
         print(f'  Step 2 complete: {len(distributions)} images matched to slides')
         
         assigned_slide_numbers = {d['slide_number'] for d in distributions}
@@ -117,8 +134,9 @@ class ImageDistribution:
             slide_pool.append({'slide_number': slide_number, 'slide_title': slide_title, 'bullet_points': bullet_points, 'tokens': self._tokens(slide_text), 'page_range': page_range, 'section_asset_tokens': section_asset_tokens_by_slide.get(slide_number, set()), 'section_match_pages': section_match_pages_by_slide.get(slide_number, set())})
         return slide_pool
 
-    def _step2_match_images_to_slides(self, image_pool: List[Dict[str, Any]], slide_pool: List[Dict[str, Any]], used_images: Set[str]) -> List[Dict[str, Any]]:
+    def _step2_match_images_to_slides(self, image_pool: List[Dict[str, Any]], slide_pool: List[Dict[str, Any]], used_images: Set[str], formula_table_pages: Optional[Set[int]] = None) -> List[Dict[str, Any]]:
         distributions: List[Dict[str, Any]] = []
+        formula_table_pages = formula_table_pages or set()
 
         # 1. Filter out banned or invalid images
         banned_image_paths = set()
@@ -133,11 +151,33 @@ class ImageDistribution:
         valid_images = []
         for img in image_pool:
             img_name = Path(img['file_path']).name
-            desc_lower = img.get('image_description', '').lower()
-            is_formula = ('general form' in desc_lower and 'constraint' in desc_lower) or \
-                         ('objective function' in desc_lower and 'constraint' in desc_lower) or \
-                         ('mathematical formulation' in desc_lower)
-            if img_name in used_images or img_name in banned_image_paths or is_formula:
+            caption_lower = (img.get('caption', '') or '').lower()
+            ref_lower = (img.get('reference_context', '') or '').lower()
+            desc_lower = (img.get('image_description', '') or '').lower()
+            combined_lower = caption_lower + ' ' + ref_lower + ' ' + desc_lower
+
+            # Skip images from pages where formula/table content was extracted
+            img_page = img.get('page_number')
+            if img_page and img_page in formula_table_pages:
+                print(f'    [skip] {img_name} — page {img_page} is a formula/table source page')
+                continue
+
+            # Caption/description signals that this image IS the formula or table content
+            is_formula = (
+                ('general form' in combined_lower and 'constraint' in combined_lower) or
+                ('objective function' in combined_lower and 'constraint' in combined_lower) or
+                ('mathematical formulation' in combined_lower) or
+                bool(re.search(r'\bequation\s*\(?\d+\)?|\bformula\b.*\bconstraint', combined_lower)) or
+                bool(re.search(r'\\begin\{aligned\}|\\frac\{|\\sum_\{|\\le\b|\\ge\b', combined_lower))
+            )
+            is_table = bool(re.search(
+                r'\btable\s*\d+|\btable\s*[ivxlcdm]+\b|\btable\s*[A-Z]\b|'
+                r'\btab\.\s*\d|\bdata\s+table\b|\bmatrix\b.*\bconstraint',
+                combined_lower
+            ))
+            if img_name in used_images or img_name in banned_image_paths or is_formula or is_table:
+                if is_formula or is_table:
+                    print(f'    [skip] {img_name} — formula/table content detected in caption/description')
                 continue
             valid_images.append(img)
             
@@ -305,8 +345,10 @@ Output your assignments in JSON format EXACTLY like this:
                 result[int(slide_number)] = clean_pages
         return result
 
-    def _load_section_info_by_slide(self, lecture_id: str):
-        compact_path = Config.CONTEXT_DIR / f"{lecture_id}_compact.json"
+    def _load_section_info_by_slide(self, lecture_id: str, document_id: str = None):
+        # Compact context is keyed by document_id (shared across ablation modes, unlike
+        # lecture_id which gets an ablation suffix) — see preprocessing_context.effective_lecture_id.
+        compact_path = compact_context_path(document_id or lecture_id)
         packet_path = Config.LECTURES_DIR / lecture_id / f"{lecture_id}_slide_packets.json"
         empty: tuple = ({}, {}, {})
         if not compact_path.exists() or not packet_path.exists():

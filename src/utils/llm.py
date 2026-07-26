@@ -87,6 +87,7 @@ def _write_log(model: str, token_usage: dict, elapsed: float, api_type: str, req
             "run_id": run_id,
             "document_id": _RUN_STATE.get("document_id"),
             "output_id": _RUN_STATE.get("output_id"),
+            "ablation_mode": Config.ABLATION_MODE,
             "phase": phase,
             "api_type": api_type,
             "model": model,

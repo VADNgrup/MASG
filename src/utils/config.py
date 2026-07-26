@@ -27,6 +27,13 @@ class Config:
     VISION_TEMPERATURE = 0.3
     IMAGE_MATCH_THRESHOLD = float(os.getenv('IMAGE_MATCH_THRESHOLD', '0.18'))
     IMAGE_MATCH_MAX_IMAGES_PER_SLIDE = int(os.getenv('IMAGE_MATCH_MAX_IMAGES_PER_SLIDE', '2'))
+    # 0 = baseline (full pipeline). 1 = skip packet builder. 2 = skip content QA loop.
+    # 3 = skip compact context (outline/title/evidence use raw text). Image distribution
+    #     still runs normally for mode 3 — its compact-context use (page_asset_map caption
+    #     fallback) is deterministic regex extraction, not LLM summarization, so it's kept.
+    # 4 = skip clean_repetition() — raw VLM markdown (including pathological word-repetition
+    #     artifacts) flows into the pipeline unmodified.
+    ABLATION_MODE = int(os.getenv('ABLATION_MODE', '0'))
     IMAGE_MATCH_STOPWORDS_PATH = RESOURCE_DIR / 'multimodal_stopwords.txt'
     MIN_EXTRACT_IMAGE_WIDTH = 80
     MIN_EXTRACT_IMAGE_HEIGHT = 60

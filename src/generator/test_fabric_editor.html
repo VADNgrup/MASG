@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Fabric Editor — Test</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  /* Inline fallback so page is never blank-white while JS loads */
+  html, body { margin: 0; padding: 0; background: #1e1e2e; height: 100%; }
+
+  #ed-loading {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: rgba(255,255,255,.5);
+    font-family: system-ui, sans-serif;
+    font-size: 16px; gap: 16px;
+  }
+  #ed-loading .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid rgba(255,255,255,.1);
+    border-top-color: #4f8ef7;
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #ed-error {
+    display: none;
+    position: fixed; inset: 0;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px;
+    color: #ff6b6b;
+    font-family: monospace; font-size: 14px;
+    background: #1e1e2e;
+    padding: 32px; box-sizing: border-box; text-align: center;
+  }
+  #ed-error h2 { margin: 0; font-size: 20px; }
+  #ed-error pre {
+    background: rgba(255,255,255,.05);
+    padding: 16px; border-radius: 8px;
+    text-align: left; white-space: pre-wrap;
+    max-width: 600px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Loading indicator (hidden once editor starts) -->
+<div id="ed-loading">
+  <div class="spinner"></div>
+  <span>Loading Fabric.js…</span>
+</div>
+
+<!-- Error display (shown if Fabric.js fails to load) -->
+<div id="ed-error">
+  <h2>❌ Fabric.js không load được</h2>
+  <pre id="ed-error-detail">Kiểm tra DevTools → Console để xem lỗi chi tiết.</pre>
+  <p style="color:rgba(255,255,255,.4);font-size:12px">
+    Thử: mở DevTools (F12) → tab Network → xem request fabric.min.js có bị lỗi không
+  </p>
+</div>
+
+<!-- Fix Fabric.js v5 bug: textBaseline='alphabetical' → 'alphabetic' -->
+<script>
+(function () {
+  var desc = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'textBaseline');
+  if (desc && desc.set) {
+    Object.defineProperty(CanvasRenderingContext2D.prototype, 'textBaseline', {
+      set: function (v) { desc.set.call(this, v === 'alphabetical' ? 'alphabetic' : v); },
+      get: desc.get,
+      configurable: true,
+    });
+  }
+}());
+</script>
+
+<!-- Fabric.js v5.3.0 — local file (không cần internet) -->
+<script src="fabric.min.js"></script>
+
+<link rel="stylesheet" href="fabric_editor.css" />
+<script src="fabric_editor.js"></script>
+<script>
+  /* Ẩn loading spinner sau khi editor khởi động xong */
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      var loader = document.getElementById('ed-loading');
+      if (loader) loader.style.display = 'none';
+    }, 150);
+  });
+</script>
+</body>
+</html>

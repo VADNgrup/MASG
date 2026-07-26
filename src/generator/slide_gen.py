@@ -38,7 +38,7 @@ def run_pipeline(lecture_json_path: str, lecture_title: str | None = None, speak
 
     model_name = (Config.LLM_MODEL_NAME or 'unknown_model').replace('/', '_')
     out_dir = _PROJECT_ROOT / 'output' / lecture_id / model_name
-    html_path = out_dir / f'{lecture_id}.html'
+    html_path = out_dir / f'{lecture_id}.html'   # sole HTML output = Fabric canvas editor
 
     rebuild_needed = True
     if html_path.exists():
@@ -62,10 +62,6 @@ def run_pipeline(lecture_json_path: str, lecture_title: str | None = None, speak
     else:
         print(f'[slide_gen] Deck HTML is up to date: {html_path}')
 
-    js_src = _PROJECT_ROOT / 'src' / 'generator' / 'deck-stage.js'
-    if js_src.exists():
-        shutil.copy2(js_src, out_dir / 'deck-stage.js')
-
     # Always regenerate PPTX — fast (no LLM calls), layout_log is the source of truth
     pptx_needs_rebuild = True
     screenshots: list[bytes] = []
@@ -84,7 +80,7 @@ def run_pipeline(lecture_json_path: str, lecture_title: str | None = None, speak
 
     if rebuild_needed:
         try:
-            screenshots = _capture_screenshots(html_path)
+            screenshots = _capture_screenshots(html_path)   # {id}.html = Fabric canvas
             print(f'[slide_gen] Playwright: {len(screenshots)} slide previews captured.')
         except ImportError:
             print('[slide_gen] playwright not installed — slide previews skipped.')
@@ -105,7 +101,52 @@ def run_pipeline(lecture_json_path: str, lecture_title: str | None = None, speak
     print(f'End Phase 4: Deck HTML written to {html_path}')
     print(f"{'=' * 60}\n")
 
-def _capture_screenshots(html_path: Path) -> list[bytes]:
+def _capture_screenshots(canvas_path: Path) -> list[bytes]:
+    """Capture each slide as a static, full-res (1920×1080) PNG from the Fabric
+    canvas editor ({id}_canvas.html).
+
+    Uses FabricEditor.captureAllPNG(), which renders every slide in EDIT mode
+    (no present-mode entrance animations / transitions) only AFTER the deck has
+    finished building — so captures never catch mid-animation frames."""
+    import base64
+    from playwright.sync_api import sync_playwright
+    screenshots: list[bytes] = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page(viewport={'width': 1920, 'height': 1080})
+            page.goto(canvas_path.as_uri())
+            # Wait until the editor has FINISHED building every slide (json + thumb set
+            # per slide during buildAllSlides) — i.e. slides are fully generated.
+            page.wait_for_function(
+                "() => window.FabricEditor && FabricEditor.getSlides && "
+                "FabricEditor.getSlides().length > 0 && "
+                "FabricEditor.getSlides().every(function(s){ return !!s.json && !!s.thumb; })",
+                timeout=30000,
+            )
+            # Let webfonts settle so text renders in the correct face.
+            try:
+                page.evaluate("() => (document.fonts && document.fonts.ready) || true")
+            except Exception:
+                pass
+            page.wait_for_timeout(300)
+            # captureAllPNG() returns Promise<string[]> of PNG data-URLs; Playwright awaits it.
+            data_urls = page.evaluate("() => window.FabricEditor.captureAllPNG()")
+            for du in (data_urls or []):
+                if not du or ',' not in du:
+                    continue
+                screenshots.append(base64.b64decode(du.split(',', 1)[1]))
+            if not screenshots:
+                raise RuntimeError('captureAllPNG returned no images')
+        finally:
+            browser.close()
+    return screenshots
+
+
+def _capture_screenshots_deck(html_path: Path) -> list[bytes]:
+    """Fallback: capture slides from the DOM deck ({id}.html) via deck-stage.
+    Used only when {id}_canvas.html is missing. deck-stage.js skips transitions
+    under navigator.webdriver, so these captures are also animation-free."""
     from playwright.sync_api import sync_playwright
     screenshots: list[bytes] = []
     with sync_playwright() as p:
@@ -169,6 +210,13 @@ def _package_output(lecture_id: str, pptx_path: Path, screenshots: list[bytes],
         from PIL import Image
         for i, png_bytes in enumerate(screenshots):
             img = Image.open(io.BytesIO(png_bytes))
+            # Canvas toDataURL('png') yields RGBA — JPEG can't hold alpha, so flatten
+            # onto a white background (opaque slide pixels overwrite it anyway).
+            if img.mode != 'RGB':
+                rgba = img.convert('RGBA')
+                bg = Image.new('RGB', rgba.size, (255, 255, 255))
+                bg.paste(rgba, mask=rgba.split()[3])
+                img = bg
             img_name = f'slide_{i + 1:04d}.jpg'
             img.save(str(images_dir / img_name), 'JPEG', quality=90)
         print(f'[package_output] {len(screenshots)} slide image(s) saved → {images_dir}')

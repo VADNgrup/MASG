@@ -7,6 +7,7 @@ from src.ingestion.compact_context import ensure_compact_context
 from src.models.context import DocumentContext
 from src.models.slide import Slide
 from src.workflow.agents.content_quality import ContentQualityAgent
+from src.utils.config import Config
 from src.utils.llm import chat
 from src.utils.parse_llm_response import parse_json_response
 
@@ -33,8 +34,13 @@ class SlidePacketBuilderAgent:
         self.content_tools = ContentQualityAgent(model)
 
     def build_packets(self, slide_specs: List[Slide], context: DocumentContext) -> List[Dict[str, Any]]:
+        if Config.ABLATION_MODE == 1:
+            return self._build_packets_ablation1(slide_specs)
+        if Config.ABLATION_MODE == 3:
+            return self._build_packets_ablation3(slide_specs, context)
+        # --- ABLATION_MODE in {1, 3} replaces the block below (section mapping + evidence retrieval) ---
         compact = ensure_compact_context(context)
-        
+
         # Flatten all sections
         all_sections = []
         for card in compact.get("page_cards", []):
@@ -101,6 +107,138 @@ class SlidePacketBuilderAgent:
             packets.append(packet)
             
         return packets
+
+    def _build_packets_ablation1(self, slide_specs: List[Slide]) -> List[Dict[str, Any]]:
+        """Ablation 1: skip section mapping (_llm_map_sections) entirely — no source-grounding evidence.
+
+        DirectBulletWriterAgent.write() hard-requires non-empty packets, so we still emit one
+        packet per spec, but with all evidence/grounding fields empty. This isolates exactly the
+        packet builder's contribution (source-grounding) for the ablation.
+        """
+        packets: List[Dict[str, Any]] = []
+        for spec in slide_specs:
+            packet = {
+                "slide_number": spec.slide_number,
+                "slide_title": spec.slide_title,
+                "slide_type": spec.slide_type.value if hasattr(spec.slide_type, "value") else str(spec.slide_type),
+                "goal": spec.goal,
+                "intent": self._infer_intent(spec, None),
+                "coverage_mode": "normal",
+                "source_pages": [],
+                "home_pages": [],
+                "required_facts": [],
+                "required_checks": [],
+                "coverage_items": [],
+                "evidence": "",
+                "section_assets": [],
+            }
+            if spec.table:
+                packet["table"] = asdict(spec.table)
+            if spec.latex_block_formula:
+                packet["latex_block_formula"] = spec.latex_block_formula
+            packets.append(packet)
+        return packets
+
+    def _build_packets_ablation3(self, slide_specs: List[Slide], context: DocumentContext) -> List[Dict[str, Any]]:
+        """Ablation 3: bypass compact_context.py entirely — including its page_cards/section
+        catalog, which packet_builder normally uses. Map slides directly to raw PDF pages
+        (context.text_content.markdown, split on the `<!-- PAGE N -->` markers) instead, and
+        pull evidence straight from the raw page text.
+        """
+        pages = self._split_pages(context.text_content.markdown)
+        slide_to_pages = self._llm_map_pages(slide_specs, pages)
+
+        packets: List[Dict[str, Any]] = []
+        for spec in slide_specs:
+            mapped_pages = sorted(set(slide_to_pages.get(spec.slide_number, [])))
+            page_texts = [text for (num, text) in pages if num in mapped_pages]
+            # No MAX_EVIDENCE_CHARS cap here — ablation 3 feeds full raw page text through
+            # (direct_bullet_writer.py's per-slide evidence_limit is likewise skipped for mode 3).
+            evidence_text = "\n\n".join(page_texts)
+
+            packet = {
+                "slide_number": spec.slide_number,
+                "slide_title": spec.slide_title,
+                "slide_type": spec.slide_type.value if hasattr(spec.slide_type, "value") else str(spec.slide_type),
+                "goal": spec.goal,
+                "intent": self._infer_intent(spec, None),
+                "coverage_mode": "normal",
+                "source_pages": mapped_pages,
+                "home_pages": mapped_pages,
+                "required_facts": [],
+                "required_checks": [],
+                "coverage_items": [],
+                "evidence": evidence_text,
+                "section_assets": [],  # raw pages carry no pre-extracted asset references
+            }
+            if spec.table:
+                packet["table"] = asdict(spec.table)
+            if spec.latex_block_formula:
+                packet["latex_block_formula"] = spec.latex_block_formula
+            packets.append(packet)
+        return packets
+
+    def _llm_map_pages(self, slide_specs: List[Slide], pages: List[tuple]) -> Dict[int, List[int]]:
+        catalog_lines = []
+        for page_num, page_text in pages:
+            snippet = " ".join(page_text.split())[:150]
+            catalog_lines.append(f"[Page {page_num}] {snippet}")
+        catalog_text = "\n".join(catalog_lines)
+
+        slides_lines = [f"Slide {spec.slide_number}: {spec.slide_title} (Goal: {spec.goal})" for spec in slide_specs]
+        slides_text = "\n".join(slides_lines)
+
+        prompt = f"""You are an expert presentation content curator. Your task is to accurately map slides to the raw document pages that provide their underlying facts.
+
+# DOCUMENT PAGES (raw text preview)
+{catalog_text}
+
+# SLIDES TO BE GENERATED
+{slides_text}
+
+# INSTRUCTIONS
+1. For each slide, identify the page numbers that contain the exact facts needed to fulfill the slide's Goal.
+2. Every slide MUST be mapped to at least one page number.
+3. Maintain a logical, sequential progression through the document where possible.
+4. Output ONLY a raw JSON dictionary. Do not include markdown blocks. Keys are slide numbers (strings), values are arrays of page numbers (integers).
+
+Example output:
+{{"1": [1, 2], "2": [3]}}"""
+        messages = [{"role": "user", "content": prompt}]
+
+        print("[SlidePacketBuilder] (ablation3) Calling LLM to map raw pages to slides...")
+        try:
+            def _invoke_llm(msgs):
+                return chat(self.model, msgs, temperature=0.1, max_tokens=1024)
+
+            response = _invoke_llm(messages)
+            mapping_dict = parse_json_response(response, _invoke_llm, expect_list=False)
+
+            result = {}
+            if isinstance(mapping_dict, dict):
+                for k, v in mapping_dict.items():
+                    try:
+                        slide_num = int(k)
+                        if isinstance(v, list):
+                            result[slide_num] = [int(i) for i in v]
+                    except ValueError:
+                        continue
+            return result
+        except Exception as e:
+            print(f"[SlidePacketBuilder] Failed to map pages using LLM: {e}")
+            return {}
+
+    @staticmethod
+    def _split_pages(markdown: str) -> List[tuple]:
+        matches = list(re.finditer(r"<!--\s*PAGE\s+(\d+)\s*-->", markdown, flags=re.IGNORECASE))
+        if not matches:
+            return [(1, markdown)]
+        pages = []
+        for idx, match in enumerate(matches):
+            start = match.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(markdown)
+            pages.append((int(match.group(1)), markdown[start:end].strip()))
+        return pages
 
     def _llm_map_sections(self, slide_specs: List[Slide], all_sections: List[Dict]) -> Dict[int, List[int]]:
         catalog_lines = []

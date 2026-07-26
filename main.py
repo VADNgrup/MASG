@@ -1,7 +1,7 @@
 import time
 import logging
 from src.extractor.extract_file import extract_file
-from src.preprocessor.preprocessing_context import preprocess_context
+from src.preprocessor.preprocessing_context import preprocess_context, effective_lecture_id
 from src.multimodal.multimodal_processing import multimodal_processing
 from src.generator.slide_gen import run_pipeline as slide_gen
 from src.utils.config import Config
@@ -15,7 +15,10 @@ def gen_slide(document_path, lecture_title, speaker_information, institution='')
     print('Start time:', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
     start_time = time.time()
     document_id = os.path.splitext(os.path.basename(document_path))[0]
-    run_id = start_llm_run(document_id=document_id, output_id=document_id)
+    # Use the ablation-suffixed id (matches the actual output/lecture directory name) so
+    # logs/llm_run_<id>_*.json can be found by lecture_id later (summarize_performance.py).
+    run_output_id = effective_lecture_id(document_id)
+    run_id = start_llm_run(document_id=run_output_id, output_id=run_output_id)
     lecture_path = None
     status = 'completed'
     try:
@@ -62,6 +65,7 @@ def main():
     parser.add_argument('--speaker_information', default=None, help='Speaker information')
     parser.add_argument('--institution', default=None, help='Institution/organization of the speaker')
     parser.add_argument('--limit', help='Limit the number of documents to process')
+    parser.add_argument('--skip-existing', action='store_true', help='Skip documents whose final PPTX output already exists (resume mode).')
     args = parser.parse_args()
     default_document_folder = Config.RAW_DIR
     document_path = args.document_path
@@ -69,11 +73,22 @@ def main():
     speaker_information = args.speaker_information
     institution = args.institution or ''
     limit = int(args.limit) if args.limit is not None else len(os.listdir(default_document_folder))
+    model_name = (Config.LLM_MODEL_NAME or 'unknown_model').replace('/', '_')
     if document_path is None and lecture_title is None:
         document_list = os.listdir(default_document_folder)
         count = 1
         for document_name in document_list:
             if document_name.endswith('.pdf') and count <= limit:
+                document_id = os.path.splitext(document_name)[0]
+                if args.skip_existing:
+                    # Ablation modes write output under an ablation-suffixed id (see
+                    # preprocessing_context.effective_lecture_id) — check that path, not the raw document_id.
+                    lecture_id = effective_lecture_id(document_id)
+                    pptx_path = Config.OUTPUT_DIR / lecture_id / model_name / f'{lecture_id}.pptx'
+                    if pptx_path.exists():
+                        print(f'\n[SKIP] {count}/{limit}: {document_name} already has output at {pptx_path}')
+                        count += 1
+                        continue
                 print(f'\nProcessing {count}/{limit}: {document_name} \n')
                 a_document_path = os.path.join(default_document_folder, document_name)
                 try:

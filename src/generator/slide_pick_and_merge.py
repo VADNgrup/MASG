@@ -9,6 +9,7 @@ from pathlib import Path
 from PIL import Image
 from typing import Dict, List, Optional
 from src.generator.deck_html_layout_manager import DeckHTMLLayoutManager
+from src.generator.fabric_editor_builder import build_slide_spec_json, build_fabric_html
 from src.generator.theme_selection import select_theme
 from src.utils.config import Config
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -63,13 +64,97 @@ class SlidePickMerge:
         self._short_title: str = ""
         self._deck_sections: List[str] = []
 
+    def _formula_table_source_pages(self) -> set:
+        """Return set of PDF page numbers that are source pages for slides with formula/table content.
+        Images from these pages were consumed by OCR extraction and should not be placed as raw images.
+        Uses two independent sources so stale packet slide-numbers don't cause silent failures."""
+        # Source A: slide_packets.json — exact source_pages per slide number
+        packets_path = Config.LECTURES_DIR / self.lecture_id / f'{self.lecture_id}_slide_packets.json'
+        pages_by_slide: Dict[int, List[int]] = {}
+        if packets_path.exists():
+            try:
+                packets = json.loads(packets_path.read_text(encoding='utf-8'))
+                for pkt in (packets if isinstance(packets, list) else []):
+                    sn = pkt.get('slide_number')
+                    if sn is None:
+                        continue
+                    pages = [int(p) for p in (pkt.get('source_pages') or []) if str(p).isdigit()]
+                    if pages:
+                        pages_by_slide[int(sn)] = pages
+            except Exception:
+                pass
+
+        formula_pages: set = set()
+        for slide_entry in self.slides:
+            slide_meta = slide_entry.get('slide', {})
+            has_formula = bool(slide_meta.get('latex_block_formula'))
+            has_table = bool((slide_meta.get('table') or {}).get('table_markdown'))
+            if has_formula or has_table:
+                sn = slide_meta.get('slide_number', -1)
+                try:
+                    sn = int(sn)
+                except (TypeError, ValueError):
+                    continue
+                for pg in pages_by_slide.get(sn, []):
+                    formula_pages.add(pg)
+
+        # Source B: title-based packets match — guards against stale slide numbering.
+        # If the lecture was regenerated with different slide numbers, Source A silently
+        # returns 0 pages. Re-match by title prefix so renumbered slides still block their pages.
+        if packets_path.exists() and len(formula_pages) == 0:
+            try:
+                formula_titles = set()
+                for slide_entry in self.slides:
+                    sm = slide_entry.get('slide', {})
+                    if sm.get('latex_block_formula') or (sm.get('table') or {}).get('table_markdown'):
+                        t = (sm.get('slide_title', '') or '').lower()
+                        if t:
+                            formula_titles.add(t[:40])
+                packets = json.loads(packets_path.read_text(encoding='utf-8'))
+                for pkt in (packets if isinstance(packets, list) else []):
+                    pt = (pkt.get('slide_title', '') or '').lower()[:40]
+                    if any(pt and (pt in ft or ft in pt) for ft in formula_titles):
+                        for pg in [int(p) for p in (pkt.get('source_pages') or []) if str(p).isdigit()]:
+                            formula_pages.add(pg)
+            except Exception:
+                pass
+
+        if formula_pages:
+            logging.debug(f'[image_dist] Formula/table source pages: {sorted(formula_pages)}')
+        return formula_pages
+
+    @staticmethod
+    def _is_formula_or_table_image(item: dict) -> bool:
+        """Return True if the image caption/description signals it IS the formula/table content."""
+        cap = (item.get('caption', '') or '').lower()
+        is_table = bool(re.search(
+            r'\btable\s*\d+|\btable\s*[ivxlcdm]+\b|\btable\s*[a-z]\b|\btab\.\s*\d|\bdata\s+table\b',
+            cap
+        ))
+        is_formula = (
+            bool(re.search(r'\bequation\s*\(?\d+\)?', cap)) or
+            bool(re.search(r'\\begin\{|\\frac\{|\\le\b|\\ge\b', cap))
+        )
+        return is_table or is_formula
+
     def _load_image_dist(self) -> Dict[int, List[dict]]:
         if not self.image_dist_path.exists():
             return {}
         with open(self.image_dist_path, encoding='utf-8') as f:
             items = json.load(f)
+        formula_pages = self._formula_table_source_pages()
         result: Dict[int, List[dict]] = defaultdict(list)
         for item in items:
+            img_path = item.get('image_path', '')
+            # Layer 1: page-based filter (requires slide_packets.json to be current)
+            m = re.search(r'page_(\d+)', img_path)
+            if m and formula_pages and int(m.group(1)) in formula_pages:
+                logging.debug(f'[image_dist] Skip {Path(img_path).name} — page {m.group(1)} is formula/table source page')
+                continue
+            # Layer 2: caption-based filter (works even when packets file is stale/missing)
+            if self._is_formula_or_table_image(item):
+                logging.debug(f'[image_dist] Skip {Path(img_path).name} — table/formula caption detected')
+                continue
             result[int(item['slide_number'])].append(item)
         return dict(result)
 
@@ -320,6 +405,12 @@ class SlidePickMerge:
         pts = []
         for i, b in enumerate(bullets):
             heading, body = SlidePickMerge._split_bullet_heading_body(b)
+            if not body and heading:
+                # Plain sentence: auto-split — first 4 words become the title
+                words = heading.split()
+                if len(words) > 5:
+                    heading = ' '.join(words[:4])
+                    body = ' '.join(words[4:])
             pts.append({'icon': icons[i % len(icons)], 'title': heading, 'body': body})
         return pts
 
@@ -477,8 +568,9 @@ class SlidePickMerge:
         return merged
 
     # Layouts that require "Short Title: Detailed body" bullet format
+    # NOTE: key_points_layout is excluded — it handles plain sentences via auto-split in _bullets_to_key_points
     _TITLE_BODY_LAYOUTS = frozenset({
-        'key_points_layout', 'conclusion_cards_layout', 'numbered_conclusions_layout',
+        'conclusion_cards_layout', 'numbered_conclusions_layout',
         'three_cols_content_layout', 'grid_2x2_layout', 'steps_horizontal_layout',
         'agenda_layout', 'pricing_cards_layout',
     })
@@ -517,8 +609,7 @@ class SlidePickMerge:
             self._log_layout(sn, 'two_cols_content_layout', {'title': title, 'content': contents})
             return mgr.two_cols_content_layout(title, contents)
         if layout_hint == 'only_content':
-            self._log_layout(sn, 'only_content', {'title': title, 'content': contents})
-            return mgr.only_content(title, contents)
+            return None  # Let the random picker decide; fall back to only_content if nothing fits
         if layout_hint == 'research_question_layout' and n >= 2:
             main_q = contents[0]
             sub_qs = contents[1:4]
@@ -694,7 +785,8 @@ class SlidePickMerge:
                     conc = self._bullets_to_conclusions(contents)
                     self._log_layout(sn, 'conclusion_cards_layout', {'title': title, 'conclusions': conc})
                     return mgr.conclusion_cards_layout(title, conc)
-                if pick < 0.80 and split_ok:
+                # key_points: 55–80% chance when split-friendly; 25% when plain sentences (auto-split titles)
+                if (pick < 0.80 and split_ok) or (not split_ok and pick < 0.25):
                     pts = self._bullets_to_key_points(contents)
                     self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts})
                     return mgr.key_points_layout(title, pts)
@@ -709,7 +801,8 @@ class SlidePickMerge:
                     conc = self._bullets_to_conclusions(contents)
                     self._log_layout(sn, 'conclusion_cards_layout', {'title': title, 'conclusions': conc})
                     return mgr.conclusion_cards_layout(title, conc)
-                if pick < 0.75 and split_ok:
+                # key_points: 52–75% when split-friendly; 25% when plain sentences
+                if (pick < 0.75 and split_ok) or (not split_ok and pick < 0.25):
                     pts = self._bullets_to_key_points(contents)
                     self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts})
                     return mgr.key_points_layout(title, pts)
@@ -718,7 +811,8 @@ class SlidePickMerge:
                     return mgr.two_cols_content_layout(title, contents)
             elif 5 <= n <= 6:
                 pick = random.random()
-                if pick < 0.25 and split_ok:
+                # key_points: 0–25% when split-friendly; 0–20% when plain sentences
+                if (pick < 0.25 and split_ok) or (not split_ok and pick < 0.20):
                     pts = self._bullets_to_key_points(contents)
                     self._log_layout(sn, 'key_points_layout', {'title': title, 'points': pts})
                     return mgr.key_points_layout(title, pts)
@@ -763,7 +857,10 @@ class SlidePickMerge:
         short_title = self._summarise_title(self.lecture_title)
         self._short_title = short_title
         cover = self._mgr.config_and_greeting_slide(short_title=short_title, institution=self._resolved_institution)
-        self._log_layout(self._slide_counter, 'config_and_greeting_slide', {'short_title': short_title})
+        self._log_layout(self._slide_counter, 'config_and_greeting_slide', {
+            'short_title': short_title,
+            'institution': self._resolved_institution,
+        })
         self._deck_sections.append(cover)
         toc_items = self._parse_outline()
         toc_slide = self._inject_chrome(self._build_toc_slide(toc_items))
@@ -776,16 +873,25 @@ class SlidePickMerge:
         end_slide = self._mgr.end_layout(end_text='Thank you', institution=institution, acknowledgment=ack)
         self._log_layout(self._slide_counter, 'end_layout', {'end_text': 'Thank you', 'institution': institution})
         self._deck_sections.append(end_slide)
-        html_doc = self._mgr.build_html_document(
-            sections=self._deck_sections,
-            page_title=self.lecture_title,
-        )
-        html_doc = self._make_self_contained(html_doc)
         self._deck_dir.mkdir(parents=True, exist_ok=True)
+
+        # ── Legacy DOM deck output — DISABLED. We now ship only the Fabric canvas
+        #    editor (as {id}.html) + the .pptx. Kept for reference / possible reuse. ──
+        # html_doc = self._mgr.build_html_document(sections=self._deck_sections, page_title=self.lecture_title)
+        # html_doc = self._make_self_contained(html_doc)
+        # with open(self._deck_dir / f'{self.lecture_id}.html', 'w', encoding='utf-8') as f:
+        #     f.write(html_doc)
+
+        # ── Sole HTML output: Fabric.js canvas editor → {id}.html ──
+        _slide_specs = [{'layout': e['layout_function_name'], **e['args']} for e in self._layout_log]
+        _spec_json = build_slide_spec_json(
+            _slide_specs, title=self._mgr.title, author=self._mgr.author, theme=self._mgr.theme,
+        )
+        html_doc = self._make_self_contained(build_fabric_html(_spec_json, page_title=self.lecture_title))
         out_path = self._deck_dir / f'{self.lecture_id}.html'
         with open(out_path, 'w', encoding='utf-8') as f:
             f.write(html_doc)
-        logging.info(f'[deck_html] Written → {out_path}')
+        logging.info(f'[deck_html] Canvas editor → {out_path}')
         log_path = self.lecture_json_path.parent / f'{self.lecture_id}_layout_distribution.json'
         with open(log_path, 'w', encoding='utf-8') as f:
             json.dump(self._layout_log, f, ensure_ascii=False, indent=2)
@@ -806,6 +912,16 @@ class SlidePickMerge:
             '.png': 'image/png',  '.gif': 'image/gif',
             '.webp': 'image/webp', '.svg': 'image/svg+xml',
         }
+        # Inline the runtime engine FIRST, from the canonical source file, so the
+        # generic src="..."→base64 pass below can never hijack `src="deck-stage.js"`
+        # (which happens whenever a stale deck-stage.js copy lives in the output dir).
+        js_path = _PROJECT_ROOT / 'src' / 'generator' / 'deck-stage.js'
+        if js_path.exists():
+            js_content = js_path.read_text(encoding='utf-8')
+            html_doc = html_doc.replace(
+                '<script src="deck-stage.js"></script>',
+                f'<script>{js_content}</script>',
+            )
         def _repl(m: re.Match) -> str:
             src = m.group(1)
             if src.startswith('data:') or src.startswith('http'):
@@ -817,21 +933,31 @@ class SlidePickMerge:
             encoded = base64.b64encode(p.read_bytes()).decode('ascii')
             return f'src="data:{mime};base64,{encoded}"'
         html_doc = re.sub(r'src="([^"]+)"', _repl, html_doc)
-        js_path = _PROJECT_ROOT / 'src' / 'generator' / 'deck-stage.js'
-        if js_path.exists():
-            js_content = js_path.read_text(encoding='utf-8')
-            html_doc = html_doc.replace(
-                '<script src="deck-stage.js"></script>',
-                f'<script>{js_content}</script>',
-            )
+
+        # Embed image path values inside DECK_SPEC JSON (Fabric editor) — fixes CORS on
+        # file://. Covers single (img_path) and two-image layouts (img1_path/img2_path).
+        def _repl_img_path(m: re.Match) -> str:
+            key, src = m.group(1), m.group(2)
+            if src.startswith('data:') or src.startswith('http'):
+                return m.group(0)
+            p = self._deck_dir / src
+            if not p.exists():
+                return m.group(0)
+            mime = MIME.get(p.suffix.lower(), 'image/jpeg')
+            encoded = base64.b64encode(p.read_bytes()).decode('ascii')
+            return f'"{key}": "data:{mime};base64,{encoded}"'
+        html_doc = re.sub(r'"(img_path|img1_path|img2_path)":\s*"([^"]+)"', _repl_img_path, html_doc)
         return html_doc
 
     def _summarise_title(self, title: str) -> str:
         text = re.sub(r'[_:;|]+', ' ', str(title or '')).strip()
         return re.sub(r'\s+', ' ', text)
 
-    def _inject_chrome(self, html: str) -> str:
+    def _inject_chrome(self, html):
         self._page_counter += 1
+        if isinstance(html, dict):
+            # JSON / Fabric.js format: chrome is handled by the JS renderer
+            return html
         chrome = DeckHTMLLayoutManager._chrome(
             self._short_title, self._page_counter, self.date, self.speaker_information or "",
             institution=self._resolved_institution,

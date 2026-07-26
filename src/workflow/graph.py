@@ -84,14 +84,20 @@ def create_workflow() -> StateGraph:
     workflow.add_node('plan_builder', plan_builder_node)
     workflow.add_node('packet_builder', packet_builder_node)
     workflow.add_node('direct_bullet_writer', direct_bullet_writer_node)
-    workflow.add_node('content_quality', content_quality_node)
 
     workflow.set_entry_point('plan_builder')
     workflow.add_edge('plan_builder', 'packet_builder')
     workflow.add_edge('packet_builder', 'direct_bullet_writer')
-    workflow.add_edge('direct_bullet_writer', 'content_quality')
-    workflow.add_conditional_edges('content_quality', qa_router, {
-        "direct_bullet_writer": "direct_bullet_writer",
-        "end": END
-    })
+
+    if Config.ABLATION_MODE == 2:
+        # Ablation 2: skip ContentQualityAgent entirely — one pass through DirectBulletWriter, no repair loop.
+        workflow.add_edge('direct_bullet_writer', END)
+    else:
+        # --- baseline / other ablations: normal QA loop ---
+        workflow.add_node('content_quality', content_quality_node)
+        workflow.add_edge('direct_bullet_writer', 'content_quality')
+        workflow.add_conditional_edges('content_quality', qa_router, {
+            "direct_bullet_writer": "direct_bullet_writer",
+            "end": END
+        })
     return workflow.compile()

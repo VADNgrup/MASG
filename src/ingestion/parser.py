@@ -232,7 +232,7 @@ class DocumentParser:
         }
 
         try:
-            response = requests.post(self.model_url, headers=headers, json=payload, timeout=180)
+            response = requests.post(self.model_url, headers=headers, json=payload, timeout=420)
             response.raise_for_status()
             resp_data = response.json()
             content = resp_data['choices'][0]['message']['content']
@@ -293,7 +293,7 @@ class DocumentParser:
             "temperature": 0.1
         }
         try:
-            response = requests.post(self.model_url, headers=headers, json=payload, timeout=180)
+            response = requests.post(self.model_url, headers=headers, json=payload, timeout=420)
             response.raise_for_status()
             content = response.json()['choices'][0]['message']['content']
             return self._parse_page_insight(content, page_num)

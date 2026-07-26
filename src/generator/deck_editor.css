@@ -153,41 +153,9 @@
 }
 .ed-textbox:focus { border-color:#888; outline:none; cursor:text; border-style:solid; }
 
-/* Keep existing animations */
-@keyframes tr-fade { from{opacity:0} to{opacity:1} }
-@keyframes tr-slide-l { from{transform:translateX(-80px);opacity:0} to{transform:translateX(0);opacity:1} }
-@keyframes tr-slide-u { from{transform:translateY(60px);opacity:0} to{transform:translateY(0);opacity:1} }
-@keyframes tr-zoom { from{transform:scale(0.88);opacity:0} to{transform:scale(1);opacity:1} }
-@keyframes tr-flip { from{transform:perspective(900px) rotateY(-35deg);opacity:0} to{transform:perspective(900px) rotateY(0);opacity:1} }
-.tr-fade { animation:tr-fade 0.45s ease forwards; }
-.tr-slide-left { animation:tr-slide-l 0.4s ease forwards; }
-.tr-slide-up { animation:tr-slide-u 0.4s ease forwards; }
-.tr-zoom { animation:tr-zoom 0.4s ease forwards; }
-.tr-flip { animation:tr-flip 0.5s ease forwards; }
-@keyframes anim-fade-in  { from{opacity:0} to{opacity:1} }
-@keyframes anim-fly-left  { from{transform:translateX(-120px);opacity:0} to{transform:translateX(0);opacity:1} }
-@keyframes anim-fly-right { from{transform:translateX(120px);opacity:0} to{transform:translateX(0);opacity:1} }
-@keyframes anim-fly-up    { from{transform:translateY(80px);opacity:0} to{transform:translateY(0);opacity:1} }
-@keyframes anim-fly-down  { from{transform:translateY(-80px);opacity:0} to{transform:translateY(0);opacity:1} }
-@keyframes anim-zoom-in   { from{transform:scale(0.5);opacity:0} to{transform:scale(1);opacity:1} }
-@keyframes anim-zoom-out  { from{transform:scale(1.5);opacity:0} to{transform:scale(1);opacity:1} }
-@keyframes anim-bounce    { 0%{transform:scale(0.6);opacity:0} 60%{transform:scale(1.08)} 80%{transform:scale(0.97)} 100%{transform:scale(1);opacity:1} }
-@keyframes anim-rotate    { from{transform:rotate(-180deg);opacity:0} to{transform:rotate(0);opacity:1} }
-@keyframes anim-flip-h    { from{transform:scaleX(0);opacity:0} to{transform:scaleX(1);opacity:1} }
-@keyframes anim-flip-v    { from{transform:scaleY(0);opacity:0} to{transform:scaleY(1);opacity:1} }
-@keyframes anim-wipe      { from{clip-path:inset(0 100% 0 0)} to{clip-path:inset(0 0% 0 0)} }
-.anim-fade-in  { animation:anim-fade-in  var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-fly-left  { animation:anim-fly-left  var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-fly-right { animation:anim-fly-right var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-fly-up    { animation:anim-fly-up    var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-fly-down  { animation:anim-fly-down  var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-zoom-in   { animation:anim-zoom-in   var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-zoom-out  { animation:anim-zoom-out  var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-bounce    { animation:anim-bounce    var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-rotate    { animation:anim-rotate    var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-flip-h    { animation:anim-flip-h    var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-flip-v    { animation:anim-flip-v    var(--anim-dur,.5s) var(--anim-delay,0s) both; }
-.anim-wipe      { animation:anim-wipe      var(--anim-dur,.5s) var(--anim-delay,0s) both; }
+/* Slide-transition (tr-*) and object-animation (anim-*) keyframes now live in
+ * _deck_css.css so they play at runtime (present) even without the editor.
+ * See _deck_css.css → "Slide transitions" / "Per-object entrance animations". */
 
 /* Editable Lists — custom ::before handles bullets, so disable browser list markers */
 [contenteditable] ul, .ed-textbox ul { list-style-type: none; padding-left: 24px; margin-left: 0; }

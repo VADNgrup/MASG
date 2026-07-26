@@ -3,6 +3,7 @@ import re
 from typing import Any, Dict, List
 
 from src.models.slide import SlideContent
+from src.utils.config import Config
 from src.utils.language_utils import dominant_script
 from src.utils.llm import chat
 from src.utils.parse_llm_response import parse_json_response
@@ -138,14 +139,20 @@ class DirectBulletWriterAgent:
             keep["table"] = packet.get("table")
         if packet.get("latex_block_formula"):
             keep["latex_block_formula"] = packet.get("latex_block_formula")
-        evidence_limit = 1600 if packet.get("coverage_mode") == "list_coverage" else 1200
         evidence = str(packet.get("evidence") or "")
         if evidence:
             # OLD (partial clean):
             # cleaned_evidence = re.sub(r"[^\x00-\x7FÀ-ɏḀ-ỿ̀-ͯ]", " ", evidence)
             # cleaned_evidence = re.sub(r" {2,}", " ", cleaned_evidence).strip()
             cleaned_evidence = DirectBulletWriterAgent._clean_evidence_text(evidence)
-            keep["evidence_excerpt"] = ContentQualityAgent._sentence_safe_truncate(cleaned_evidence, evidence_limit)
+            if Config.ABLATION_MODE == 3:
+                # Ablation 3: no compact-context step anywhere in the pipeline — don't re-cap
+                # the evidence here either. Oversized batches still auto-split via
+                # PROMPT_TOKEN_BUDGET in _write_batch, so this can't blow up a single call.
+                keep["evidence_excerpt"] = cleaned_evidence
+            else:
+                evidence_limit = 1600 if packet.get("coverage_mode") == "list_coverage" else 1200
+                keep["evidence_excerpt"] = ContentQualityAgent._sentence_safe_truncate(cleaned_evidence, evidence_limit)
         return keep
 
     @staticmethod

@@ -34,7 +34,7 @@ api_dspy_test.ipynb
 api-test.py
 src/layout_generator/
 test
-
+.agents
 src/generator/slidev/*.md
 src/generator/slidev/*.pdf
 src/generator/slidev/public/assets/*

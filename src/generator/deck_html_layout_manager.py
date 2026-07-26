@@ -19,6 +19,10 @@ _EDITOR_CSS = _EDITOR_CSS_FILE.read_text(encoding="utf-8") if _EDITOR_CSS_FILE.e
 _EDITOR_JS_FILE = Path(__file__).parent / "deck_editor.js"
 _EDITOR_JS = _EDITOR_JS_FILE.read_text(encoding="utf-8") if _EDITOR_JS_FILE.exists() else ""
 
+# Shared save layer (File System Access API + download fallback + autosave).
+# Must load BEFORE deck_editor.js, which uses window.EditorSave.
+_EDITOR_SAVE_FILE = Path(__file__).parent / "editor_save.js"
+_EDITOR_SAVE_JS = _EDITOR_SAVE_FILE.read_text(encoding="utf-8") if _EDITOR_SAVE_FILE.exists() else ""
 
 
 _FONTS_LINK = (
@@ -519,7 +523,12 @@ class DeckHTMLLayoutManager:
             f'<section class="slide body formula{light_cls}" data-eq-count="{eq_count}">'
             '<div class="body-wrap">'
             f'<h2 data-fit data-fit-lines="2" data-fit-min="24" data-fit-max="112">{_e(title)}</h2>'
-            f'<div class="eq-wrap"><div class="eq">{eq_blocks}</div></div>'
+            # data-eq-count above sets a reasonable starting font-size via CSS tiers, but that's
+            # a static guess that doesn't know about tall content (e.g. \frac stacks) — data-fit-block
+            # is a dynamic safety net that shrinks the whole block via measured bounding boxes if the
+            # actual KaTeX render still overflows its container, so long/tall formulas can no longer
+            # spill past the slide edge.
+            f'<div class="eq-wrap" data-fit-block><div class="eq">{eq_blocks}</div></div>'
             f"{self._ul(items) if items else ''}"
             "</div>"
             "</section>"
@@ -1549,12 +1558,14 @@ class DeckHTMLLayoutManager:
 </deck-stage>
 <script src="deck-stage.js"></script>
 <script>
+{_EDITOR_SAVE_JS}
+</script>
+<script>
 {_EDITOR_JS}
 </script>
 </body>
 </html>"""
 
-                                                                               
 def _cell_text(c: str) -> str:
     c = re.sub(r'\$\$(.+?)\$\$', lambda m: f'${m.group(1).strip()}$', c, flags=re.DOTALL)
     tokens = re.split(r'(\*\*[^*\n]+\*\*)', c)

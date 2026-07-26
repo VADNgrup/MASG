@@ -1,4 +1,5 @@
 import argparse
+import os
 import shutil
 import subprocess
 from src.utils.config import Config
@@ -25,12 +26,18 @@ def clear_benchmark_state():
         _clear_path(path)
         print(f'[CLEAN] reset {path}')
 
-def run_benchmark(clean=True, limit=None, speaker=None, title=None, institution=None):
+def run_benchmark(mode='clean', limit=None, speaker=None, title=None, institution=None, ablation=None):
+    if ablation is not None:
+        os.environ['ABLATION_MODE'] = str(ablation)
     print('=' * 60)
     print('STARTING BENCHMARK PIPELINE')
+    print(f'MODE: {mode}')
+    print(f"ABLATION_MODE: {os.environ.get('ABLATION_MODE', '0')}")
     print('=' * 60)
-    if clean:
+    if mode == 'clean':
         clear_benchmark_state()
+    else:
+        print('\n[RESUME] Keeping existing artifacts, will skip documents already generated.')
     print("\n[1/2] GENERATING SLIDES FOR ALL DOCUMENTS IN 'data/raw/'...")
     gen_cmd = ['python', '-m', 'main']
     if limit is not None:
@@ -41,7 +48,9 @@ def run_benchmark(clean=True, limit=None, speaker=None, title=None, institution=
         gen_cmd.extend(['--lecture_title', title])
     if institution is not None:
         gen_cmd.extend(['--institution', institution])
-        
+    if mode == 'resume':
+        gen_cmd.append('--skip-existing')
+
     ret_gen = subprocess.run(gen_cmd).returncode
     if ret_gen != 0:
         print('\nWarning: Some slides failed to generate. Proceeding to evaluation for completed tasks.')
@@ -57,14 +66,22 @@ def run_benchmark(clean=True, limit=None, speaker=None, title=None, institution=
     print('=' * 60)
 
 def _build_parser():
-    parser = argparse.ArgumentParser(description='Run a clean benchmark from raw PDFs to evaluation metrics.')
-    parser.add_argument('--no-clean', action='store_true', help='Keep existing generated artifacts before running.')
+    parser = argparse.ArgumentParser(description='Run a benchmark from raw PDFs to evaluation metrics.')
+    parser.add_argument('--mode', choices=['clean', 'resume'], default='clean',
+                         help="'clean' (default): wipe all previous artifacts and start over. "
+                              "'resume': keep existing artifacts and only process documents that haven't finished yet.")
+    parser.add_argument('--no-clean', action='store_true', help='Deprecated alias for --mode resume.')
     parser.add_argument('--limit', type=int, default=None, help='Limit the number of PDFs processed from data/raw.')
     parser.add_argument('--speaker', type=str, default=None, help='Speaker information to pass to the slides.')
     parser.add_argument('--title', type=str, default=None, help='Override lecture title for the slides.')
     parser.add_argument('--institution', type=str, default=None, help='Institution/organization of the speaker.')
+    parser.add_argument('--ablation', type=int, choices=[0, 1, 2, 3, 4], default=None,
+                         help='Ablation mode: 0=baseline, 1=skip packet builder, 2=skip content QA loop, '
+                              '3=skip compact context, 4=skip clean_repetition. '
+                              'Overrides ABLATION_MODE from .env for this run.')
     return parser
 
 if __name__ == '__main__':
     args = _build_parser().parse_args()
-    run_benchmark(clean=not args.no_clean, limit=args.limit, speaker=args.speaker, title=args.title, institution=args.institution)
+    mode = 'resume' if args.no_clean else args.mode
+    run_benchmark(mode=mode, limit=args.limit, speaker=args.speaker, title=args.title, institution=args.institution, ablation=args.ablation)

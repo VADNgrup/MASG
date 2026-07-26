@@ -226,9 +226,6 @@ def eval(model):
     lecture_ids = os.listdir(OUTPUT_DIR)
     val_saves = []
     for lecture_id in tqdm(lecture_ids, desc='Evaluating lectures'):
-        if not os.path.exists(CONTEXT_DIR / f'{lecture_id}.json'):
-            print('Not have information of:', lecture_id)
-            continue
         if lecture_id == '.gitkeep':
             print('Skipping .gitkeep')
             continue
@@ -240,8 +237,21 @@ def eval(model):
             val_saves.append(val_save)
             continue
         else:
-            context_path = CONTEXT_DIR / f'{lecture_id}.json'
             output_lecture_path = OUTPUT_DIR / lecture_id / f'{model}' / f'{lecture_id}.json'
+            # Ablation-mode lecture_ids are suffixed (e.g. "<doc>__abl3") and don't match the
+            # shared, unsuffixed context filename on disk — resolve the true source document id
+            # from the lecture's own saved metadata instead of assuming lecture_id == document_id.
+            document_id = lecture_id
+            if output_lecture_path.exists():
+                try:
+                    with output_lecture_path.open('r', encoding='utf-8') as f:
+                        document_id = json.load(f).get('metadata', {}).get('source_document_id', lecture_id)
+                except Exception:
+                    document_id = lecture_id
+            context_path = CONTEXT_DIR / f'{document_id}.json'
+            if not context_path.exists():
+                print('Not have information of:', lecture_id)
+                continue
             slide_image_path = OUTPUT_DIR / lecture_id / model / 'slide_images'
             try:
                 source_text = parse_full_text(context_path)

@@ -36,13 +36,58 @@
     container-name: slide;
   }
 
+  /* ── Slide transitions ──────────────────────────────────────────────
+   * Per-slide via `data-transition`; deck-stage.js adds the `tr-*` class to
+   * the active slide on each _show(). Duration overridable via `--tr-dur`.
+   * `deckSlideIn` kept as the default fallback for decks without a chosen
+   * transition (JS applies `tr-fade` by default). */
   @keyframes deckSlideIn {
     from { opacity: 0; transform: translateX(40px); }
     to { opacity: 1; transform: translateX(0); }
   }
-  deck-stage[data-transitions="true"] section.slide[data-deck-active] {
-    animation: deckSlideIn 0.35s ease-out forwards;
-  }
+  @keyframes tr-fade    { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes tr-slide-l { from { transform: translateX(90px);  opacity: 0; } to { transform: translateX(0);  opacity: 1; } }
+  @keyframes tr-slide-r { from { transform: translateX(-90px); opacity: 0; } to { transform: translateX(0);  opacity: 1; } }
+  @keyframes tr-slide-u { from { transform: translateY(70px);  opacity: 0; } to { transform: translateY(0);  opacity: 1; } }
+  @keyframes tr-slide-d { from { transform: translateY(-70px); opacity: 0; } to { transform: translateY(0);  opacity: 1; } }
+  @keyframes tr-zoom    { from { transform: scale(0.90);       opacity: 0; } to { transform: scale(1);       opacity: 1; } }
+  @keyframes tr-flip    { from { transform: perspective(1200px) rotateY(-32deg); opacity: 0; } to { transform: perspective(1200px) rotateY(0); opacity: 1; } }
+  section.slide.tr-fade        { animation: tr-fade    var(--tr-dur, .45s) ease            forwards; }
+  section.slide.tr-slide-left  { animation: tr-slide-l var(--tr-dur, .45s) cubic-bezier(.22,.61,.36,1) forwards; }
+  section.slide.tr-slide-right { animation: tr-slide-r var(--tr-dur, .45s) cubic-bezier(.22,.61,.36,1) forwards; }
+  section.slide.tr-slide-up    { animation: tr-slide-u var(--tr-dur, .45s) cubic-bezier(.22,.61,.36,1) forwards; }
+  section.slide.tr-slide-down  { animation: tr-slide-d var(--tr-dur, .45s) cubic-bezier(.22,.61,.36,1) forwards; }
+  section.slide.tr-zoom        { animation: tr-zoom    var(--tr-dur, .45s) ease            forwards; }
+  section.slide.tr-flip        { animation: tr-flip    var(--tr-dur, .55s) ease            forwards; }
+
+  /* ── Per-object entrance animations ─────────────────────────────────
+   * Authored via `data-anim` (+ `data-anim-order`, `data-anim-dur`,
+   * `data-anim-delay`); deck-stage.js re-triggers `anim-*` on slide show.
+   * Duration/delay overridable via `--anim-dur` / `--anim-delay`. */
+  @keyframes anim-fade-in   { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes anim-fly-left  { from { transform: translateX(-120px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes anim-fly-right { from { transform: translateX(120px);  opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes anim-fly-up    { from { transform: translateY(80px);   opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  @keyframes anim-fly-down  { from { transform: translateY(-80px);  opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  @keyframes anim-zoom-in   { from { transform: scale(0.5);  opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @keyframes anim-zoom-out  { from { transform: scale(1.5);  opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @keyframes anim-bounce    { 0% { transform: scale(0.6); opacity: 0; } 60% { transform: scale(1.08); } 80% { transform: scale(0.97); } 100% { transform: scale(1); opacity: 1; } }
+  @keyframes anim-rotate    { from { transform: rotate(-180deg); opacity: 0; } to { transform: rotate(0); opacity: 1; } }
+  @keyframes anim-flip-h    { from { transform: scaleX(0); opacity: 0; } to { transform: scaleX(1); opacity: 1; } }
+  @keyframes anim-flip-v    { from { transform: scaleY(0); opacity: 0; } to { transform: scaleY(1); opacity: 1; } }
+  @keyframes anim-wipe      { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0% 0 0); } }
+  .anim-fade-in   { animation: anim-fade-in   var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-fly-left  { animation: anim-fly-left  var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-fly-right { animation: anim-fly-right var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-fly-up    { animation: anim-fly-up    var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-fly-down  { animation: anim-fly-down  var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-zoom-in   { animation: anim-zoom-in   var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-zoom-out  { animation: anim-zoom-out  var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-bounce    { animation: anim-bounce    var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-rotate    { animation: anim-rotate    var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-flip-h    { animation: anim-flip-h    var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-flip-v    { animation: anim-flip-v    var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
+  .anim-wipe      { animation: anim-wipe      var(--anim-dur, .5s) var(--anim-delay, 0s) both; }
   .slide.cover { background: var(--cover-bg); }
   .slide.end   { background: var(--end-bg); }
   .slide.body  { background: var(--cover-bg); }
@@ -1691,6 +1736,7 @@
     width: 100%;
     height: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
     font-family: var(--font-body);
     font-size: 26px;
   }
@@ -1698,6 +1744,8 @@
     text-align: left;
     padding: 18px 24px;
     line-height: 1.4;
+    word-break: break-word;
+    overflow-wrap: break-word;
   }
   .cmptable thead th {
     font-family: var(--font-mono);
@@ -2166,6 +2214,7 @@
   .slide.light.threecol .col p { color: rgba(11,13,18,0.65); }
   .slide.light.threecol .col h3 { color: #0b0d12; }
   .slide.light.threecol .col ul li { color: #0b0d12; }
+  .slide.light.threecol .col ul li::before { color: var(--accent); }
 
   /* Steps body text */
   .slide.light.steps .step h3 { color: #0b0d12; }
@@ -2205,9 +2254,11 @@
   /* Two contents light */
   .slide.light.twocontents .block h3 { color: #0b0d12; border-bottom-color: var(--accent); }
   .slide.light.twocontents .block ul li { color: #0b0d12; }
+  .slide.light.twocontents .block ul li::before { color: var(--accent); }
 
   /* Two cols bullets light */
   .slide.light.twocols .grid li { color: #0b0d12; }
+  .slide.light.twocols .grid li::before { color: var(--accent); }
 
   /* Numbered conclusions light */
   .slide.light.numconcl .row { border-top-color: rgba(11,13,18,0.12); }
@@ -2229,6 +2280,7 @@
   }
   .slide.light.formula .eq { color: #0b0d12; }
   .slide.light.formula ul li { color: #0b0d12; }
+  .slide.light.formula ul li::before { color: var(--accent); }
 
   /* Research question light */
   .slide.light.rquestion .main-rq {
@@ -2263,6 +2315,7 @@
   .slide.light.pricing .card .price { color: var(--accent); }
   .slide.light.pricing .card .price small { color: rgba(11,13,18,0.55); }
   .slide.light.pricing .card ul li { color: #0b0d12; }
+  .slide.light.pricing .card ul li::before { color: var(--accent); }
 
   /* Conclusion cards w/ timeline light */
   .slide.light.conclcards .timeline-line { background: rgba(11,13,18,0.15); }
@@ -2287,6 +2340,7 @@
       linear-gradient(-45deg, transparent 49%, rgba(11,13,18,0.06) 50%, transparent 51%);
   }
   .slide.light.imgleft ul li { color: #0b0d12; }
+  .slide.light.imgleft ul li::before { color: var(--accent); }
 
   /* Compare/Trade-offs light */
   .slide.light.compare .col ul li::before { color: var(--accent); }
@@ -2510,6 +2564,7 @@
     color: var(--text);
   }
   .slide.light.tblabove ul li { color: #0b0d12; }
+  .slide.light.tblabove ul li::before { color: var(--accent); }
 
   /* IMAGE BELOW — title, bullets, image below */
   .imgbelow .body-wrap {
@@ -2815,6 +2870,13 @@
   .slide.light.twoimgleft ul li,
   .slide.light.twoimgabove ul li,
   .slide.light.twoimgbelow ul li { color: #0b0d12; }
+  .slide.light.imgright ul li::before,
+  .slide.light.imgabove ul li::before,
+  .slide.light.imgbelow ul li::before,
+  .slide.light.twoimgright ul li::before,
+  .slide.light.twoimgleft ul li::before,
+  .slide.light.twoimgabove ul li::before,
+  .slide.light.twoimgbelow ul li::before { color: var(--accent); }
 
 
   /* image-layouts */
@@ -3005,7 +3067,7 @@
     padding: 180px 120px 140px;
     display: flex;
     flex-direction: column;
-    gap: 40px;
+    gap: 94px;
     z-index: 1;
   }
   .bullets h2 {
@@ -3029,6 +3091,8 @@
     background: rgba(255,255,255,0.05);
     border-left: 4px solid var(--accent);
     border-radius: 0 10px 10px 0;
+    box-sizing: border-box;
+    width: 100%;
   }
   .bullets ul li {
     font-size: 1em;
@@ -3036,6 +3100,8 @@
     color: var(--text);
     padding-left: 44px;
     position: relative;
+    box-sizing: border-box;
+    width: 100%;
   }
   .bullets ul li::before {
     content: "•";
@@ -3048,6 +3114,7 @@
     color: var(--text);
   }
   .slide.light.bullets ul li { color: #0b0d12; }
+  .slide.light.bullets ul li::before { color: var(--accent); }
   .slide.light.bullets ul {
     background: rgba(0,0,0,0.04);
   }
@@ -3220,11 +3287,10 @@
   .toc-described ol li:last-child { border-bottom: 1px solid rgba(255,255,255,0.12); }
   .toc-described ol li .n {
     font-family: var(--font-mono);
-    font-size: 28px;
+    font-size: 36px;
     letter-spacing: 0.12em;
     color: var(--accent);
-    align-self: start;
-    padding-top: 4px;
+    align-self: center;
   }
   .toc-described ol li .meta {
     display: flex;
@@ -3251,9 +3317,11 @@
     padding-top: 6px;
     white-space: nowrap;
   }
-  .slide.light.toc-described ol li { border-top-color: rgba(11,13,18,0.12); }
-  .slide.light.toc-described ol li:last-child { border-bottom-color: rgba(11,13,18,0.12); }
+  .slide.light.toc-described ol li { border-top-color: rgba(11,13,18,0.25); }
+  .slide.light.toc-described ol li:last-child { border-bottom-color: rgba(11,13,18,0.25); }
   .slide.light.toc-described ol li .meta .t { color: #0b0d12; }
+  .slide.light.toc-described ol li .meta .d { color: rgba(11,13,18,0.60); }
+  .slide.light.toc-described ol li .n { color: var(--accent); }
 
 
   /* toc-cards */
@@ -3323,9 +3391,10 @@
   .toc-cards .grid:has(.card:nth-child(6)) .card h3 { font-size: 20px; }
   .toc-cards .grid:has(.card:nth-child(6)) .card p  { font-size: 16px; }
   .slide.light.toc-cards .card {
-    background: rgba(255,255,255,0.75);
-    border-color: rgba(0,0,0,0.12);
+    background: rgba(0,0,0,0.04);
+    border-color: rgba(0,0,0,0.10);
     border-top: 3px solid var(--accent);
+    box-shadow: 0 1px 6px rgba(0,0,0,0.07);
   }
   .slide.light.toc-cards .card .n { color: var(--accent); }
   .slide.light.toc-cards .card h3 { color: #0b0d12; }

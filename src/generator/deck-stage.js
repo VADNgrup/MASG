@@ -38,7 +38,7 @@
       this._idx = Math.max(0, Math.min(idx, this._total - 1));
 
       this._slides.forEach((s, i) => {
-        // Clear any inline styles that might have been set previously
+        // Clear any inline styles / FX classes that might have been set previously
         s.style.position = '';
         s.style.top = '';
         s.style.left = '';
@@ -49,6 +49,10 @@
         s.style.pointerEvents = '';
         s.style.transform = '';
         s.style.zIndex = '';
+        s.style.removeProperty('--tr-dur');
+        if (/\btr-[\w-]+/.test(s.className)) {
+          s.className = s.className.replace(/\btr-[\w-]+/g, '').replace(/\s{2,}/g, ' ').trim();
+        }
 
         if (i === this._idx) {
           s.style.display = '';
@@ -59,28 +63,32 @@
         }
       });
 
-      if (!this._hasStarted) {
-        this._hasStarted = true;
-        const isEval = typeof navigator !== 'undefined' && navigator.webdriver;
-        if (!isEval) {
-          setTimeout(() => {
-            this.setAttribute('data-transitions', 'true');
-          }, 50);
-        }
-      }
+      const reduce   = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const isEval    = typeof navigator !== 'undefined' && navigator.webdriver;
+      const editing   = typeof document !== 'undefined' && document.body && document.body.hasAttribute('data-editing');
+      const firstShow = !this._hasStarted;
+      this._hasStarted = true;
+      if (!isEval) this.setAttribute('data-transitions', 'true');
+
       this.dispatchEvent(new CustomEvent('slidechange', {
         bubbles: true,
         detail: { index: this._idx, total: this._total }
       }));
+
       const slide = this._slides[this._idx];
-      if (slide) {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          slide.querySelectorAll('[data-fit]').forEach(fitText);
-          if (slide.classList.contains('toc-cards')) syncCardTitles(slide);
-          slide.querySelectorAll('[data-fit-block]').forEach(fitBlock);
-          if (slide.classList.contains('toc-cards')) syncCardScales(slide);
-        }));
-      }
+      if (!slide) return;
+
+      // Auto-fit FIRST — measure at natural size, before any transition/animation
+      // transform can distort getBoundingClientRect — THEN play the FX.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        slide.querySelectorAll('[data-fit]').forEach(fitText);
+        if (slide.classList.contains('toc-cards')) syncCardTitles(slide);
+        slide.querySelectorAll('[data-fit-block]').forEach(fitBlock);
+        if (slide.classList.contains('toc-cards')) syncCardScales(slide);
+
+        if (!reduce && !isEval && !firstShow) applySlideTransition(slide);
+        if (!reduce && !isEval && !editing)   playSlideAnimations(slide);
+      }));
     }
 
     _onKey(e) {
@@ -242,6 +250,60 @@
         c.style.justifyContent = 'flex-start';
       });
     }
+  }
+
+  /* ── Slide transition (per-slide via data-transition) ─────────────────── */
+  function applySlideTransition(slide) {
+    var tr = slide.dataset.transition || 'fade';
+    if (tr === 'none') return;
+    var cls = 'tr-' + tr;
+    if (slide.dataset.transitionDur) {
+      slide.style.setProperty('--tr-dur', (parseFloat(slide.dataset.transitionDur) || 0.45) + 's');
+    }
+    slide.classList.remove(cls);
+    void slide.offsetWidth;               /* restart the animation */
+    slide.classList.add(cls);
+    var done = function () {
+      slide.classList.remove(cls);
+      slide.style.removeProperty('--tr-dur');
+      slide.removeEventListener('animationend', done);
+    };
+    slide.addEventListener('animationend', done);
+    setTimeout(done, 1600);               /* safety net if animationend is missed */
+  }
+
+  /* ── Per-object entrance animations (data-anim + data-anim-order/dur/delay) ─ */
+  function playSlideAnimations(slide) {
+    var els = Array.prototype.slice.call(slide.querySelectorAll('[data-anim]'))
+      .filter(function (el) {
+        var a = el.dataset.anim;
+        return a && a !== 'none' && a !== 'anim-none';
+      });
+    if (!els.length) return;
+    els.sort(function (a, b) {
+      return (parseInt(a.dataset.animOrder || '0', 10) - parseInt(b.dataset.animOrder || '0', 10));
+    });
+    var STAGGER = 0.18;                    /* seconds between sequential objects */
+    els.forEach(function (el, i) {
+      var name = el.dataset.anim;
+      var cls  = name.indexOf('anim-') === 0 ? name : 'anim-' + name;
+      var dur  = parseFloat(el.dataset.animDur || '0.5') || 0.5;
+      var delay = (parseFloat(el.dataset.animDelay || '0') || 0) + i * STAGGER;
+      el.style.setProperty('--anim-dur', dur + 's');
+      el.style.setProperty('--anim-delay', delay + 's');
+      el.classList.remove(cls);
+      void el.offsetWidth;
+      el.classList.add(cls);
+      var done = function () {
+        /* drop the class so the element reverts to its natural / auto-fit state */
+        el.classList.remove(cls);
+        el.style.removeProperty('--anim-dur');
+        el.style.removeProperty('--anim-delay');
+        el.removeEventListener('animationend', done);
+      };
+      el.addEventListener('animationend', done);
+      setTimeout(done, (delay + dur) * 1000 + 500);
+    });
   }
 
   function runAutoFit() {

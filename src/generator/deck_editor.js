@@ -183,6 +183,7 @@ function pushUndo(){
   _undoStack.push({h:stage.innerHTML,i:stage._idx});
   if(_undoStack.length>MAX_UNDO) _undoStack.shift();
   _redoStack=[];
+  if(typeof scheduleAutosave==='function') scheduleAutosave();
 }
 
 function reloadStage() {
@@ -572,14 +573,24 @@ function buildUI(){
             <option value="none">None</option>
             <option value="fade">Fade</option>
             <option value="slide-left">Slide Left</option>
+            <option value="slide-right">Slide Right</option>
             <option value="slide-up">Slide Up</option>
+            <option value="slide-down">Slide Down</option>
             <option value="zoom">Zoom</option>
             <option value="flip">Flip</option>
           </select>
         </div>
-        <button class="ed-btn" id="ed-trans-preview"><span class="material-symbols-outlined">play_arrow</span><span style="font-size:11px;margin-left:4px">Preview</span></button>
+        <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">
+          <label style="font-size:11px;color:#aaa;white-space:nowrap">Duration</label>
+          <input type="number" class="ed-input" id="ed-transition-dur" min="0.1" max="3" step="0.05" value="0.45" style="width:56px" title="Transition duration (seconds)">
+          <span style="font-size:11px;color:#aaa">s</span>
+        </div>
+        <div style="display:flex;gap:4px">
+          <button class="ed-btn" id="ed-trans-preview" title="Preview transition"><span class="material-symbols-outlined">play_arrow</span><span style="font-size:11px;margin-left:4px">Preview</span></button>
+          <button class="ed-btn" id="ed-trans-all" title="Apply this transition to all slides"><span class="material-symbols-outlined">done_all</span><span style="font-size:11px;margin-left:4px">All</span></button>
+        </div>
       </div>
-      <div class="ed-group-title">Transition</div>
+      <div class="ed-group-title">Slide Transition</div>
     </div>
     <div class="ed-ribbon-group" data-tab="animate" style="display:none">
       <div class="ed-group-content-col">
@@ -591,14 +602,31 @@ function buildUI(){
             <option value="fly-left">Fly Left</option>
             <option value="fly-right">Fly Right</option>
             <option value="fly-up">Fly Up</option>
+            <option value="fly-down">Fly Down</option>
             <option value="zoom-in">Zoom In</option>
+            <option value="zoom-out">Zoom Out</option>
             <option value="bounce">Bounce</option>
             <option value="rotate">Rotate</option>
+            <option value="flip-h">Flip H</option>
+            <option value="flip-v">Flip V</option>
+            <option value="wipe">Wipe</option>
           </select>
         </div>
-        <button class="ed-btn" id="ed-anim-apply"><span class="material-symbols-outlined">animation</span><span style="font-size:11px;margin-left:4px">Apply</span></button>
+        <div style="display:flex;gap:4px;align-items:center;margin-bottom:4px">
+          <label style="font-size:11px;color:#aaa;white-space:nowrap">Dur</label>
+          <input type="number" class="ed-input" id="ed-anim-dur" min="0.1" max="4" step="0.05" value="0.5" style="width:50px" title="Animation duration (seconds)">
+          <label style="font-size:11px;color:#aaa;white-space:nowrap">Delay</label>
+          <input type="number" class="ed-input" id="ed-anim-delay" min="0" max="10" step="0.05" value="0" style="width:50px" title="Start delay (seconds)">
+          <label style="font-size:11px;color:#aaa;white-space:nowrap">Order</label>
+          <input type="number" class="ed-input" id="ed-anim-order" min="0" max="99" step="1" value="0" style="width:44px" title="Build order (lower plays first)">
+        </div>
+        <div style="display:flex;gap:4px">
+          <button class="ed-btn" id="ed-anim-apply"><span class="material-symbols-outlined">animation</span><span style="font-size:11px;margin-left:4px">Apply</span></button>
+          <button class="ed-btn" id="ed-anim-preview" title="Preview this slide's animations"><span class="material-symbols-outlined">play_arrow</span><span style="font-size:11px;margin-left:4px">Preview</span></button>
+          <button class="ed-btn" id="ed-anim-remove" title="Remove animation from selection"><span class="material-symbols-outlined">close</span></button>
+        </div>
       </div>
-      <div class="ed-group-title">Animation</div>
+      <div class="ed-group-title">Object Animation</div>
     </div>
 
     <!-- ── TABLE DESIGN TAB ── -->
@@ -1019,6 +1047,7 @@ function buildUI(){
 
   // Create imgPicker
   imgPicker = document.createElement('input');
+  imgPicker.id = 'ed-img-picker';
   imgPicker.type = 'file';
   imgPicker.accept = 'image/*';
   imgPicker.style.display = 'none';
@@ -1428,13 +1457,7 @@ function buildSlideList(){
     th.querySelector('.ed-thumb-cnt').appendChild(clone);
   });
 }
-function previewAnimation(){
-  if(!_selEl)return;
-  var sel=document.getElementById('ed-anim-sel');
-  var name=sel?sel.value:'fade-in';
-  setAnimation(name);
-  var cls='anim-'+name; _selEl.classList.remove(cls); void _selEl.offsetWidth; _selEl.classList.add(cls);
-}
+function previewAnimation(){ applyAnimations(); }
 function onSlideChange(){
   updateSlideList(); clearSelection(); clearGroupBox(); _updateSlRect();
 }
@@ -1469,7 +1492,10 @@ function selectEl(el){
   var tSel=document.getElementById('ed-transition-sel');
   if(tSel){ var tr=(stage._slides[stage._idx]||{}).dataset&&stage._slides[stage._idx].dataset.transition||'none'; tSel.value=tr; }
   var aSel=document.getElementById('ed-anim-sel');
-  if(aSel&&el.dataset.anim){ aSel.value=el.dataset.anim.replace('anim-',''); }
+  if(aSel){ aSel.value=el.dataset.anim ? el.dataset.anim.replace('anim-','') : 'none'; }
+  var aDur=document.getElementById('ed-anim-dur');   if(aDur)   aDur.value   = el.dataset.animDur   || '0.5';
+  var aDel=document.getElementById('ed-anim-delay'); if(aDel)   aDel.value   = el.dataset.animDelay || '0';
+  var aOrd=document.getElementById('ed-anim-order'); if(aOrd)   aOrd.value   = el.dataset.animOrder || '0';
   var opSlider=document.getElementById('ed-opacity');
   if(opSlider){ var op=parseFloat(el.style.opacity||'1'); opSlider.value=Math.round(op*100); }
   // Update font size display
@@ -1609,23 +1635,95 @@ function screenToSlide(cx,cy){
 }
 
 /* ── Save HTML ── */
-function saveHTML(){
+/* IDs of editor-injected chrome nodes that must NOT be baked into the saved deck.
+ * (The injected <style>/<script> in <head> stay — they make the file re-editable.) */
+var _ED_CHROME_IDS = [
+  'ed-header','ed-slide-panel','ed-outline-panel','ed-sel-box','ed-group-box',
+  'ed-color-picker','ed-img-picker','ed-guides','ed-rubber-band','ed-slide-frame',
+  'ed-draw-overlay'
+];
+
+/* Produce a clean, self-contained, re-editable HTML string of the current deck.
+ * Detaches editor chrome, strips editing-only attributes and transient FX state,
+ * serializes, then restores everything exactly as it was. */
+function getCleanHTML(){
+  // 1. Exit any active inline editing
   var editables=Array.from(document.querySelectorAll('[contenteditable]'));
-  editables.forEach(function(el){el.removeAttribute('contenteditable');});
-  header.classList.remove('active'); slidePanel.classList.remove('active');
-  outlinePanel.classList.remove('active'); selBox.classList.remove('show'); groupBox.classList.remove('show');
-  document.body.removeAttribute('data-editing'); document.body.removeAttribute('data-mode');
-  document.querySelectorAll('#ed-draw-overlay').forEach(function(c){c.remove();});
-  var html='<!doctype html>\n'+document.documentElement.outerHTML;
-  editables.forEach(function(el){el.setAttribute('contenteditable','true');});
-  if(editing){
-    header.classList.add('active'); slidePanel.classList.add('active');
-    document.body.setAttribute('data-editing',''); document.body.setAttribute('data-mode',_mode);
+  editables.forEach(function(el){el.removeAttribute('contenteditable'); el.removeAttribute('spellcheck');});
+
+  // 2. Detach editor chrome (remember where each node was for restore)
+  var detached=[];
+  _ED_CHROME_IDS.forEach(function(id){
+    var el=document.getElementById(id);
+    if(el && el.parentNode){ detached.push({el:el, parent:el.parentNode, next:el.nextSibling}); el.parentNode.removeChild(el); }
+  });
+
+  // 3. Strip editing state + any transient transition/animation classes so the
+  //    saved deck starts in a clean, presentable state.
+  var hadEditing=document.body.hasAttribute('data-editing');
+  var prevMode=document.body.getAttribute('data-mode');
+  document.body.removeAttribute('data-editing');
+  document.body.removeAttribute('data-mode');
+  if(stage){
+    stage.querySelectorAll('.tr-fade,.tr-slide-left,.tr-slide-right,.tr-slide-up,.tr-slide-down,.tr-zoom,.tr-flip').forEach(function(s){
+      s.className=s.className.replace(/\btr-[\w-]+/g,'').replace(/\s{2,}/g,' ').trim();
+      s.style.removeProperty('--tr-dur');
+    });
+    stage.querySelectorAll('[data-anim]').forEach(function(el){
+      el.className=el.className.replace(/\banim-\S+/g,'').replace(/\s{2,}/g,' ').trim();
+      el.style.removeProperty('--anim-dur'); el.style.removeProperty('--anim-delay');
+      el.style.opacity=''; // clear any mid-animation opacity:0
+    });
   }
-  var blob=new Blob([html],{type:'text/html'});
-  var a=document.createElement('a');
-  a.href=URL.createObjectURL(blob); a.download=(document.title||'slides')+'_edited.html';
-  a.click(); URL.revokeObjectURL(a.href);
+
+  var html='<!doctype html>\n'+document.documentElement.outerHTML;
+
+  // 4. Restore everything
+  detached.forEach(function(d){ d.parent.insertBefore(d.el, d.next); });
+  editables.forEach(function(el){el.setAttribute('contenteditable','true'); el.setAttribute('spellcheck','false');});
+  if(hadEditing){ document.body.setAttribute('data-editing',''); if(prevMode!=null) document.body.setAttribute('data-mode',prevMode); }
+  return html;
+}
+
+/* Save = write in place (File System Access API) or download; via editor_save.js */
+function saveHTML(){
+  var html=getCleanHTML();
+  var name=(document.title||'slides').replace(/[\\/:*?"<>|]+/g,'_')+'.html';
+  if(window.EditorSave){
+    window.EditorSave.saveHtml(html, name).then(function(res){ if(_autosave) _autosave.clear(); });
+  } else {
+    var blob=new Blob([html],{type:'text/html'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download=(document.title||'slides')+'_edited.html';
+    a.click(); URL.revokeObjectURL(a.href);
+  }
+}
+
+/* ── Autosave (localStorage safety net) + tiny toast ── */
+var _autosave=null;
+function _autosaveKey(){ return 'DECK_AS_'+(document.title||'deck'); }
+function scheduleAutosave(){ if(_autosave) _autosave.schedule(); }
+function toastMsg(msg){
+  if(window.EditorSave){ window.EditorSave.toast(msg); return; }
+  console.log('[deck-editor]', msg);
+}
+function initAutosave(){
+  if(!window.EditorSave || !stage) return;
+  _autosave=window.EditorSave.makeAutosave(_autosaveKey(), function(){ return stage.innerHTML; }, 2000);
+  // Offer to restore a newer autosaved draft (within 7 days)
+  var saved=_autosave.load(7*24*3600*1000);
+  if(saved && saved!==stage.innerHTML){
+    setTimeout(function(){
+      if(confirm('Khôi phục bản chỉnh sửa tự động chưa lưu?')){
+        stage.innerHTML=saved;
+        stage._slides=Array.from(stage.querySelectorAll(':scope > section.slide'));
+        stage._total=stage._slides.length;
+        stage._show(Math.min(stage._idx,stage._total-1));
+        if(editing) buildSlideList();
+      } else { _autosave.clear(); }
+    }, 300);
+  }
+  window.addEventListener('beforeunload', function(){ if(_autosave) _autosave.flush(); });
 }
 
 /* ── Key handler ── */
@@ -1634,6 +1732,10 @@ document.addEventListener('keydown',function(e){
   if((e.ctrlKey||e.metaKey)&&e.shiftKey&&(e.key==='e'||e.key==='E')){
     e.preventDefault();e.stopPropagation();
     editing?exitEditMode():enterEditMode(); return;
+  }
+  if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(e.key==='s'||e.key==='S')){
+    e.preventDefault();e.stopPropagation();
+    saveHTML(); return;
   }
   if(!editing)return;
   if(_mode!=='text'&&(e.ctrlKey||e.metaKey)&&!e.shiftKey&&e.key==='z'){undo();e.preventDefault();return;}
@@ -1861,35 +1963,81 @@ function setTransition(val) {
   if (!stage || !stage._slides || stage._idx < 0) return;
   var sl = stage._slides[stage._idx];
   if (!sl) return;
+  pushUndo();
   sl.dataset.transition = val;
+  var durInp = document.getElementById('ed-transition-dur');
+  if (durInp && durInp.value) sl.dataset.transitionDur = durInp.value;
   var sel = document.getElementById('ed-transition-sel');
   if(sel) sel.value = val;
+  scheduleAutosave();
 }
 
+/* Set the current slide's transition on ALL slides */
+function setTransitionAll() {
+  if (!stage || !stage._slides) return;
+  var sel = document.getElementById('ed-transition-sel');
+  var durInp = document.getElementById('ed-transition-dur');
+  var val = sel ? sel.value : 'fade';
+  pushUndo();
+  stage._slides.forEach(function(sl){
+    sl.dataset.transition = val;
+    if (durInp && durInp.value) sl.dataset.transitionDur = durInp.value;
+  });
+  scheduleAutosave();
+  toastMsg('Transition applied to all slides');
+}
+
+/* Preview the current slide's transition (matches runtime, honours duration) */
 function applyTransition(){
   var sl=stage._slides[stage._idx];
   if(!sl) return;
-  var tr=sl.dataset.transition||'none';
+  var tr=sl.dataset.transition||'fade';
   if(tr==='none')return;
   var cls='tr-'+tr;
+  if(sl.dataset.transitionDur) sl.style.setProperty('--tr-dur',(parseFloat(sl.dataset.transitionDur)||0.45)+'s');
   sl.classList.remove(cls); void sl.offsetWidth; sl.classList.add(cls);
-  setTimeout(function(){sl.classList.remove(cls);},600);
+  setTimeout(function(){sl.classList.remove(cls); sl.style.removeProperty('--tr-dur');},1600);
 }
+
+/* Preview the current slide's per-object animations, in build order (matches runtime) */
 function applyAnimations(){
   var sl=stage._slides[stage._idx]; if(!sl) return;
-  sl.querySelectorAll('[data-anim]').forEach(function(el){
-    var cls=el.dataset.anim; if(!cls||cls==='anim-none')return;
+  var els=Array.prototype.slice.call(sl.querySelectorAll('[data-anim]')).filter(function(el){
+    var a=el.dataset.anim; return a && a!=='none' && a!=='anim-none';
+  });
+  els.sort(function(a,b){return (parseInt(a.dataset.animOrder||'0',10)-parseInt(b.dataset.animOrder||'0',10));});
+  els.forEach(function(el,i){
+    var name=el.dataset.anim; var cls=name.indexOf('anim-')===0?name:'anim-'+name;
+    var dur=parseFloat(el.dataset.animDur||'0.5')||0.5;
+    var delay=(parseFloat(el.dataset.animDelay||'0')||0)+i*0.18;
+    el.style.setProperty('--anim-dur',dur+'s'); el.style.setProperty('--anim-delay',delay+'s');
     el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
+    setTimeout(function(){el.classList.remove(cls); el.style.removeProperty('--anim-dur'); el.style.removeProperty('--anim-delay');},(delay+dur)*1000+500);
   });
 }
+
 function setAnimation(name) {
   if (!_selEl) return;
-  // Remove old animation classes
+  pushUndo();
+  // Never leave an anim-* class on the element while editing (would hide it).
   _selEl.className = _selEl.className.replace(/\banim-\S+/g, '').trim();
-  _selEl.dataset.anim = name;
-  if (name && name !== 'none') {
-    _selEl.classList.add('anim-' + name);
+  if (!name || name === 'none') {
+    delete _selEl.dataset.anim;
+    delete _selEl.dataset.animDur;
+    delete _selEl.dataset.animDelay;
+    delete _selEl.dataset.animOrder;
+    scheduleAutosave();
+    return;
   }
+  _selEl.dataset.anim = name;
+  var durInp=document.getElementById('ed-anim-dur');
+  var delayInp=document.getElementById('ed-anim-delay');
+  var orderInp=document.getElementById('ed-anim-order');
+  if(durInp&&durInp.value) _selEl.dataset.animDur=durInp.value;
+  if(delayInp&&delayInp.value!=='') _selEl.dataset.animDelay=delayInp.value;
+  if(orderInp&&orderInp.value!=='') _selEl.dataset.animOrder=orderInp.value;
+  scheduleAutosave();
+  applyAnimations(); // immediate preview so the user sees what they applied
 }
 
 function changeLayout(layoutKey) {
@@ -2529,13 +2677,21 @@ function wireEvents(){
       });
     });
     document.getElementById('ed-transition-sel')?.addEventListener('change',function(e){setTransition(e.target.value);});
+    document.getElementById('ed-transition-dur')?.addEventListener('change',function(){
+      var sel=document.getElementById('ed-transition-sel'); if(sel) setTransition(sel.value);
+    });
     document.getElementById('ed-trans-preview')?.addEventListener('click',previewTransition);
+    document.getElementById('ed-trans-all')?.addEventListener('click',setTransitionAll);
 
     document.getElementById('ed-anim-apply')?.addEventListener('click',function(){
       var sel=document.getElementById('ed-anim-sel');
-      if(sel&&_selEl)setAnimation(sel.value);
+      if(!_selEl){ toastMsg('Select an object first'); return; }
+      if(sel)setAnimation(sel.value);
     });
     document.getElementById('ed-anim-preview')?.addEventListener('click',previewAnimation);
+    document.getElementById('ed-anim-remove')?.addEventListener('click',function(){
+      if(_selEl) setAnimation('none');
+    });
 
     document.getElementById('ed-add-btn')?.addEventListener('click',addSlide);
     document.getElementById('ed-dup-btn')?.addEventListener('click',duplicateSlide);
@@ -2818,11 +2974,13 @@ function enterEditMode(){
   window.addEventListener('resize', _resizeHandler);
   var curTheme=detectTheme();
   document.querySelectorAll('.ed-swatch').forEach(function(sw){sw.classList.toggle('active',sw.dataset.theme===curTheme);});
-  if(!_origShow){ _origShow=stage._show.bind(stage); stage._show=function(idx){ _origShow(idx); applyTransition(); }; }
+  /* Transitions + per-object animations are played by the runtime (deck-stage.js
+   * _show → applySlideTransition/playSlideAnimations). No _show monkey-patch here;
+   * object animations are auto-suppressed while `data-editing` is set so elements
+   * stay visible during editing (use the Preview buttons to test them). */
   attachImgListeners();
   buildSlideList();
   document.addEventListener('slidechange', onSlideChange);
-  document.addEventListener('slidechange', applyAnimations);
 }
 
 function exitEditMode(){
@@ -2838,22 +2996,21 @@ function exitEditMode(){
   clearGroupBox();
   window.removeEventListener('resize', _resizeHandler||editorScale);
   _resizeHandler=null;
-  if(_origShow){ stage._show=_origShow; _origShow=null; }
   if(_origScale){ stage._scale=_origScale; _origScale=null; }
   if(stage._onResize) window.addEventListener('resize', stage._onResize);
   ['background','padding','boxSizing'].forEach(function(p){ stage.style[p]=''; });
   stage._scale();
   _updateSlRect();
   document.removeEventListener('slidechange', onSlideChange);
-  document.removeEventListener('slidechange', applyAnimations);
   finalizeDraw();
 }
 
 /* ── Boot ── */
+function _boot(){ buildUI(); initAutosave(); }
 if(document.readyState==='loading'){
-  document.addEventListener('DOMContentLoaded',buildUI);
+  document.addEventListener('DOMContentLoaded',_boot);
 } else {
-  buildUI();
+  _boot();
 }
 
 })();

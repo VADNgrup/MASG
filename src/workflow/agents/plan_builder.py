@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 from src.ingestion.compact_context import ensure_compact_context, render_compact_context
 from src.models.context import DocumentContext
 from src.models.slide import Slide, Table, SlideType
+from src.utils.config import Config
 from src.utils.llm import chat
 from src.utils.parse_llm_response import parse_json_response
 
@@ -33,10 +34,46 @@ class PlanBuilderAgent:
     # ──────────────────────────────────────────────────────────────
 
     def _build_outline(self, context: DocumentContext, feedback: str = None) -> str:
+        if Config.ABLATION_MODE == 3:
+            # Ablation 3: no compact_context involvement at all — LLM proposes the outline
+            # directly from the full raw document text instead of scored/clustered compact units.
+            return self._build_outline_ablation3(context)
+        # --- ABLATION_MODE == 3 replaces the compact-context-based outline below ---
         compact = ensure_compact_context(context)
         return self._deterministic_outline(compact)
 
+    def _build_outline_ablation3(self, context: DocumentContext) -> str:
+        markdown = context.text_content.markdown
+        prompt = (
+            "You are an expert presentation planner. Read the FULL raw document text below and "
+            "propose a lecture slide outline.\n\n"
+            f"# DOCUMENT (raw full text)\n{markdown}\n\n"
+            "# INSTRUCTIONS\n"
+            "1. Identify the most important topics/sections that should each become one presentation slide.\n"
+            "2. Propose between 4 and 8 headings, ordered to match the document's logical flow.\n"
+            "3. Each heading should be short (under 12 words), specific to this document, and in the "
+            "SAME language as the document.\n"
+            "4. Output ONLY the headings, one per line, each prefixed with '# '. No extra commentary, no numbering.\n\n"
+            "Example output:\n# Heading One\n# Heading Two"
+        )
+        try:
+            response = chat(self.model, [{"role": "user", "content": prompt}], temperature=0.2, max_tokens=400)
+            headings = [line.strip() for line in response.splitlines() if line.strip().startswith("#")]
+            headings = [re.sub(r"^#+\s*", "", h).strip() for h in headings]
+            headings = [h for h in headings if h][:8]
+            if headings:
+                return "\n".join(f"# {h}" for h in headings)
+        except Exception as e:
+            print(f"[PlanBuilder] (ablation3) Outline LLM call failed: {e}")
+        return "# Overview\n# Key Topics"
+
     def _generate_title(self, outline_md: str, context: DocumentContext | None = None) -> str:
+        if Config.ABLATION_MODE == 3:
+            # Ablation 3: no compact_context — reuse the same "first outline heading" fallback
+            # already used below for the non-compact case, without a second LLM call.
+            headings = [re.sub(r"^#+\s+", "", line).strip() for line in outline_md.splitlines() if line.strip().startswith("#")]
+            return headings[0] if headings else "Generated Lecture"
+        # --- ABLATION_MODE == 3 replaces the compact-context-based title below ---
         compact = ensure_compact_context(context) if context is not None else None
         if compact:
             title = self._title_from_compact(compact, outline_md)
@@ -684,6 +721,12 @@ class PlanBuilderAgent:
         )
 
     def _retrieve_outline_evidence(self, context: DocumentContext, expected_titles: List[str]) -> str:
+        if Config.ABLATION_MODE == 3:
+            # Ablation 3: bypass compact-context entirely — feed the full raw document markdown
+            # as evidence instead of the compact/summarized rendering. Only naturally bounded by
+            # the ~100k-char whole-document filter already applied upstream (preprocessing_context.py).
+            return context.text_content.markdown
+        # --- ABLATION_MODE == 3 replaces the compact-context-based evidence assembly below ---
         compact      = ensure_compact_context(context)
         blocks       = [render_compact_context(compact, max_chars=max(3000, self.MAX_EVIDENCE_LENGTH // 2))]
         page_blocks  = self._ranked_page_blocks(context, expected_titles)

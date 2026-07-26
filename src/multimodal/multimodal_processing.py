@@ -6,12 +6,14 @@ from src.multimodal.graph import create_multimodal_workflow
 from src.utils.file_utils import save_json, load_json
 from src.utils.config import Config
 
-def _should_skip_multimodal(multimodal_path: Path, image_distribution_path: Path, table_distribution_path: Path, lecture_id: str) -> bool:
+def _should_skip_multimodal(multimodal_path: Path, image_distribution_path: Path, table_distribution_path: Path, document_id: str) -> bool:
     if not (multimodal_path.exists() and image_distribution_path.exists() and table_distribution_path.exists()):
         return False
     image_distributions = load_json(image_distribution_path)
     table_distributions = load_json(table_distribution_path)
-    context_path = Config.CONTEXT_DIR / f'{lecture_id}.json'
+    # document_id (raw source doc, shared across ablation modes) — NOT lecture_id, which gets
+    # an ablation suffix and would never match the context filename on disk.
+    context_path = Config.CONTEXT_DIR / f'{document_id}.json'
     if not context_path.exists():
         return True
     context_data = load_json(context_path)
@@ -30,10 +32,11 @@ def multimodal_processing(lecture_path, output_path=None):
     with open(lecture_path, 'r', encoding='utf-8') as f:
         lecture_dict = json.load(f)
     lecture_id = lecture_dict.get('lecture_id')
+    document_id = lecture_dict.get('metadata', {}).get('source_document_id', lecture_id)
     multimodal_path = Path(Config.LECTURES_DIR / lecture_id / f'{lecture_id}_multimodal.json')
     image_distribution_path = Path(Config.LECTURES_DIR / lecture_id / f'{lecture_id}_image_distribution.json')
     table_distribution_path = Path(Config.LECTURES_DIR / lecture_id / f'{lecture_id}_table_distribution.json')
-    if _should_skip_multimodal(multimodal_path, image_distribution_path, table_distribution_path, lecture_id):
+    if _should_skip_multimodal(multimodal_path, image_distribution_path, table_distribution_path, document_id):
         print(f'Lecture has id {lecture_id}_multimodal already exists in lecture directory')
         print(f"\n{'=' * 60}")
         print(f'End Phase 3: Multimodal Processing')

@@ -86,7 +86,11 @@ _NOISE_PREFIXES = (
 
 
 def compact_context_path(document_id: str) -> Path:
-    return Config.CONTEXT_DIR / f"{document_id}_compact.json"
+    # Ablation 3 skips the LLM-derived enrichment, so its compact context differs in content
+    # from baseline/other modes despite sharing SCHEMA_VERSION — suffix the cache file so the
+    # two never collide/overwrite each other.
+    suffix = "_abl3" if Config.ABLATION_MODE == 3 else ""
+    return Config.CONTEXT_DIR / f"{document_id}{suffix}_compact.json"
 
 
 def load_compact_context(document_id: str) -> Dict[str, Any] | None:
@@ -765,6 +769,10 @@ def _must_have_points(
     regime = profile.get("document_regime", "sectioned_document")
     if regime in {"numbered_principles_document", "table_heavy_document"}:
         return _fallback_must_have_points(content_units, page_insights, regime)
+    if Config.ABLATION_MODE == 3:
+        # Ablation 3: skip the LLM must-have-points call entirely, use the deterministic fallback.
+        return _clean_must_have_labels(_fallback_must_have_points(content_units, page_insights, regime))
+    # --- ABLATION_MODE == 3 replaces the LLM call below ---
     prompt = _must_have_prompt(document_id, source_file, profile, page_insights, section_map, document_language)
     suggestions = _llm_must_have_points(prompt)
     units_by_id = {unit["unit_id"]: unit for unit in content_units}
@@ -832,6 +840,10 @@ def _document_insights(
     markdown: str = "",
 ) -> Dict[str, Any]:
     fallback = _fallback_document_insights(primary_subject, document_language, profile.get("document_regime", "sectioned_document"), must_have_points, section_map)
+    if Config.ABLATION_MODE == 3:
+        # Ablation 3: skip the LLM document-insights call entirely, use the deterministic fallback.
+        return fallback
+    # --- ABLATION_MODE == 3 replaces the LLM call below ---
     prompt = _document_insights_prompt(document_id, source_file, profile, primary_subject, document_language, page_insights, must_have_points, content_units, section_map, markdown)
     parsed = _llm_document_insights(prompt)
     if not parsed:
