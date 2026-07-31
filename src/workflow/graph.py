@@ -72,8 +72,8 @@ def create_workflow() -> StateGraph:
         status = qa_report.get("status", "passed")
         revision_count = state.get("revision_count", 0)
 
-        if status == "failed" and revision_count < 3:
-            print(f"\n[Router] ContentQA failed. Looping back to direct_bullet_writer (Attempt {revision_count}/3)...")
+        if status == "failed" and revision_count < Config.MAX_QA_LOOPS:
+            print(f"\n[Router] ContentQA failed. Looping back to direct_bullet_writer (Attempt {revision_count}/{Config.MAX_QA_LOOPS})...")
             return "direct_bullet_writer"
         
         if status == "failed":

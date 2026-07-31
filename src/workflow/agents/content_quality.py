@@ -3,7 +3,6 @@ import re
 from dataclasses import asdict
 from typing import Any, Dict, List
 
-from src.ingestion.compact_context import ensure_compact_context, render_compact_context
 from src.models.context import DocumentContext
 from src.models.slide import Slide, SlideContent
 from src.utils.config import Config
@@ -199,20 +198,10 @@ class ContentQualityAgent:
 
     def _retrieve_evidence(self, context: DocumentContext, slide: SlideContent) -> str:
         if Config.ABLATION_MODE == 1:
-            # Ablation 1: packet builder was skipped — QA repair must not silently re-ground
-            # slides with real source evidence pulled fresh from the document, or the
-            # hallucination effect the ablation is meant to measure gets masked during repair.
             return ""
-        if Config.ABLATION_MODE == 3:
-            # Ablation 3: always the full raw document markdown, no lexical page-selection,
-            # no compact-context rendering, no cap — same "no compact step" policy as
-            # plan_builder/slide_packet_builder/direct_bullet_writer for this mode.
-            return context.text_content.markdown
-        # --- ABLATION_MODE == 3 replaces the block below ---
         evidence = self._lexical_evidence(context, slide)
         if not evidence.strip():
-            compact = ensure_compact_context(context)
-            evidence = render_compact_context(compact, max_chars=self.MAX_EVIDENCE_PER_SLIDE)
+            evidence = context.text_content.markdown
         return evidence[: self.MAX_EVIDENCE_PER_SLIDE]
 
     def _lexical_evidence(self, context: DocumentContext, slide: SlideContent) -> str:

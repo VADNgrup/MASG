@@ -26,13 +26,16 @@ def clear_benchmark_state():
         _clear_path(path)
         print(f'[CLEAN] reset {path}')
 
-def run_benchmark(mode='clean', limit=None, speaker=None, title=None, institution=None, ablation=None):
+def run_benchmark(mode='clean', limit=None, speaker=None, title=None, institution=None, ablation=None, max_qa_loops=None):
     if ablation is not None:
         os.environ['ABLATION_MODE'] = str(ablation)
+    if max_qa_loops is not None:
+        os.environ['MAX_QA_LOOPS'] = str(max_qa_loops)
     print('=' * 60)
     print('STARTING BENCHMARK PIPELINE')
     print(f'MODE: {mode}')
     print(f"ABLATION_MODE: {os.environ.get('ABLATION_MODE', '0')}")
+    print(f"MAX_QA_LOOPS: {os.environ.get('MAX_QA_LOOPS', '2')}")
     print('=' * 60)
     if mode == 'clean':
         clear_benchmark_state()
@@ -57,7 +60,10 @@ def run_benchmark(mode='clean', limit=None, speaker=None, title=None, institutio
     model_name = (Config.LLM_MODEL_NAME or 'unknown_model').replace('/', '_')
     print('\n[2/2] EVALUATING WITH LLM-AS-A-JUDGE (PPTEVAL)...')
     print(f'Target Directory Model: {model_name}\n')
-    ret_eval = subprocess.run(['python', '-m', 'src.evaluation.eval', '--model', model_name]).returncode
+    eval_cmd = ['python', '-m', 'src.evaluation.eval', '--model', model_name]
+    if mode == 'clean' or ablation is not None or max_qa_loops is not None:
+        eval_cmd.append('--force-reeval')
+    ret_eval = subprocess.run(eval_cmd).returncode
     print('\n' + '=' * 60)
     if ret_eval == 0:
         print('BENCHMARK COMPLETED SUCCESSFULLY')
@@ -79,9 +85,12 @@ def _build_parser():
                          help='Ablation mode: 0=baseline, 1=skip packet builder, 2=skip content QA loop, '
                               '3=skip compact context, 4=skip clean_repetition. '
                               'Overrides ABLATION_MODE from .env for this run.')
+    parser.add_argument('--max_qa_loops', type=int, default=None,
+                         help='Maximum QA loop repair iterations (k). Default is 3.')
     return parser
 
 if __name__ == '__main__':
     args = _build_parser().parse_args()
     mode = 'resume' if args.no_clean else args.mode
-    run_benchmark(mode=mode, limit=args.limit, speaker=args.speaker, title=args.title, institution=args.institution, ablation=args.ablation)
+    run_benchmark(mode=mode, limit=args.limit, speaker=args.speaker, title=args.title, institution=args.institution, ablation=args.ablation, max_qa_loops=args.max_qa_loops)
+

@@ -1,7 +1,6 @@
 import re
 from typing import Any, Dict, List
 
-from src.ingestion.compact_context import ensure_compact_context
 from src.models.context import DocumentContext
 from src.utils.llm import chat
 
@@ -12,16 +11,14 @@ class PlannerAgent:
         self.model = model
 
     def create_outline(self, context: DocumentContext, feedback: str = None) -> Dict[str, Any]:
-        compact = ensure_compact_context(context)
-        outline = self._deterministic_outline(compact)
+        headings = re.findall(r"^#{1,4}\s+(.+)$", context.text_content.markdown, flags=re.MULTILINE)
+        headings = [h.strip() for h in headings if h.strip()][:8]
+        if not headings:
+            headings = ["Overview", "Key Topics"]
+        outline = "\n".join(f"# {h}" for h in headings)
         return {"outline": outline}
 
     def generate_title(self, outline_md: str, context: DocumentContext | None = None) -> str:
-        compact = ensure_compact_context(context) if context is not None else None
-        if compact:
-            title = self._title_from_compact(compact, outline_md)
-            if title:
-                return title
         headings = [re.sub(r"^#+\s+", "", line).strip() for line in outline_md.splitlines() if line.strip().startswith("#")]
         if headings:
             return headings[0]

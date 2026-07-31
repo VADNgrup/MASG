@@ -3,7 +3,6 @@ import json
 import re
 from pathlib import Path
 from src.utils.config import Config
-from src.ingestion.compact_context import compact_context_path
 
 class ImageDistribution:
 
@@ -346,28 +345,23 @@ Output your assignments in JSON format EXACTLY like this:
         return result
 
     def _load_section_info_by_slide(self, lecture_id: str, document_id: str = None):
-        # Compact context is keyed by document_id (shared across ablation modes, unlike
-        # lecture_id which gets an ablation suffix) — see preprocessing_context.effective_lecture_id.
-        compact_path = compact_context_path(document_id or lecture_id)
+        doc_id = document_id or lecture_id
+        context_path = Config.CONTEXT_DIR / f"{doc_id}.json"
         packet_path = Config.LECTURES_DIR / lecture_id / f"{lecture_id}_slide_packets.json"
         empty: tuple = ({}, {}, {})
-        if not compact_path.exists() or not packet_path.exists():
+        if not packet_path.exists():
             return empty
         try:
-            compact = json.loads(compact_path.read_text(encoding="utf-8"))
             packets = json.loads(packet_path.read_text(encoding="utf-8"))
+            context_data = json.loads(context_path.read_text(encoding="utf-8")) if context_path.exists() else {}
         except Exception:
             return empty
 
-        # Build page_asset_map from compact
         page_asset_map: Dict[int, str] = {}
-        for card in compact.get("page_cards", []):
-            page = card.get("page")
-            if page is None:
-                continue
-            all_assets = card.get("assets", [])
-            if all_assets:
-                page_asset_map[page] = " ".join(all_assets)
+        for card in context_data.get("page_insights", []):
+            page = card.get("page") if isinstance(card, dict) else getattr(card, "page", None)
+            if page is not None:
+                page_asset_map[page] = ""
 
         section_asset_tokens: Dict[int, Set[str]] = {}
         section_match_pages: Dict[int, Set[int]] = {}

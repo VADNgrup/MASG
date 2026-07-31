@@ -145,7 +145,7 @@ class DirectBulletWriterAgent:
             # cleaned_evidence = re.sub(r"[^\x00-\x7FÀ-ɏḀ-ỿ̀-ͯ]", " ", evidence)
             # cleaned_evidence = re.sub(r" {2,}", " ", cleaned_evidence).strip()
             cleaned_evidence = DirectBulletWriterAgent._clean_evidence_text(evidence)
-            if Config.ABLATION_MODE == 3:
+            if Config.ABLATION_MODE in (1, 2, 3):
                 # Ablation 3: no compact-context step anywhere in the pipeline — don't re-cap
                 # the evidence here either. Oversized batches still auto-split via
                 # PROMPT_TOKEN_BUDGET in _write_batch, so this can't blow up a single call.

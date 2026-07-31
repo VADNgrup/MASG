@@ -8,7 +8,6 @@ from src.utils.file_utils import load_json, save_json
 from src.models.context import DocumentContext
 from src.utils.config import config, Config
 from dataclasses import asdict
-from src.ingestion.compact_context import build_compact_context, save_compact_context, compact_context_path
 from src.ingestion.table_extraction import extract_markdown_tables
 
 def effective_lecture_id(document_id: str) -> str:
@@ -38,44 +37,24 @@ async def preprocess_context(context, output=None):
     # Clean repetition loops before checking length
     if Config.ABLATION_MODE != 4:
         context_data['text_content']['markdown'] = clean_repetition(context_data['text_content']['markdown'])
-    # --- ABLATION_MODE == 4 skips clean_repetition() above: raw VLM output (including any
-    # pathological word-repetition artifacts) flows straight into the pipeline unmodified. ---
+    
     if not context_data.get('tables'):
         context_data['tables'] = [t.model_dump() for t in extract_markdown_tables(context_data['text_content']['markdown'])]
         if 'metadata' in context_data:
             context_data['metadata']['total_tables'] = len(context_data['tables'])
     
-    # Increase limit to 100k characters for technical/complex documents
-    if Config.ABLATION_MODE == 3:
-        # Ablation 3: the upper bound exists to protect the compact/summarize step from
-        # oversized input — meaningless once this mode no longer uses compact context.
-        # Keep the lower floor (filters empty/broken extraction, unrelated to compact context).
-        # Very large documents may hit a real LLM context-window error — that's itself
-        # informative for the ablation's "may cause errors" hypothesis.
-        if len(context_data['text_content']['markdown']) < 512:
-            print(f"[SKIP] Lecture is too short ({len(context_data['text_content']['markdown'])} chars)")
-            return (None, False)
-        print(f"[ablation3] Processing {len(context_data['text_content']['markdown'])} raw chars — no upper limit for this mode, cost may be significant.")
-    else:
-        if len(context_data['text_content']['markdown']) < 512 or len(context_data['text_content']['markdown']) > 100000:
-            print(f"[SKIP] Lecture is too short or too long ({len(context_data['text_content']['markdown'])} chars)")
-            return (None, False)
+    if len(context_data['text_content']['markdown']) < 512 or len(context_data['text_content']['markdown']) > 100000:
+        print(f"[SKIP] Lecture is too short or too long ({len(context_data['text_content']['markdown'])} chars)")
+        return (None, False)
+    
     context = DocumentContext(**context_data)
-    compact = build_compact_context(
-        document_id=context.document_id,
-        source_file=context.source_file,
-        markdown=context.text_content.markdown,
-        page_count=context.text_content.page_count,
-        page_insights=[item.model_dump() if hasattr(item, "model_dump") else item for item in getattr(context, "page_insights", [])],
-    )
-    save_compact_context(compact)
     effective_id = effective_lecture_id(context.document_id)
     lecture_path = Path(Config.LECTURES_DIR / f'{effective_id}' / f'{effective_id}.json')
     context_path = Path(Config.CONTEXT_DIR / f'{context.document_id}.json')
     outline_path = Path(Config.LECTURES_DIR / f'{effective_id}' / f'{effective_id}_outline.md')
     if Path(lecture_path).exists() and outline_path.exists():
         lecture_mtime = min(lecture_path.stat().st_mtime, outline_path.stat().st_mtime)
-        context_mtime = max(context_path.stat().st_mtime if context_path.exists() else 0, compact_context_path(context.document_id).stat().st_mtime)
+        context_mtime = context_path.stat().st_mtime if context_path.exists() else 0
         if lecture_mtime >= context_mtime:
             print(f'[SKIP] Lecture has id {effective_id} already exists in lecture directory')
             print(f"\n{'=' * 60}")
@@ -98,7 +77,7 @@ async def preprocess_context(context, output=None):
     warning_count = len(qa_report.get('advisory_issues', {})) + len(qa_report.get('soft_issues', {}))
     quality_score = 100.0 if final_slides else 0.0
     lecture_output = {'lecture_id': effective_id, 'metadata': {'source_document_id': context.document_id, 'source_file': context.source_file, 'generated_at': datetime.now().isoformat(), 'total_slides': len(final_slides), 'quality_score': quality_score, 'iterations': 1, 'qa_status': qa_report.get('status', 'unknown'), 'qa_warning_count': warning_count}, 'lecture_title': result['lecture_title'], 'slides': [asdict(s) for s in final_slides]}
-    lecture_output['metadata']['document_language'] = compact.get('document_language', 'en')
+    lecture_output['metadata']['document_language'] = 'en'
     output_save_path = Path(output) if output else config.LECTURES_DIR / f"{lecture_output['lecture_id']}"
     output_save_path.mkdir(parents=True, exist_ok=True)
     lecture_json_path = output_save_path / f"{lecture_output['lecture_id']}.json"

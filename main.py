@@ -72,10 +72,11 @@ def main():
     lecture_title = args.lecture_title
     speaker_information = args.speaker_information
     institution = args.institution or ''
-    limit = int(args.limit) if args.limit is not None else len(os.listdir(default_document_folder))
+    pdf_files = [f for f in os.listdir(default_document_folder) if f.endswith('.pdf')]
+    limit = int(args.limit) if args.limit is not None else len(pdf_files)
     model_name = (Config.LLM_MODEL_NAME or 'unknown_model').replace('/', '_')
     if document_path is None and lecture_title is None:
-        document_list = os.listdir(default_document_folder)
+        document_list = pdf_files
         count = 1
         for document_name in document_list:
             if document_name.endswith('.pdf') and count <= limit:

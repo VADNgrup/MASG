@@ -4,7 +4,6 @@ import re
 from src.utils.parse_llm_response import parse_json_response
 from src.models.context import DocumentContext
 from src.models.slide import Slide, Table, SlideType
-from src.ingestion.compact_context import ensure_compact_context, render_compact_context
 
 class PlanSpecerAgent:
     MAX_EVIDENCE_LENGTH = 9000
@@ -74,15 +73,7 @@ class PlanSpecerAgent:
         return f'\n# ROLE\nYou are a lecture slide specification architect.\n\n# TASK\nGiven the FULL numbered lecture outline and relevant retrieved source evidence, produce a JSON array\nof slide specifications — one object per heading line (both major `1.` and sub `1.1`, `1.1.1`, etc.).\nEvery heading in the outline MUST have exactly ONE corresponding JSON object.\n\n# INPUT\n## Full Numbered Outline\n{numbered_outline}\n\n## Retrieved Source Evidence\n{evidence_text}\n\n## Tables extracted from document\n{context.tables}\n\n# IMPORTANT CONSTRAINTS\n1. `slide_type` must be one of: "content", "have_table", "have_formula", "comparison", "two_sub_contents".\n2. Use "have_table" ONLY if the source evidence contains a table supporting this slide.\n   If so, include `table` with the markdown and caption. Otherwise set `table` to null.\n   2.1. Prioritize extracting the tables mentioned in the evidence.\n   2.2. Only tables with more than 2 rows and 2 columns. Smaller tables → use "content".\n3. Use "have_formula" ONLY if the source evidence contains a block-level formula for this slide.\n   If so, include `latex_block_formula`. Otherwise set it to null.\n4. Use "comparison": `goal` must describe the two comparable entities briefly.\n5. Use "two_sub_contents": `goal` must describe the two distinct sub-topics shown side by side.\n6. Default to "content" when none of the above special types apply.\n\n# CRITICAL\n- `slide_title` MUST preserve the numbering prefix EXACTLY as it appears in the outline\n  (e.g. "1. Introduction", "1.1 Background", "2.1.3 Survey Design"). However, you MUST paraphrase and polish the rest of the title to make it sound professional and concise if the original heading from the outline is too raw, too long, or a sentence fragment.\n- `goal` MUST stay in the SAME language as `slide_title`.\n- The output array MUST contain one entry for EVERY line in the outline above — no omissions.\n\n# EXAMPLE\n[\n  {{\n    "slide_title": "1. Introduction",\n    "slide_type": "content",\n    "goal": "Introduce the topic and motivate the study.",\n    "table": null,\n    "latex_block_formula": null\n  }},\n  {{\n    "slide_title": "1.1 Background",\n    "slide_type": "content",\n    "goal": "Describe the historical and theoretical background.",\n    "table": null,\n    "latex_block_formula": null\n  }},\n  {{\n    "slide_title": "2. Methods",\n    "slide_type": "have_table",\n    "goal": "Summarise the methodology used.",\n    "table": {{\n      "table_markdown": "| Col1 | Col2 |\\n|------|------|\\n| Val1 | Val2 |",\n      "table_caption": "Overview of methods"\n    }},\n    "latex_block_formula": null\n  }}\n]\n\n# OUTPUT FORMAT\nReturn ONLY a valid JSON array. Each element must follow this schema:\n[{schema_example}]\n'
 
     def _retrieve_outline_evidence(self, context: DocumentContext, expected_titles: List[str]) -> str:
-        compact = ensure_compact_context(context)
-        blocks = [render_compact_context(compact, max_chars=max(3000, self.MAX_EVIDENCE_LENGTH // 2))]
-        page_blocks = self._ranked_page_blocks(context, expected_titles)
-        for block in page_blocks:
-            current = "\n\n".join(blocks)
-            if len(current) + len(block) > self.MAX_EVIDENCE_LENGTH:
-                break
-            blocks.append(block)
-        return "\n\n".join(blocks)[:self.MAX_EVIDENCE_LENGTH]
+        return context.text_content.markdown[:self.MAX_EVIDENCE_LENGTH]
 
     @classmethod
     def _ranked_page_blocks(cls, context: DocumentContext, expected_titles: List[str]) -> List[str]:

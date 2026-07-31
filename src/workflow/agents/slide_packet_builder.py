@@ -3,7 +3,6 @@ import json
 import re
 from typing import Any, Dict, List
 
-from src.ingestion.compact_context import ensure_compact_context
 from src.models.context import DocumentContext
 from src.models.slide import Slide
 from src.workflow.agents.content_quality import ContentQualityAgent
@@ -36,10 +35,42 @@ class SlidePacketBuilderAgent:
     def build_packets(self, slide_specs: List[Slide], context: DocumentContext) -> List[Dict[str, Any]]:
         if Config.ABLATION_MODE == 1:
             return self._build_packets_ablation1(slide_specs)
-        if Config.ABLATION_MODE == 3:
-            return self._build_packets_ablation3(slide_specs, context)
-        # --- ABLATION_MODE in {1, 3} replaces the block below (section mapping + evidence retrieval) ---
-        compact = ensure_compact_context(context)
+        return self._build_packets_direct(slide_specs, context)
+
+    def _build_packets_direct(self, slide_specs: List[Slide], context: DocumentContext) -> List[Dict[str, Any]]:
+        """Map slides directly to document pages (context.text_content.markdown split by page markers)
+        and extract evidence straight from raw page text.
+        """
+        pages = self._split_pages(context.text_content.markdown)
+        slide_to_pages = self._llm_map_pages(slide_specs, pages)
+
+        packets: List[Dict[str, Any]] = []
+        for spec in slide_specs:
+            mapped_pages = sorted(set(slide_to_pages.get(spec.slide_number, [])))
+            page_texts = [text for (num, text) in pages if num in mapped_pages]
+            evidence_text = "\n\n".join(page_texts)
+
+            packet = {
+                "slide_number": spec.slide_number,
+                "slide_title": spec.slide_title,
+                "slide_type": spec.slide_type.value if hasattr(spec.slide_type, "value") else str(spec.slide_type),
+                "goal": spec.goal,
+                "intent": self._infer_intent(spec, None),
+                "coverage_mode": "normal",
+                "source_pages": mapped_pages,
+                "home_pages": mapped_pages,
+                "required_facts": [],
+                "required_checks": [],
+                "coverage_items": [],
+                "evidence": evidence_text,
+                "section_assets": [],
+            }
+            if spec.table:
+                packet["table"] = asdict(spec.table)
+            if spec.latex_block_formula:
+                packet["latex_block_formula"] = spec.latex_block_formula
+            packets.append(packet)
+        return packets
 
         # Flatten all sections
         all_sections = []
@@ -139,44 +170,7 @@ class SlidePacketBuilderAgent:
             packets.append(packet)
         return packets
 
-    def _build_packets_ablation3(self, slide_specs: List[Slide], context: DocumentContext) -> List[Dict[str, Any]]:
-        """Ablation 3: bypass compact_context.py entirely — including its page_cards/section
-        catalog, which packet_builder normally uses. Map slides directly to raw PDF pages
-        (context.text_content.markdown, split on the `<!-- PAGE N -->` markers) instead, and
-        pull evidence straight from the raw page text.
-        """
-        pages = self._split_pages(context.text_content.markdown)
-        slide_to_pages = self._llm_map_pages(slide_specs, pages)
 
-        packets: List[Dict[str, Any]] = []
-        for spec in slide_specs:
-            mapped_pages = sorted(set(slide_to_pages.get(spec.slide_number, [])))
-            page_texts = [text for (num, text) in pages if num in mapped_pages]
-            # No MAX_EVIDENCE_CHARS cap here — ablation 3 feeds full raw page text through
-            # (direct_bullet_writer.py's per-slide evidence_limit is likewise skipped for mode 3).
-            evidence_text = "\n\n".join(page_texts)
-
-            packet = {
-                "slide_number": spec.slide_number,
-                "slide_title": spec.slide_title,
-                "slide_type": spec.slide_type.value if hasattr(spec.slide_type, "value") else str(spec.slide_type),
-                "goal": spec.goal,
-                "intent": self._infer_intent(spec, None),
-                "coverage_mode": "normal",
-                "source_pages": mapped_pages,
-                "home_pages": mapped_pages,
-                "required_facts": [],
-                "required_checks": [],
-                "coverage_items": [],
-                "evidence": evidence_text,
-                "section_assets": [],  # raw pages carry no pre-extracted asset references
-            }
-            if spec.table:
-                packet["table"] = asdict(spec.table)
-            if spec.latex_block_formula:
-                packet["latex_block_formula"] = spec.latex_block_formula
-            packets.append(packet)
-        return packets
 
     def _llm_map_pages(self, slide_specs: List[Slide], pages: List[tuple]) -> Dict[int, List[int]]:
         catalog_lines = []

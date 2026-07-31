@@ -1,7 +1,6 @@
 import re
 from typing import Any, Dict, List
 
-from src.ingestion.compact_context import ensure_compact_context, render_compact_context
 from src.models.context import DocumentContext
 from src.models.slide import Slide, Table, SlideType
 from src.utils.config import Config
@@ -30,19 +29,10 @@ class PlanBuilderAgent:
         return {"lecture_title": title, "slide_specs": specs}
 
     # ──────────────────────────────────────────────────────────────
-    # Phase 1: deterministic outline (from PlannerAgent)
+    # Phase 1: outline generation
     # ──────────────────────────────────────────────────────────────
 
     def _build_outline(self, context: DocumentContext, feedback: str = None) -> str:
-        if Config.ABLATION_MODE == 3:
-            # Ablation 3: no compact_context involvement at all — LLM proposes the outline
-            # directly from the full raw document text instead of scored/clustered compact units.
-            return self._build_outline_ablation3(context)
-        # --- ABLATION_MODE == 3 replaces the compact-context-based outline below ---
-        compact = ensure_compact_context(context)
-        return self._deterministic_outline(compact)
-
-    def _build_outline_ablation3(self, context: DocumentContext) -> str:
         markdown = context.text_content.markdown
         prompt = (
             "You are an expert presentation planner. Read the FULL raw document text below and "
@@ -64,21 +54,10 @@ class PlanBuilderAgent:
             if headings:
                 return "\n".join(f"# {h}" for h in headings)
         except Exception as e:
-            print(f"[PlanBuilder] (ablation3) Outline LLM call failed: {e}")
+            print(f"[PlanBuilder] Outline LLM call failed: {e}")
         return "# Overview\n# Key Topics"
 
     def _generate_title(self, outline_md: str, context: DocumentContext | None = None) -> str:
-        if Config.ABLATION_MODE == 3:
-            # Ablation 3: no compact_context — reuse the same "first outline heading" fallback
-            # already used below for the non-compact case, without a second LLM call.
-            headings = [re.sub(r"^#+\s+", "", line).strip() for line in outline_md.splitlines() if line.strip().startswith("#")]
-            return headings[0] if headings else "Generated Lecture"
-        # --- ABLATION_MODE == 3 replaces the compact-context-based title below ---
-        compact = ensure_compact_context(context) if context is not None else None
-        if compact:
-            title = self._title_from_compact(compact, outline_md)
-            if title:
-                return title
         headings = [re.sub(r"^#+\s+", "", line).strip() for line in outline_md.splitlines() if line.strip().startswith("#")]
         if headings:
             return headings[0]
@@ -721,20 +700,7 @@ class PlanBuilderAgent:
         )
 
     def _retrieve_outline_evidence(self, context: DocumentContext, expected_titles: List[str]) -> str:
-        if Config.ABLATION_MODE == 3:
-            # Ablation 3: bypass compact-context entirely — feed the full raw document markdown
-            # as evidence instead of the compact/summarized rendering. Only naturally bounded by
-            # the ~100k-char whole-document filter already applied upstream (preprocessing_context.py).
-            return context.text_content.markdown
-        # --- ABLATION_MODE == 3 replaces the compact-context-based evidence assembly below ---
-        compact      = ensure_compact_context(context)
-        blocks       = [render_compact_context(compact, max_chars=max(3000, self.MAX_EVIDENCE_LENGTH // 2))]
-        page_blocks  = self._ranked_page_blocks(context, expected_titles)
-        for block in page_blocks:
-            if len("\n\n".join(blocks)) + len(block) > self.MAX_EVIDENCE_LENGTH:
-                break
-            blocks.append(block)
-        return "\n\n".join(blocks)[:self.MAX_EVIDENCE_LENGTH]
+        return context.text_content.markdown[:self.MAX_EVIDENCE_LENGTH]
 
     @classmethod
     def _ranked_page_blocks(cls, context: DocumentContext, expected_titles: List[str]) -> List[str]:

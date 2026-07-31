@@ -6,7 +6,6 @@ import re
 from src.utils.config import config, Config
 from src.ingestion.parser import DocumentParser
 from src.ingestion.context_builder import ContextWindowBuilder
-from src.ingestion.compact_context import build_compact_context, save_compact_context, compact_context_path, load_compact_context, SCHEMA_VERSION
 from src.utils.file_utils import load_json
 from src.models.context import DocumentContext
 
@@ -35,13 +34,6 @@ def _heuristic_page_insights(markdown: str) -> list[dict]:
             "confidence": 0.15,
         })
     return insights
-
-
-def _compact_needs_rebuild(document_id: str) -> bool:
-    compact = load_compact_context(document_id)
-    if not compact:
-        return True
-    return compact.get("schema_version") != SCHEMA_VERSION
 
 
 def _page_insights_need_reparse(context_payload: dict) -> bool:
@@ -94,17 +86,6 @@ def extract_file(input_path):
                 context_payload["page_insights"] = _heuristic_page_insights(context_payload.get("text_content", {}).get("markdown", ""))
                 from src.utils.file_utils import save_json
                 save_json(context_payload, parsed_context_path)
-            if _compact_needs_rebuild(document_id):
-                context = DocumentContext(**context_payload)
-                compact = build_compact_context(
-                    document_id=context.document_id,
-                    source_file=context.source_file,
-                    markdown=context.text_content.markdown,
-                    page_count=context.text_content.page_count,
-                    page_insights=[item.model_dump() if hasattr(item, "model_dump") else item for item in context.page_insights],
-                )
-                compact_path = save_compact_context(compact)
-                print(f'Compact context saved to: {compact_path}')
             return parsed_context_path
         if not context_payload.get("page_insights"):
             context_payload["page_insights"] = _heuristic_page_insights(context_payload.get("text_content", {}).get("markdown", ""))
@@ -126,15 +107,6 @@ def extract_file(input_path):
     
     output_path = builder.save_context(context)
     print(f'Context saved to: {output_path}')
-    compact = build_compact_context(
-        document_id=document_id,
-        source_file=Path(input_path).name,
-        markdown=parsed_content.full_text,
-        page_count=parsed_content.page_count,
-        page_insights=parsed_content.page_insights,
-    )
-    compact_path = save_compact_context(compact)
-    print(f'Compact context saved to: {compact_path}')
 
     print(f"\n{'=' * 60}")
     print('SUMMARY')

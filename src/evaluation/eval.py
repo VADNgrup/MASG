@@ -222,14 +222,34 @@ def coherence_score(presentation: str) -> dict:
 def _load_prompt(filename: str) -> Template:
     return Template((_PROMPT_DIR / filename).read_text(encoding='utf-8'))
 
-def eval(model):
+def get_run_metrics_for_lecture(lecture_id: str) -> tuple[int | None, float | None]:
+    """Look up the total calls and total tokens (in k) from logs for a given lecture_id."""
+    log_dir = Config.BASE_DIR / 'logs'
+    summary_files = list(log_dir.glob(f"llm_run_{lecture_id}_*.json"))
+    if not summary_files:
+        summary_files = list(log_dir.glob(f"llm_run_{re.sub(r'__abl\d+', '', lecture_id)}_*.json"))
+    if summary_files:
+        latest_file = max(summary_files, key=lambda p: p.stat().st_mtime)
+        try:
+            with latest_file.open('r', encoding='utf-8') as f:
+                data = json.load(f)
+                calls = data.get('total_calls')
+                tokens = data.get('total_tokens')
+                tokens_k = round(tokens / 1000.0, 1) if tokens is not None else None
+                return calls, tokens_k
+        except Exception:
+            pass
+    return None, None
+
+def eval(model, force_reeval=False):
     lecture_ids = os.listdir(OUTPUT_DIR)
     val_saves = []
     for lecture_id in tqdm(lecture_ids, desc='Evaluating lectures'):
-        if lecture_id == '.gitkeep':
-            print('Skipping .gitkeep')
+        if lecture_id in ('.gitkeep', '.DS_Store'):
             continue
         save_path = OUTPUT_DIR / lecture_id / f'{model}' / f'eval_{lecture_id}.json'
+        if force_reeval and save_path.exists():
+            save_path.unlink()
         if save_path.exists():
             print('Skipping lecture', lecture_id)
             with save_path.open('r', encoding='utf-8') as f:
@@ -238,9 +258,6 @@ def eval(model):
             continue
         else:
             output_lecture_path = OUTPUT_DIR / lecture_id / f'{model}' / f'{lecture_id}.json'
-            # Ablation-mode lecture_ids are suffixed (e.g. "<doc>__abl3") and don't match the
-            # shared, unsuffixed context filename on disk — resolve the true source document id
-            # from the lecture's own saved metadata instead of assuming lecture_id == document_id.
             document_id = lecture_id
             if output_lecture_path.exists():
                 try:
@@ -261,14 +278,23 @@ def eval(model):
                 content_score_val = content_score(slide_image_path)
                 design_score_val = design_score(slide_image_path)
                 coherence_score_val = coherence_score(presentation)
-                val_save = {'rouge_score': rouge_score_val, 'content_score': content_score_val, 'design_score': design_score_val, 'coherence_score': coherence_score_val}
+                val_save = {
+                    'lecture_id': lecture_id,
+                    'rouge_score': rouge_score_val,
+                    'content_score': content_score_val,
+                    'design_score': design_score_val,
+                    'coherence_score': coherence_score_val
+                }
                 val_saves.append(val_save)
                 json.dump(val_save, open(save_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
             except Exception as e:
                 print(f'[ERROR] Failed to evaluate {lecture_id}: {e}')
             finally:
                 gc.collect()
-    print('======== ALL EVALUATION=======\n')
+
+    print('\n' + '=' * 60)
+    print('                ALL EVALUATION METRICS SUMMARY')
+    print('=' * 60 + '\n')
     if not val_saves:
         print('No evaluations completed.')
         return
@@ -280,22 +306,42 @@ def eval(model):
         c = val.get('coherence_score')
         if c is not None:
             valid_coherence.append(c if isinstance(c, int) else c.get('score', 0))
+
+    # Collect calls & tokens from generation logs
+    calls_list = []
+    tokens_k_list = []
+    for val in val_saves:
+        lid = val.get('lecture_id')
+        if lid:
+            c_val, t_val = get_run_metrics_for_lecture(lid)
+            if c_val is not None:
+                calls_list.append(c_val)
+            if t_val is not None:
+                tokens_k_list.append(t_val)
+
     total_attempted = len([x for x in lecture_ids if x not in ('.gitkeep', '.DS_Store')])
     if total_attempted > 0:
         print(f'Success/Valid Rate: {len(valid_content) / total_attempted * 100:.2f}% ({len(valid_content)}/{total_attempted})')
     if valid_rouge:
-        print('Average Rouge Score:', sum(valid_rouge) / len(valid_rouge))
+        print(f'Average ROUGE-L Score: {sum(valid_rouge) / len(valid_rouge):.2f}')
     if valid_content:
-        print('Average Content Score:', sum(valid_content) / len(valid_content))
+        print(f'Average Content Score: {sum(valid_content) / len(valid_content):.2f}')
     if valid_design:
-        print('Average Design Score:', sum(valid_design) / len(valid_design))
+        print(f'Average Design Score:  {sum(valid_design) / len(valid_design):.2f}')
     if valid_coherence:
-        print('Average Coherence Score:', sum(valid_coherence) / len(valid_coherence))
+        print(f'Average Coherence Score: {sum(valid_coherence) / len(valid_coherence):.2f}')
+    if calls_list:
+        print(f'Average API Calls:    {sum(calls_list) / len(calls_list):.1f}')
+    if tokens_k_list:
+        print(f'Average Tokens (k):   {sum(tokens_k_list) / len(tokens_k_list):.1f}k')
+    print('=' * 60 + '\n')
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluation with PPTEval Framework')
     parser.add_argument('--model', required=True)
+    parser.add_argument('--force-reeval', action='store_true', help='Force re-evaluation by ignoring cached eval_*.json files.')
     args = parser.parse_args()
-    eval(args.model)
+    eval(args.model, force_reeval=args.force_reeval)
+
 if __name__ == '__main__':
     main()
