@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Set
 import json
 from pathlib import Path
 from src.utils.fuzzy_distance import fuzzy_distance
+from src.utils.config import Config
 
 class TableChartDistribution:
 
@@ -48,13 +49,19 @@ class TableChartDistribution:
                     best_ctx_table = ctx_table
                     best_ctx_id = ctx_id
             if best_ctx_table and best_score > 0:
-                chart_path = best_ctx_table.get('chart_path') or best_ctx_table.get('image_table_path')
-                distributions.append({'slide_number': slide_number, 'table_data': best_ctx_table.get('markdown', ''), 'table_caption': best_ctx_table.get('table_caption', slide_table_caption), 'chart_path': chart_path, 'relevance_score': best_score})
+                image_path = best_ctx_table.get('image_table_path')
+                distributions.append({
+                    'slide_number': slide_number, 
+                    'table_data': best_ctx_table.get('markdown', ''), 
+                    'table_caption': best_ctx_table.get('table_caption', slide_table_caption), 
+                    'image_table_path': image_path, 
+                    'relevance_score': best_score
+                })
                 used_tables.add(best_ctx_id)
-                print(f'Matched {best_ctx_id} (score: {best_score:.1f}), chart: {chart_path}')
+                print(f'Matched {best_ctx_id} (score: {best_score:.1f}), image: {image_path}')
             else:
                 print(f'No matching context table found')
-        output_path = Path(f'data/lectures/{lecture_id}_table_distribution.json')
+        output_path = Config.LECTURES_DIR / lecture_id / f'{lecture_id}_table_distribution.json'
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(distributions, f, indent=2, ensure_ascii=False)
         print(f'\nSaved table distributions to: {output_path}')

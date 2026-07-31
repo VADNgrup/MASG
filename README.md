@@ -1,91 +1,119 @@
-# LecSlideGen: Automated Lecture Generation Pipeline
+# MASG: Efficient Multi-Agent Slide Generation using Compact Language Models
 
-LecSlideGen is an automated experimental pipeline designed to convert raw academic documents into structured, presentation-ready Slidev decks. The system utilizes a parallel Multi-Agent LLM architecture with built-in reflection and refinement mechanisms to ensure structural integrity and high content faithfulness to the source material.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![LangGraph](https://img.shields.io/badge/Framework-LangGraph-orange.svg)](https://github.com/langchain-ai/langgraph)
 
-## System Overview
+Official repository for **MASG** (*Multi-Agent Slide Generation*), a template-free, end-to-end multi-agent framework designed to transform dense, multi-page PDF documents into structured, pedagogically sound, and visually appealing presentation slides.
+
+---
+
+## 🌟 Framework Architecture
+
+MASG implements a stateful cooperative agent graph using **LangGraph**, orchestrating four specialized agents over a shared state memory:
 
 <p align="center">
-  <img src="docs/images/Lecture-gen-2026-04-18.png" alt="Architecture Diagram">
+  <img src="docs/pipeline.png" alt="MASG Architecture Overview" width="90%">
   <br>
-  <i>Figure 1: End-to-end framework architecture</i>
+  <i>Figure 1: End-to-end MASG workflow: Document Parsing, Cooperative Multi-Agent Drafting Graph with QA Feedback Loop, Multimodal Asset Distribution, and Dual Exporter Engine.</i>
 </p>
 
-## Architecture Highlights
-- Multi-Agent Workflow: Modular agents handling document planning, slide specification, drafting, peer-reviewing, and active refinement.
-- Self-Correction Mechanism: Parallel reviewers and a backtracking system to eliminate content hallucination and formatting failures.
-- Pedagogical Layouts: Outputs directly to Slidev, focusing on standard educational presentation rules.
+### Key Architectural Components
 
+1. **Document Parsing Stage**: Combines spatial layout bounding-box mapping with VLM-guided Table Structure Recognition (TSR) to extract text, tables, images, and LaTeX formulas from raw PDFs.
+2. **Four-Agent Collaborative Drafting Graph**:
+   - **Plan Builder Agent ($f_{\text{build}}$)**: Designs the overall presentation outline and slide specifications.
+   - **Packet Builder Agent ($f_{\text{pack}}$)**: Performs strict page-level evidence grounding by creating retrievable source evidence packets for each slide.
+   - **Direct Bullet Writer Agent ($f_{\text{write}}$)**: Synthesizes slide specifications and evidence packets into structured Markdown bullet points.
+   - **Content Quality Agent ($f_{\text{audit}}$)**: Cross-checks slide bullets against evidence packets to detect hallucinations or structural defects, triggering localized targeted repairs via an automated QA feedback loop ($k_{\max} = 2$).
+3. **Visualize Agent**: Performs semantic image mapping and automatically converts structured data tables into visual charts (bar graphs, line charts).
+4. **Slide Generation Engine**: Exports presentations into an interactive Canvas-based HTML web application and native PowerPoint (`.pptx`) decks.
 
-## Setup
-Ensure all dependencies are installed, then create your local environment configuration by copying the provided example file:
+---
+
+## 🚀 Quick Start
+
+### 1. Installation
+
+Clone the repository and install the required dependencies:
+
+```bash
+git clone https://github.com/VADNgrup/MASG.git
+cd MASG
+
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Install Node.js dependencies (required for native .pptx export via pptxgenjs)
+npm install
+```
+
+### 2. Environment Setup
+
+Create your environment configuration file:
 
 ```bash
 cp .env.example .env
 ```
-After copying, update the `.env` file with your specific API keys and model configurations.
 
-## Usage
+Edit `.env` to supply your API keys and model configurations:
 
-### 1. Automated Batch Processing
-Generate slides for all supported documents placed inside the `data/raw/` directory.
-```bash
-python -m main --limit 10
+```env
+OPENAI_API_KEY=your_openai_api_key
+LLM_MODEL_NAME=gpt-4.1-mini
+VLM_MODEL_NAME=gpt-4o
 ```
 
-### 2. Single Document Processing
-Convert a specific document into slides, allowing customized overriding of the title and presenter metadata.
+---
+
+## 💻 Usage
+
+### Single Document Generation
+
+Generate a presentation deck from a single PDF document:
+
 ```bash
-python -m main \
-    --document_path "data/raw/document.pdf" \
-    --lecture_title "Customized Lecture Title" \
-    --speaker_information "John Doe"
+python main.py \
+    --document_path "data/raw/sample.pdf" \
+    --lecture_title "Introduction to Machine Learning" \
+    --speaker_information "Dr. Jane Doe" \
+    --institution "VNU UET"
 ```
 
-### 3. Modular Debugging
-For analytical purposes or manual intervention, the pipeline can be executed chronologically:
+### Batch Benchmark Execution
+
+Run the complete pipeline across all documents in `data/raw/`:
+
 ```bash
-# Phase 1: Extract textual and tabular context
-python -m src.extractor.extract_file --input "data/raw/document.pdf"
+# Process a subset of documents
+python run_benchmark.py --limit 5
 
-# Phase 2: Preprocess context
-python -m src.preprocessor.preprocessing_context --context "data/context/doc_id.json"
+# Resume an interrupted benchmark run
+python run_benchmark.py --mode resume
 
-# Phase 3: Process multimodal assets
-python -m src.multimodal.multimodal_processing --lecture "data/lectures/file_name.json"
-
-# Phase 4: Generate slides through the Multi-Agent framework
-python -m src.generator.slide_gen --lecture "data/lectures/file_name.json"
+# Execute a clean benchmark run from scratch
+python run_benchmark.py --mode clean --max_qa_loops 2
 ```
 
-## Empirical Performance Evaluation
+---
 
-The system was evaluated utilizing the PPTEval framework (LLM-as-a-Judge architecture) to measure cognitive load distribution, pedagogical adherence, text faithfulness, and generation robustness. The baseline results compare the LecSlideGen parallel multi-agent approach against existing linear-generation solutions (DocPres, KCTV).
+## 📊 Benchmark Results
 
-### Table 1: Quality and Faithfulness Metrics
-| System Architecture | Model Engine | ROUGE-L | Content | Design | Coherence |
-| :--- | :--- | :---: | :---: | :---: | :---: |
-| DocPres (Baseline) | Qwen3.5-9B | 11.35 | 2.82 | 2.86 | 3.08 |
-| KCTV (Baseline) | Qwen3.5-9B | 8.95 | 2.74 | 3.21 | 3.32 |
-| **LecSlideGen** (Ours) | **Qwen3.5-9B** | **22.32** | 3.22 | 3.92 | **3.33** |
-| **LecSlideGen** (Ours) | **GPT-4.1-mini** | 19.41 | **3.25** | **4.08** | 3.10 |
+Evaluated on the **PPTEval** benchmark across 50 heterogeneous technical documents, MASG achieves superior performance across lexical fidelity, content quality, visual design, and narrative coherence while delivering a **100.0% compilation success rate**.
 
-### Table 2: Robustness and Computational Cost
-| System Architecture | Model Engine | Success Rate | Failed Gen | Avg Calls | Token/Output (k) | Done Time (m) |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| DocPres (Baseline) | Qwen3.5-9B | ~69% | 15 | ~13.0 | 23.7 | 2.50 |
-| KCTV (Baseline) | Qwen3.5-9B | ~81% | 9 | ~5.0 | 9.3 | 1.30 |
-| **LecSlideGen** (Ours) | **Qwen3.5-9B** | **100%** | **0** | 16.4 | 51.1 | 1.37 |
-| **LecSlideGen** (Ours) | **GPT-4.1-mini** | **100%** | **0** | 16.6 | 42.3 | **0.85** |
+### Performance Comparison (PPTEval)
 
-### Evaluation Considerations
-The integration of a parallel Reflection layer results in an absolute `100% Success Rate` and significantly enhances layout quality (`Design Score: 4.08`). This mitigates the critical structural failure modes observed in existing frameworks. The compute overhead (API calls and average tokens) represents an acceptable operational trade-off given the elimination of invalid format outputs and near-doubled text adherence (`ROUGE-L`).
+| Method | Backbone LLM | SR (%) $\uparrow$ | Calls $\downarrow$ | Token (k) $\downarrow$ | ROUGE-L $\uparrow$ | Content $\uparrow$ | Design $\uparrow$ | Coherence $\uparrow$ |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **DocPres** | Qwen3.5-9B | ~69.0% | 13.0 | 23.7 | 11.35 | 2.82 | 2.86 | 3.08 |
+| **DocPres** | GPT-4.1-mini | ~65.0% | 15.0 | 28.1 | 11.60 | 2.92 | 2.36 | 3.12 |
+| **KCTV** | Qwen3.5-9B | ~81.0% | **5.0** | **9.3** | 8.95 | 2.74 | 3.21 | 3.32 |
+| **KCTV** | GPT-4.1-mini | ~81.0% | **5.0** | **11.9** | 11.88 | 2.71 | 3.03 | 3.70 |
+| **MASG (Ours)** | **Qwen3.5-9B** | **100.0%** | 8.3 | 28.2 | **13.67** | **3.30** | **4.40** | **4.02** |
+| **MASG (Ours)** | **GPT-4.1-mini** | **100.0%** | 7.8 | 25.8 | **15.00** | **3.25** | **4.35** | **3.82** |
 
-## Benchmarking Execution
-To reproduce the benchmarking results in your local setup:
-```bash
-# 1. Run the entire generation and evaluation suite
-python run_benchmark.py
+---
 
-# 2. Summarize runtime and quality metrics (automatically filters by model)
-python summarize_performance.py --log logs/llm_calls_gpt-4.1-mini.jsonl
-```
+## 📜 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

@@ -1,5 +1,6 @@
 from typing import List, Dict, Optional, Any
 import json
+import re
 from pathlib import Path
 
 class VisualAggregation:
@@ -13,7 +14,36 @@ class VisualAggregation:
         tables = context_data.get('tables', [])
         assets = context_data.get('assets', {})
         images = assets.get('images', [])
-        result = {'tables': tables, 'images': images, 'source_document_id': source_document_id, 'total_tables': len(tables), 'total_images': len(images)}
+        images = self._enrich_images_from_markdown(images, context_data.get('text_content', {}).get('markdown', ''))
+        page_count = context_data.get('text_content', {}).get('page_count') or context_data.get('metadata', {}).get('page_count')
+        result = {'tables': tables, 'images': images, 'source_document_id': source_document_id, 'total_tables': len(tables), 'total_images': len(images), 'page_count': page_count}
+        return result
+
+    def _enrich_images_from_markdown(self, images: List[Dict[str, Any]], markdown: str) -> List[Dict[str, Any]]:
+        image_context = self._extract_image_context(markdown)
+        enriched = []
+        for image in images:
+            item = dict(image)
+            file_path = item.get('file_path', '')
+            info = image_context.get(file_path)
+            if info:
+                if not item.get('caption'):
+                    item['caption'] = info.get('caption', '')
+                if not item.get('reference_context'):
+                    item['reference_context'] = info.get('reference_context', '')
+            enriched.append(item)
+        return enriched
+
+    @staticmethod
+    def _extract_image_context(markdown: str) -> Dict[str, Dict[str, str]]:
+        result: Dict[str, Dict[str, str]] = {}
+        for match in re.finditer(r'!\[([^\]]*)\]\(([^)]+)\)', markdown):
+            caption = re.sub(r'\s+', ' ', match.group(1)).strip()
+            path = match.group(2).strip()
+            start = max(0, match.start() - 500)
+            end = min(len(markdown), match.end() + 500)
+            reference_context = re.sub(r'\s+', ' ', markdown[start:end]).strip()
+            result[path] = {'caption': caption, 'reference_context': reference_context}
         return result
 
     def _load_context_file(self, source_document_id: str) -> Dict[str, Any]:

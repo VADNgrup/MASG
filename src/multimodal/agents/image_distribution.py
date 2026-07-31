@@ -1,38 +1,19 @@
 from typing import List, Dict, Optional, Any, Set
 import json
-import requests
-import base64
-import numpy as np
+import re
 from pathlib import Path
-from PIL import Image
-from io import BytesIO
-from src.utils.config import config
-from src.utils.llm import chat
-from src.utils.semantic_match import SemanticMatcher
-from src.ingestion.image_filter import ImageFilter
 from src.utils.config import Config
 
 class ImageDistribution:
 
     def __init__(self):
-        self.matcher = SemanticMatcher()
-        self.llm_model = config.LLM_MODEL_NAME
-        self.vlm_model = config.VLM_MODEL_NAME
-        self.serper_api_key = config.SERPER_API_KEY
-        self.num_images = 3
-        self.skip_websites = ['researchgate.net', 'huggingface.co', 'towardsdatascience.com', 'mdpi.com']
-        self.alpha = 0.7
-        self.threshold = 0.4
-        self.web_threshold = 0.2
-        self.web_dedup_threshold = 0.85
-        self.max_images_per_slide = 2
-        self.fusion_threshold = 1.2
-        self.width_threshold = 1.77
-        self._emb_cache: Dict[str, Any] = {}
-        self._image_filter = ImageFilter()
-        self._selected_web_embs: List[Any] = []
+        self.threshold = Config.IMAGE_MATCH_THRESHOLD
+        self.max_images_per_slide = Config.IMAGE_MATCH_MAX_IMAGES_PER_SLIDE
+        self.stopwords = self._load_stopwords()
 
-    def distribute_images(self, lecture_id: str, lecture_dict: Dict[str, Any], aggregated_media: Dict[str, Any], used_images: Set[str]) -> List[Dict[str, Any]]:
+    def distribute_images(self, lecture_id: str, lecture_dict: Dict[str, Any], aggregated_media: Dict[str, Any], used_images: Set[str], document_id: str = None) -> List[Dict[str, Any]]:
+        self.aggregated_media = aggregated_media
+        document_id = document_id or lecture_dict.get('metadata', {}).get('source_document_id', lecture_id)
         slides = lecture_dict.get('slides', [])
         content_slides = self._extract_content_slides(slides)
         if not content_slides:
@@ -42,25 +23,43 @@ class ImageDistribution:
         print(f'  Image Distribution — {len(content_slides)} content slides')
         print(f"{'=' * 60}")
         existing_images = aggregated_media.get('images', [])
-        image_pool = self._step0_summarise_images(existing_images)
-        image_pool = self._step1_embed_images(image_pool)
-        print(f'\n  Step 0–1 complete: {len(image_pool)} context images embedded')
-        slide_pool = self._step2_embed_slides(content_slides)
-        print(f'  Step 2 complete: {len(slide_pool)} content slides embedded')
-        distributions = self._step3_match_images_to_slides(image_pool, slide_pool, used_images)
-        print(f'  Step 3 complete: {len(distributions)} images matched to slides')
+        section_asset_tokens_by_slide, section_match_pages_by_slide, page_asset_map = self._load_section_info_by_slide(lecture_id, document_id)
+        image_pool = self._step0_summarise_images(existing_images, page_asset_map)
+        print(f'\n  Step 0 complete: {len(image_pool)} context images prepared')
+        source_pages_by_slide = self._load_slide_source_pages(lecture_id)
+        slide_pool = self._step1_prepare_slides(content_slides, source_pages_by_slide, aggregated_media.get('page_count'), section_asset_tokens_by_slide, section_match_pages_by_slide)
+        print(f'  Step 1 complete: {len(slide_pool)} content slides prepared')
+        # Collect source pages for slides whose content was extracted as formula or table —
+        # images from those pages should not be placed on any slide as raw images.
+        formula_table_pages: Set[int] = set()
+        for slide_entry in slides:
+            slide_meta = slide_entry.get('slide', {})
+            if slide_meta.get('latex_block_formula') or (slide_meta.get('table') or {}).get('table_markdown'):
+                sn = slide_meta.get('slide_number', -1)
+                try:
+                    sn = int(sn)
+                except (TypeError, ValueError):
+                    continue
+                for pg in source_pages_by_slide.get(sn, []):
+                    formula_table_pages.add(pg)
+        if formula_table_pages:
+            print(f'  [filter] Excluding images from formula/table source pages: {sorted(formula_table_pages)}')
+        distributions = self._step2_match_images_to_slides(image_pool, slide_pool, used_images, formula_table_pages)
+        print(f'  Step 2 complete: {len(distributions)} images matched to slides')
+        
         assigned_slide_numbers = {d['slide_number'] for d in distributions}
         slides_without_images = [s for s in slide_pool if s['slide_number'] not in assigned_slide_numbers]
+        
         if slides_without_images:
-            print(f'\n  Step 5: {len(slides_without_images)} slides still need images — Web search fallback is DISABLED for academic rigor.')
-        output_path = Path(f'data/lectures/{lecture_id}_image_distributions.json')
+            print(f'\n  Note: {len(slides_without_images)} slides do not have suitable images from the document. Skipping web search as requested.')
+        output_path = Config.LECTURES_DIR / lecture_id / f'{lecture_id}_image_distribution.json'
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(distributions, f, indent=2, ensure_ascii=False)
         print(f'\n  Saved image distributions to: {output_path}')
         return distributions
 
-    def _step0_summarise_images(self, existing_images: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _step0_summarise_images(self, existing_images: List[Dict[str, Any]], page_asset_map: Optional[Dict[int, str]] = None) -> List[Dict[str, Any]]:
         image_pool: List[Dict[str, Any]] = []
         for img in existing_images:
             image_id = img.get('image_id', '')
@@ -68,43 +67,55 @@ class ImageDistribution:
             caption = img.get('caption', '')
             reference_context = img.get('reference_context') or None
             metadata = img.get('metadata', {})
-            if not file_path or not Path(file_path).exists():
+            resolved_file_path = self._resolve_image_path(file_path)
+            if not resolved_file_path:
                 print(f'    [skip] Image file not found: {file_path}')
                 continue
             if reference_context:
-                image_description = self._generate_image_description(caption, reference_context)
+                image_description = self._clean_text(f'{caption} {reference_context}')
             else:
-                image_description = caption
-            image_pool.append({'image_id': image_id, 'file_path': file_path, 'caption': caption, 'reference_context': reference_context, 'metadata': metadata, 'image_description': image_description})
+                image_description = self._clean_text(caption)
+            # Enrich from compact page section assets when caption is empty
+            if not image_description and page_asset_map:
+                page_num = self._infer_page_number(file_path)
+                if page_num and page_num in page_asset_map:
+                    image_description = page_asset_map[page_num]
+                    print(f'    [enrich] {image_id} p.{page_num}: {image_description[:60]}')
+            if not image_description:
+                image_description = "illustrative figure document diagram image"
+            image_pool.append({'image_id': image_id, 'file_path': resolved_file_path, 'caption': caption, 'reference_context': reference_context, 'metadata': metadata, 'image_description': image_description, 'page_number': self._infer_page_number(file_path), 'tokens': self._tokens(image_description)})
             print(f'    [desc] {image_id}: {image_description[:80]}...')
         return image_pool
 
-    def _generate_image_description(self, caption: str, reference_context: str) -> str:
-        prompt = f'You are given a caption and the reference context of an image from a document. Write a concise but comprehensive image description (1-3 sentences) that synthesises what the image shows, combining information from both the caption and the reference context. Focus on the visual content and what it represents.\n\nCaption: {caption}\n\nReference context: {reference_context}\n\nImage description:'
-        try:
-            return chat(model=self.llm_model, messages=[{'role': 'user', 'content': prompt}], temperature=0.3, max_tokens=200).strip()
-        except Exception as e:
-            print(f'    [LLM] Failed to generate description: {e}')
-            return caption
-
-    def _step1_embed_images(self, image_pool: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        for img in image_pool:
-            img['img_desc_embedding'] = self._cached_text_emb(img['image_description'])
-            img['img_clip_embedding'] = self._cached_image_clip_emb(img['file_path'])
-        return image_pool
+    @staticmethod
+    def _resolve_image_path(file_path: str) -> str:
+        if not file_path:
+            return ''
+        candidates = [Path(file_path), Config.DATA_DIR / file_path, Config.BASE_DIR / file_path]
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+        return ''
 
     def _extract_content_slides(self, slides: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        skip_types = {'greeting', 'goodbye'}
         content_slides = []
         for slide_entry in slides:
             slide_meta = slide_entry.get('slide', {})
             slide_type = slide_meta.get('slide_type', '')
-            if slide_type == 'content':
-                content_slides.append(slide_entry)
+            if slide_type in skip_types:
+                continue
+            if slide_meta.get('table') is not None or slide_meta.get('latex_block_formula') is not None:
+                continue
+            content_slides.append(slide_entry)
         return content_slides
 
-    def _step2_embed_slides(self, content_slides: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _step1_prepare_slides(self, content_slides: List[Dict[str, Any]], source_pages_by_slide: Dict[int, List[int]], page_count: Optional[int], section_asset_tokens_by_slide: Optional[Dict[int, Set[str]]] = None, section_match_pages_by_slide: Optional[Dict[int, Set[int]]] = None) -> List[Dict[str, Any]]:
         slide_pool: List[Dict[str, Any]] = []
-        for slide_entry in content_slides:
+        total_slides = len(content_slides)
+        section_asset_tokens_by_slide = section_asset_tokens_by_slide or {}
+        section_match_pages_by_slide = section_match_pages_by_slide or {}
+        for idx, slide_entry in enumerate(content_slides):
             slide_meta = slide_entry.get('slide', {})
             slide_number = slide_meta.get('slide_number', -1)
             content = slide_entry.get('content', [])
@@ -116,279 +127,341 @@ class ImageDistribution:
                 bullet_points = []
             if not bullet_points:
                 continue
-            slide_embeddings = []
-            slide_clip_embeddings = []
-            for bp in bullet_points:
-                slide_embeddings.append(self._cached_text_emb(bp))
-                slide_clip_embeddings.append(self._cached_text_clip_emb(bp))
-            slide_pool.append({'slide_number': slide_number, 'slide_title': slide_meta.get('slide_title', ''), 'bullet_points': bullet_points, 'slide_embeddings': slide_embeddings, 'slide_clip_embeddings': slide_clip_embeddings})
+            slide_title = slide_meta.get('slide_title', '')
+            slide_text = self._clean_text(' '.join([slide_title] + bullet_points))
+            page_range = self._source_page_range(source_pages_by_slide.get(slide_number)) or self._fallback_page_range(idx, total_slides, page_count)
+            slide_pool.append({'slide_number': slide_number, 'slide_title': slide_title, 'bullet_points': bullet_points, 'tokens': self._tokens(slide_text), 'page_range': page_range, 'section_asset_tokens': section_asset_tokens_by_slide.get(slide_number, set()), 'section_match_pages': section_match_pages_by_slide.get(slide_number, set())})
         return slide_pool
 
-    def _step3_match_images_to_slides(self, image_pool: List[Dict[str, Any]], slide_pool: List[Dict[str, Any]], used_images: Set[str]) -> List[Dict[str, Any]]:
+    def _step2_match_images_to_slides(self, image_pool: List[Dict[str, Any]], slide_pool: List[Dict[str, Any]], used_images: Set[str], formula_table_pages: Optional[Set[int]] = None) -> List[Dict[str, Any]]:
         distributions: List[Dict[str, Any]] = []
-        slide_image_count: Dict[int, int] = {s['slide_number']: 0 for s in slide_pool}
+        formula_table_pages = formula_table_pages or set()
+
+        # 1. Filter out banned or invalid images
+        banned_image_paths = set()
+        if hasattr(self, 'aggregated_media'):
+            tables = self.aggregated_media.get('tables', [])
+            for t in tables:
+                caption = t.get('table_caption', '')
+                md = t.get('markdown', '')
+                for path in re.findall(r'!\[.*?\]\((.*?)\)', caption + '\n' + md):
+                    banned_image_paths.add(Path(path).name)
+
+        valid_images = []
         for img in image_pool:
             img_name = Path(img['file_path']).name
-            if img_name in used_images:
+            caption_lower = (img.get('caption', '') or '').lower()
+            ref_lower = (img.get('reference_context', '') or '').lower()
+            desc_lower = (img.get('image_description', '') or '').lower()
+            combined_lower = caption_lower + ' ' + ref_lower + ' ' + desc_lower
+
+            # Skip images from pages where formula/table content was extracted
+            img_page = img.get('page_number')
+            if img_page and img_page in formula_table_pages:
+                print(f'    [skip] {img_name} — page {img_page} is a formula/table source page')
                 continue
-            img_desc_emb = img['img_desc_embedding']
-            img_clip_emb = img['img_clip_embedding']
-            best_slide_number = None
-            best_score = -1.0
-            for slide in slide_pool:
-                slide_num = slide['slide_number']
-                if slide_image_count.get(slide_num, 0) >= self.max_images_per_slide:
+
+            # Caption/description signals that this image IS the formula or table content
+            is_formula = (
+                ('general form' in combined_lower and 'constraint' in combined_lower) or
+                ('objective function' in combined_lower and 'constraint' in combined_lower) or
+                ('mathematical formulation' in combined_lower) or
+                bool(re.search(r'\bequation\s*\(?\d+\)?|\bformula\b.*\bconstraint', combined_lower)) or
+                bool(re.search(r'\\begin\{aligned\}|\\frac\{|\\sum_\{|\\le\b|\\ge\b', combined_lower))
+            )
+            is_table = bool(re.search(
+                r'\btable\s*\d+|\btable\s*[ivxlcdm]+\b|\btable\s*[A-Z]\b|'
+                r'\btab\.\s*\d|\bdata\s+table\b|\bmatrix\b.*\bconstraint',
+                combined_lower
+            ))
+            if img_name in used_images or img_name in banned_image_paths or is_formula or is_table:
+                if is_formula or is_table:
+                    print(f'    [skip] {img_name} — formula/table content detected in caption/description')
+                continue
+            valid_images.append(img)
+            
+        if not valid_images or not slide_pool:
+            return distributions
+            
+        # 2. Construct LLM prompt
+        slide_info = []
+        for slide in slide_pool:
+            slide_num = slide['slide_number']
+            title = slide['slide_title']
+            content = " ".join(slide.get('bullet_points', []))
+            # Restrict length to save tokens
+            if len(content) > 300:
+                content = content[:300] + "..."
+            page_info = f", Pages: {slide.get('page_range')}" if slide.get('page_range') else ""
+            slide_info.append(f"[Slide {slide_num}] Title: {title}\nContent: {content}{page_info}")
+            
+        image_info = []
+        image_map = {}
+        for img in valid_images:
+            img_id = img['image_id']
+            img_name = Path(img['file_path']).name
+            desc = self._best_caption(img)
+            if not desc:
+                desc = img.get('image_description', '')
+            if len(desc) > 200:
+                desc = desc[:200] + "..."
+            page = img.get('page_number', 'unknown')
+            image_info.append(f"[Image {img_id}] Page: {page}, File: {img_name}\nDescription: {desc}")
+            image_map[img_id] = img
+            
+        slide_text_block = "\n\n".join(slide_info)
+        image_text_block = "\n\n".join(image_info)
+        
+        prompt = f"""You are an intelligent presentation designer. Your task is to select the most relevant image(s) for each slide based on the slide's content and the image descriptions.
+
+Slides:
+{"="*40}
+{slide_text_block}
+{"="*40}
+
+Images Available:
+{"="*40}
+{image_text_block}
+{"="*40}
+
+Instructions:
+1. Assign an image to a slide ONLY IF it is highly relevant to the slide's content.
+2. An image can be assigned to AT MOST one slide.
+3. A slide can have AT MOST {self.max_images_per_slide} image(s).
+4. If no images are suitable for a slide, do not assign any.
+5. Pay attention to the Page numbers. Images are more likely to match slides that cover the same page ranges, but semantic relevance is the most important factor.
+6. CRITICAL RULE: For slides discussing high-level topics like 'Overview', 'System Design', or 'Architecture', STRONGLY PREFER images that represent the overall system architecture or overview over images that show specific sub-components (like a single transformer layer).
+
+Output your assignments in JSON format EXACTLY like this:
+{{
+    "assignments": [
+        {{"slide_number": 1, "image_id": "img_001", "reason": "short explanation"}},
+        {{"slide_number": 3, "image_id": "img_005", "reason": "short explanation"}}
+    ]
+}}
+"""
+        from src.utils.llm import chat
+        messages = [
+            {"role": "system", "content": "You are a helpful presentation design assistant. Only output valid JSON."},
+            {"role": "user", "content": prompt}
+        ]
+        
+        try:
+            print(f"    [match] Calling LLM to distribute {len(valid_images)} images to {len(slide_pool)} slides...")
+            response = chat(model=Config.LLM_MODEL_NAME, messages=messages, temperature=0.1)
+            
+            # Find JSON block
+            json_str = response
+            if "```json" in response:
+                json_str = response.split("```json")[1].split("```")[0]
+            elif "```" in response:
+                json_str = response.split("```")[1].split("```")[0]
+                
+            data = json.loads(json_str.strip())
+            assignments = data.get("assignments", [])
+            
+            # 3. Process assignments
+            slide_image_count = {s['slide_number']: 0 for s in slide_pool}
+            assigned_images = set()
+            
+            for assignment in assignments:
+                slide_num = assignment.get("slide_number")
+                img_id = assignment.get("image_id")
+                
+                if slide_num not in slide_image_count:
                     continue
-                text_sims = [self._cosine(img_desc_emb, bp_emb) for bp_emb in slide['slide_embeddings']]
-                text_sim = self._top_k_avg(text_sims, k=3)
-                image_sims = [self._cosine(img_clip_emb, bp_clip) for bp_clip in slide['slide_clip_embeddings']]
-                image_sim = self._top_k_avg(image_sims, k=3)
-                text_sim = self._normalize_sim(text_sim)
-                image_sim = self._normalize_sim(image_sim)
-                img_slide_sim = self.alpha * text_sim + (1 - self.alpha) * image_sim
-                if img_slide_sim > best_score:
-                    best_score = img_slide_sim
-                    best_slide_number = slide_num
-            if best_slide_number is not None and best_score > self.threshold:
-                distributions.append({'slide_number': best_slide_number, 'image_path': img['file_path'], 'score': round(best_score, 4), 'source': 'existing', 'caption': self._shorten_caption(img.get('caption', ''))})
-                used_images.add(img_name)
-                slide_image_count[best_slide_number] = slide_image_count.get(best_slide_number, 0) + 1
-                print(f"    [match] {img['image_id']} → slide {best_slide_number} (score={best_score:.4f})")
-            else:
-                print(f"    [skip]  {img['image_id']} — best score {best_score:.4f} below threshold")
+                if slide_image_count[slide_num] >= self.max_images_per_slide:
+                    continue
+                if img_id not in image_map or img_id in assigned_images:
+                    continue
+                    
+                img = image_map[img_id]
+                distributions.append({
+                    'slide_number': slide_num,
+                    'image_path': img['file_path'],
+                    'score': 1.0,
+                    'source': 'existing',
+                    'caption': self._best_caption(img)
+                })
+                used_images.add(Path(img['file_path']).name)
+                assigned_images.add(img_id)
+                slide_image_count[slide_num] += 1
+                
+                print(f"    [match] LLM assigned {img_id} → slide {slide_num} (reason: {assignment.get('reason', '')})")
+                
+            for img in valid_images:
+                if img['image_id'] not in assigned_images:
+                    print(f"    [skip]  {img['image_id']} — not selected by LLM")
+                    
+        except Exception as e:
+            print(f"    [error] LLM image matching failed: {e}")
+            print(f"    [match] Fallback: no images assigned due to error.")
+            
         return distributions
 
     @staticmethod
-    def _is_major_slide(slide_title: str) -> bool:
-        import re
-        return bool(re.match('^\\d+\\.\\s', slide_title.strip()))
+    def _infer_page_number(file_path: str) -> Optional[int]:
+        match = re.search(r'page_(\d+)', file_path or '')
+        return int(match.group(1)) if match else None
 
-    def _step5_web_search_fallback(self, slides_without_images: List[Dict[str, Any]], download_dir: Path, used_images: Set[str], aggregated_media: Dict[str, Any]) -> List[Dict[str, Any]]:
-        distributions: List[Dict[str, Any]] = []
-        for slide_info in slides_without_images:
-            slide_number = slide_info['slide_number']
-            slide_title = slide_info.get('slide_title', '')
-            bullet_points = slide_info.get('bullet_points', [])
-            if self._is_major_slide(slide_title):
-                print(f"    [web] Slide {slide_number}: skipped (major slide '{slide_title}')")
+    @staticmethod
+    def _source_page_range(source_pages: Optional[List[int]]) -> Optional[tuple[int, int]]:
+        pages = sorted({int(page) for page in (source_pages or []) if isinstance(page, int) or str(page).isdigit()})
+        if not pages:
+            return None
+        return (pages[0], pages[-1])
+
+    @staticmethod
+    def _fallback_page_range(slide_index: int, total_slides: int, page_count: Optional[int]) -> Optional[tuple[int, int]]:
+        try:
+            page_count = int(page_count or 0)
+        except (TypeError, ValueError):
+            return None
+        if not page_count or page_count <= 0 or total_slides <= 0:
+            return None
+        center = round(1 + slide_index * max(0, page_count - 1) / max(1, total_slides - 1))
+        start = max(1, center - 1)
+        end = min(page_count, center + 1)
+        return (start, end)
+
+    @staticmethod
+    def _load_slide_source_pages(lecture_id: str) -> Dict[int, List[int]]:
+        packet_path = Config.LECTURES_DIR / lecture_id / f'{lecture_id}_slide_packets.json'
+        if not packet_path.exists():
+            return {}
+        try:
+            packets = json.loads(packet_path.read_text(encoding='utf-8'))
+        except Exception:
+            return {}
+        result: Dict[int, List[int]] = {}
+        for packet in packets if isinstance(packets, list) else []:
+            slide_number = packet.get('slide_number')
+            pages = packet.get('source_pages') or []
+            if slide_number is None:
                 continue
-            slide_text = f'{slide_title}. ' + ' '.join(bullet_points)
-            queries = self._generate_search_queries(slide_text)
-            if not queries:
-                print(f'    [web] Slide {slide_number}: failed to generate queries')
+            clean_pages = [int(page) for page in pages if isinstance(page, int) or str(page).isdigit()]
+            if clean_pages:
+                result[int(slide_number)] = clean_pages
+        return result
+
+    def _load_section_info_by_slide(self, lecture_id: str, document_id: str = None):
+        doc_id = document_id or lecture_id
+        context_path = Config.CONTEXT_DIR / f"{doc_id}.json"
+        packet_path = Config.LECTURES_DIR / lecture_id / f"{lecture_id}_slide_packets.json"
+        empty: tuple = ({}, {}, {})
+        if not packet_path.exists():
+            return empty
+        try:
+            packets = json.loads(packet_path.read_text(encoding="utf-8"))
+            context_data = json.loads(context_path.read_text(encoding="utf-8")) if context_path.exists() else {}
+        except Exception:
+            return empty
+
+        page_asset_map: Dict[int, str] = {}
+        for card in context_data.get("page_insights", []):
+            page = card.get("page") if isinstance(card, dict) else getattr(card, "page", None)
+            if page is not None:
+                page_asset_map[page] = ""
+
+        section_asset_tokens: Dict[int, Set[str]] = {}
+        section_match_pages: Dict[int, Set[int]] = {}
+
+        for packet in (packets if isinstance(packets, list) else []):
+            slide_number = packet.get("slide_number")
+            if slide_number is None:
                 continue
-            slide_selected_count = 0
-            first_image_info = None
-            for (q_idx, query) in enumerate(queries, start=1):
-                if slide_selected_count >= self.max_images_per_slide:
-                    break
-                if q_idx == 2 and first_image_info is not None:
-                    (w1, h1) = first_image_info
-                    if w1 > 0 and h1 > 0:
-                        if h1 / w1 > self.fusion_threshold:
-                            print(f'[web] Slide {slide_number}: 1st image too tall (h/w={h1 / w1:.2f} > {self.fusion_threshold}) → skip 2nd query')
-                            break
-                        if w1 / h1 > self.width_threshold:
-                            print(f'[web] Slide {slide_number}: 1st image too wide (w/h={w1 / h1:.2f} > {self.width_threshold}) → skip 2nd query')
-                            break
-                print(f"[web] Slide {slide_number} query {q_idx}/{len(queries)}: '{query[:60]}...'")
-                downloaded_paths = self._search_and_download_images(query=query, download_dir=download_dir, slide_number=slide_number, query_idx=q_idx)
-                if not downloaded_paths:
-                    print(f'[web] Slide {slide_number} query {q_idx}: no images downloaded')
-                    continue
-                query_clip_emb = self._cached_text_clip_emb(query)
-                scored: List[Dict[str, Any]] = []
-                for img_path in downloaded_paths:
-                    img_name = Path(img_path).name
-                    if img_name in used_images:
-                        continue
-                    try:
-                        img_clip_emb = self._cached_image_clip_emb(str(img_path))
-                        sim = self._cosine(query_clip_emb, img_clip_emb)
-                        sim = self._normalize_sim(sim)
-                        scored.append({'path': str(img_path), 'score': sim, 'name': img_name, 'clip_emb': img_clip_emb})
-                    except Exception as e:
-                        print(f'[web] Error embedding {img_name}: {e}')
-                if not scored:
-                    continue
-                scored.sort(key=lambda x: x['score'], reverse=True)
-                selected_candidate = None
-                for candidate in scored:
-                    if candidate['score'] < self.web_threshold:
-                        print(f"[web] Slide {slide_number} query {q_idx}: best {candidate['name']} score {candidate['score']:.4f} below threshold → skip")
-                        break
-                    is_duplicate = False
-                    for prev_emb in self._selected_web_embs:
-                        dup_sim = self._cosine(candidate['clip_emb'], prev_emb)
-                        dup_sim = self._normalize_sim(dup_sim)
-                        if dup_sim > self.web_dedup_threshold:
-                            print(f"[web] Slide {slide_number} query {q_idx}: {candidate['name']} too similar to a previous image (sim={dup_sim:.4f}) → skip")
-                            is_duplicate = True
-                            break
-                    if not is_duplicate:
-                        selected_candidate = candidate
-                        break
-                if not selected_candidate:
-                    print(f'[web] Slide {slide_number} query {q_idx}: no suitable image found')
-                    continue
-                try:
-                    with Image.open(selected_candidate['path']) as pil_img:
-                        (cand_w, cand_h) = pil_img.size
-                except Exception:
-                    (cand_w, cand_h) = (0, 0)
-                if q_idx == 2 and first_image_info is not None and (cand_w > 0) and (cand_h > 0):
-                    (w1, h1) = first_image_info
-                    scale = w1 / cand_w
-                    h2_norm = cand_h * scale
-                    fusion_ratio = (h1 + h2_norm) / w1
-                    if fusion_ratio >= self.fusion_threshold:
-                        print(f'[web] Slide {slide_number}: combined ratio {fusion_ratio:.2f} >= {self.fusion_threshold} → reject 2nd image')
-                        continue
-                    print(f'[web] Slide {slide_number}: combined ratio {fusion_ratio:.2f} < {self.fusion_threshold} → accept 2nd image')
-                distributions.append({'slide_number': slide_number, 'image_path': selected_candidate['path'], 'score': round(selected_candidate['score'], 4), 'source': 'downloaded', 'caption': self._shorten_caption(query)})
-                used_images.add(selected_candidate['name'])
-                self._selected_web_embs.append(selected_candidate['clip_emb'])
-                self._add_downloaded_to_media(selected_candidate['path'], slide_number, query, aggregated_media)
-                slide_selected_count += 1
-                print(f"[web] Slide {slide_number} query {q_idx}: selected {selected_candidate['name']} (score={selected_candidate['score']:.4f})")
-                if q_idx == 1 and cand_w > 0 and (cand_h > 0):
-                    first_image_info = (cand_w, cand_h)
-        return distributions
+            slide_num = int(slide_number)
+
+            packet_home_pages = set(packet.get("home_pages") or [])
+            if packet_home_pages:
+                section_match_pages.setdefault(slide_num, set()).update(packet_home_pages)
+                
+            assets = packet.get("section_assets", [])
+            if assets:
+                section_asset_tokens.setdefault(slide_num, set()).update(
+                    self._tokens(" ".join(assets))
+                )
+
+        return section_asset_tokens, section_match_pages, page_asset_map
+
+    @staticmethod
+    def _page_score(page_number: Optional[int], page_range: Optional[tuple[int, int]]) -> float:
+        if page_number is None or page_range is None:
+            return 1.0
+        start, end = page_range
+        if start <= page_number <= end:
+            return 1.0
+        distance = min(abs(page_number - start), abs(page_number - end))
+        if distance == 1:
+            return 0.85
+        elif distance == 2:
+            return 0.65
+        elif distance <= 4:
+            return 0.40
+        elif distance <= 8:
+            return 0.25
+        return 0.15
 
     def _shorten_caption(self, caption: str, max_words: int=15) -> str:
         if not caption or len(caption.split()) <= max_words:
             return caption
-        prompt = f'Summarize the following image caption into at most {max_words} words. Keep it descriptive and concise. Return ONLY the shortened caption, nothing else.\n\nCaption: {caption}\n\nShortened caption:'
-        try:
-            short = chat(model=self.llm_model, messages=[{'role': 'user', 'content': prompt}], temperature=0.3, max_tokens=60).strip().strip('"').strip("'")
-            print(f"[caption] '{caption[:50]}...' → '{short}'")
-            return short
-        except Exception as e:
-            print(f'[caption] Failed to shorten: {e}')
-            return ' '.join(caption.split()[:max_words]) + '...'
+        return ' '.join(caption.split()[:max_words]) + '...'
 
-    def _generate_search_queries(self, slide_text: str) -> List[str]:
-        prompt = f'You are an expert at generating image search queries for educational presentations. Given the following slide content, generate exactly 2 concise search queries (10-20 words each) that would find relevant and illustrative images for this slide. The two queries should target DIFFERENT visual aspects of the slide content to maximize the diversity of images found.\n\nReturn ONLY the two queries, one per line, numbered as:\n1. <query1>\n2. <query2>\n\nSlide content: {slide_text[:1000]}\n\nSearch queries:'
-        try:
-            raw = chat(model=self.llm_model, messages=[{'role': 'user', 'content': prompt}], temperature=0.3, max_tokens=200).strip()
-            queries = []
-            for line in raw.split('\n'):
-                line = line.strip()
-                if line and line[0].isdigit() and ('.' in line[:3]):
-                    line = line.split('.', 1)[1].strip()
-                line = line.strip('"').strip("'")
-                if line:
-                    queries.append(line)
-            return queries[:2]
-        except Exception as e:
-            print(f'[LLM] Failed to generate search queries: {e}')
-            return []
-
-    def _add_downloaded_to_media(self, img_path_str: str, slide_number: int, caption: str, aggregated_media: Dict[str, Any]):
-        img_path = Path(img_path_str)
-        try:
-            with Image.open(img_path) as pil_img:
-                (width, height) = pil_img.size
-                fmt = pil_img.format or 'PNG'
-            file_size_kb = round(img_path.stat().st_size / 1024, 2)
-        except Exception:
-            (width, height, fmt, file_size_kb) = (0, 0, 'PNG', 0.0)
-        new_entry = {'image_id': f'downloaded_slide{slide_number}', 'file_path': img_path_str, 'caption': caption, 'metadata': {'width': width, 'height': height, 'format': fmt.lower(), 'file_size_kb': file_size_kb}}
-        aggregated_media.setdefault('images', []).append(new_entry)
-        aggregated_media['total_images'] = len(aggregated_media['images'])
-    MIN_WH_RATIO = Config.MIN_WH_RATIO_IMAGE_DOWNLOAD
-
-    def _search_and_download_images(self, query: str, download_dir: Path, slide_number: int, query_idx: int=1) -> List[Path]:
-        image_urls = self._search_images(query, max_results=6)
-        if not image_urls:
-            return []
-        downloaded_paths: List[Path] = []
-        for (idx, url) in enumerate(image_urls):
-            if len(downloaded_paths) >= self.num_images:
-                break
-            try:
-                response = requests.get(url, timeout=10)
-                response.raise_for_status()
-                (passed, reason) = self._image_filter.pre_filter(response.content)
-                if not passed:
-                    print(f'[filter] Rejected — {reason}')
-                    continue
-                img = Image.open(BytesIO(response.content))
-                (w, h) = img.size
-                if h > 0 and w / h < self.MIN_WH_RATIO:
-                    print(f'[filter] Rejected — w/h={w / h:.3f} < {self.MIN_WH_RATIO:.3f} (portrait image, url={url[:60]})')
-                    continue
-                file_name = f'slide_{slide_number}_q{query_idx}_serper_{idx + 1}.png'
-                file_path = download_dir / file_name
-                img.save(file_path, 'PNG')
-                downloaded_paths.append(file_path)
-            except Exception as e:
-                print(f'[download] Failed: {str(e)[:80]}')
-        return downloaded_paths
-
-    def _search_images(self, query: str, max_results: int | None=None) -> List[str]:
-        if max_results is None:
-            max_results = self.num_images
-        url = 'https://google.serper.dev/images'
-        payload = json.dumps({'q': query})
-        headers = {'X-API-KEY': self.serper_api_key, 'Content-Type': 'application/json'}
-        try:
-            response = requests.post(url, headers=headers, data=payload, timeout=10)
-            response.raise_for_status()
-            results = response.json().get('images', [])
-            image_urls = []
-            for r in results:
-                if len(image_urls) >= max_results:
-                    break
-                img_url = r.get('imageUrl', '')
-                if not img_url:
-                    continue
-                if img_url.lower().endswith('.svg'):
-                    continue
-                if any((domain in img_url.lower() for domain in self.skip_websites)):
-                    continue
-                image_urls.append(img_url)
-            return image_urls
-        except Exception as e:
-            print(f'[serper] Error: {e}')
-            return []
-
-    def _cached_text_emb(self, text: str):
-        key = f'text:{text}'
-        if key not in self._emb_cache:
-            self._emb_cache[key] = self.matcher._get_text_embedding(text)
-        return self._emb_cache[key]
-
-    def _cached_image_clip_emb(self, image_path: str):
-        key = f'img:{image_path}'
-        if key not in self._emb_cache:
-            self._emb_cache[key] = self.matcher._get_image_clip_embedding(image_path)
-        return self._emb_cache[key]
-
-    def _cached_text_clip_emb(self, text: str):
-        key = f'clip_text:{text}'
-        if key not in self._emb_cache:
-            self._emb_cache[key] = self.matcher._get_text_clip_embedding(text)
-        return self._emb_cache[key]
+    def _best_caption(self, img: Dict[str, Any]) -> str:
+        candidates = [
+            img.get('caption', ''),
+            img.get('reference_context', ''),
+            img.get('image_description', ''),
+        ]
+        for candidate in candidates:
+            clean = self._clean_caption(candidate)
+            if clean:
+                return self._shorten_caption(clean)
+        return ''
 
     @staticmethod
-    def _cosine(a, b) -> float:
-        if a is None or b is None:
-            return 0.0
-        norm_a = np.linalg.norm(a)
-        norm_b = np.linalg.norm(b)
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        return float(np.dot(a, b) / (norm_a * norm_b))
+    def _clean_caption(text: str) -> str:
+        clean = re.sub(r'\s+', ' ', text or '').strip()
+        clean = re.sub(r'!\[[^\]]*\]\([^)]+\)', ' ', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'#{1,6}\s*', ' ', clean)
+        clean = re.sub(r'\*+\s*(?:figure|fig\.?|table|hình|bảng)\s*:\s*', ' ', clean, flags=re.IGNORECASE)
+        clean = clean.replace('*', ' ')
+        clean = re.sub(r'<!--\s*PAGE\s+\d+\s*-->', ' ', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'\b[a-zA-Z0-9_\-/]+\.(?:png|jpe?g|webp)\b', ' ', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'/assets/\S+|\bassets/\S+', ' ', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'\s+', ' ', clean).strip(' -:;,.')
+        if not clean:
+            return ''
+        if '/' in clean and len(clean.split()) <= 4:
+            return ''
+        if any(token in clean for token in ['![', '](', '##', '# ']):
+            return ''
+        if len(clean.split()) > 12:
+            clean = ' '.join(clean.split()[:12])
+        return clean
+
+    def _tokens(self, text: str) -> Set[str]:
+        words = re.findall(r'[A-Za-zÀ-ỹ0-9]{2,}', (text or '').lower())
+        return {word for word in words if word not in self.stopwords}
 
     @staticmethod
-    def _top_k_avg(sims: List[float], k: int=3) -> float:
-        if not sims:
-            return 0.0
-        sorted_sims = sorted(sims, reverse=True)
-        top_k = sorted_sims[:k]
-        return sum(top_k) / len(top_k)
+    def _load_stopwords() -> Set[str]:
+        path = Config.IMAGE_MATCH_STOPWORDS_PATH
+        if not path.exists():
+            return set()
+        return {
+            line.strip().lower()
+            for line in path.read_text(encoding='utf-8').splitlines()
+            if line.strip()
+        }
 
     @staticmethod
-    def _normalize_sim(value: float) -> float:
-        return max(0.0, min(1.0, value))
+    def _token_similarity(left: Set[str], right: Set[str]) -> float:
+        if not left or not right:
+            return 0.0
+        overlap = len(left & right)
+        return overlap / max(4, min(len(left), len(right)))
+
+    @staticmethod
+    def _clean_text(text: str) -> str:
+        return re.sub(r'\s+', ' ', text or '').strip()

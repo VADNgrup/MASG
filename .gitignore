@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.DS_Store
+.vscode/
 *.so
 .Python
 env/
@@ -13,6 +15,7 @@ data/assets/*
 data/context/*
 logs/*
 data/optimization/*
+data/media/*
 !data/lectures/.gitkeep
 !data/optimization/.gitkeep
 .pytest_cache/
@@ -31,8 +34,10 @@ api_dspy_test.ipynb
 api-test.py
 src/layout_generator/
 test
-
+.agents
 src/generator/slidev/*.md
 src/generator/slidev/*.pdf
+src/generator/slidev/public/assets/*
+src/generator/slidev/node_modules/
 token_count.ipynb
-
+node_modules/

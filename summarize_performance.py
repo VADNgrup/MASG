@@ -60,10 +60,15 @@ def summarize():
             total_tokens_gen += d.get('token_usage', {}).get('total_tokens', 0)
             total_time_gen += d.get('elapsed_s', 0)
 
-    pdf_files = list(output_dir.glob(f'**/{model_filter}/*-export.pdf'))
-    success_count = len(pdf_files)
-    
-    all_lectures = [d for d in output_dir.iterdir() if d.is_dir()]
+    # A lecture is "successful" when its slide_images folder exists with at least one image.
+    # (run_benchmark produces HTML/JSON/screenshots, not PDF exports)
+    slide_image_dirs = [
+        d for d in output_dir.glob(f'**/{model_filter}/slide_images')
+        if any(d.iterdir())
+    ]
+    success_count = len(slide_image_dirs)
+
+    all_lectures = [d for d in output_dir.iterdir() if d.is_dir() and d.name != '.gitkeep']
     total_attempted = len(all_lectures)
     failed_count = total_attempted - success_count
 
@@ -86,9 +91,40 @@ def summarize():
         for k in avg_metrics:
             avg_metrics[k] /= count_metrics
 
-    avg_call = total_calls_gen / success_count if success_count > 0 else 0
-    avg_token_k = total_tokens_gen / success_count / 1000 if success_count > 0 else 0
-    avg_done_time_m = total_time_gen / success_count / 60 if success_count > 0 else 0
+    total_real_duration = 0.0
+    total_calls_from_runs = 0
+    total_tokens_from_runs = 0
+    real_duration_count = 0
+    logs_dir = log_path.parent
+    for img_dir in slide_image_dirs:
+        lecture_id = img_dir.parent.parent.name
+        run_files = sorted(logs_dir.glob(f'llm_run_{lecture_id}_*.json'), reverse=True)
+        for rf_path in run_files:
+            try:
+                with open(rf_path, 'r', encoding='utf-8') as rf:
+                    run_data = json.load(rf)
+                if model_filter != '*':
+                    by_model = run_data.get('by_model', {})
+                    run_models = [m.replace('/', '_') for m in by_model.keys()]
+                    if model_filter not in run_models:
+                        continue
+                        
+                start_str = run_data.get('started_at')
+                end_str = run_data.get('ended_at')
+                if start_str and end_str:
+                    start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+                    end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
+                    total_real_duration += (end_dt - start_dt).total_seconds()
+                total_calls_from_runs += run_data.get('total_calls', 0)
+                total_tokens_from_runs += run_data.get('total_tokens', 0)
+                real_duration_count += 1
+                break 
+            except:
+                pass
+                
+    avg_call = total_calls_from_runs / real_duration_count if real_duration_count > 0 else 0
+    avg_token_k = total_tokens_from_runs / real_duration_count / 1000 if real_duration_count > 0 else 0
+    avg_done_time_m = total_real_duration / real_duration_count / 60 if real_duration_count > 0 else 0
 
     print('\n' + '=' * 40)
     print('   GENERATION PERFORMANCE')
@@ -100,7 +136,7 @@ def summarize():
     print(f"{'Call (Avg)':<25} | {avg_call:.1f}")
     print(f"{'Total Token per output(k)':<25} | {avg_token_k:.1f}")
     print(f"{'Failed':<25} | {failed_count}")
-    print(f"{'Done time (m)':<25} | {avg_done_time_m:.2f}")
+    print(f"{'Done time (Real, m)':<25} | {avg_done_time_m:.2f}")
     print(f"{'Success Rate':<25} | {(success_count / total_attempted * 100 if total_attempted > 0 else 0):.2f}%")
     print('-' * 40)
     print(f"{'ROUGE-L':<25} | {avg_metrics['rouge'] * 100:.2f}")

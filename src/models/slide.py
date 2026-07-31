@@ -27,3 +27,4 @@ class Slide:
 class SlideContent:
     slide: Slide
     content: Union[str, List[str], Dict[str, List[str]]] = field(default_factory=list)
+    layout_hint: Optional[str] = None
